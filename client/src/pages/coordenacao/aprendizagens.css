@@ -1,0 +1,74 @@
+/* Estilos da tela Aprendizagens consolidadas (escopados em .coord-shell) */
+
+.coord-shell .subtabs { display: flex; gap: 4px; background: var(--bg-card); border-radius: 14px; padding: 6px; margin-bottom: 20px; overflow-x: auto; scrollbar-width: none; }
+.coord-shell .subtabs::-webkit-scrollbar { display: none; }
+.coord-shell .subtab { padding: 9px 16px; border-radius: 10px; border: none; background: transparent; font-size: 13px; font-weight: 600; color: var(--text-muted); cursor: pointer; font-family: inherit; transition: all 0.15s; white-space: nowrap; display: flex; align-items: center; gap: 6px; }
+.coord-shell .subtab:hover { background: var(--bg-main); color: var(--purple); }
+.coord-shell .subtab.active { background: var(--purple-soft); color: var(--purple); }
+
+.coord-shell .state-summary { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 20px; }
+.coord-shell .state-card { background: var(--bg-card); border-radius: 14px; padding: 16px 18px; display: flex; align-items: center; gap: 14px; animation: coordFadeUp 0.5s ease-out backwards; }
+.coord-shell .state-indicator { width: 40px; height: 40px; border-radius: 12px; display: flex; align-items: center; justify-content: center; flex-shrink: 0; font-weight: 700; }
+.coord-shell .state-indicator.naoObs { background: var(--border-light); color: var(--text-light); }
+.coord-shell .state-indicator.asVezes { background: var(--amber-bg); color: var(--amber); }
+.coord-shell .state-indicator.emDesenv { background: var(--blue-bg); color: var(--blue); }
+.coord-shell .state-indicator.desenv { background: var(--green-bg); color: var(--green); }
+.coord-shell .state-info { flex: 1; min-width: 0; }
+.coord-shell .state-label { font-size: 11px; color: var(--text-muted); font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; }
+.coord-shell .state-value { font-size: 22px; font-weight: 700; color: var(--text-dark); line-height: 1.1; margin-top: 2px; }
+.coord-shell .state-pct { font-size: 11px; color: var(--text-muted); font-weight: 600; margin-top: 1px; }
+
+.coord-shell .phase-bar { padding: 12px 0; border-bottom: 1px solid var(--border-light); }
+.coord-shell .phase-bar:last-child { border-bottom: none; }
+.coord-shell .phase-bar-head { display: flex; justify-content: space-between; font-size: 12px; margin-bottom: 6px; gap: 10px; }
+.coord-shell .phase-bar-name { color: var(--text-body); font-weight: 500; }
+.coord-shell .phase-bar-count { color: var(--text-dark); font-weight: 700; white-space: nowrap; }
+.coord-shell .phase-bar-track { height: 6px; background: var(--border-light); border-radius: 99px; overflow: hidden; }
+.coord-shell .phase-bar-fill { height: 100%; background: var(--purple); border-radius: 99px; transition: width 1s cubic-bezier(0.16, 1, 0.3, 1); }
+
+.coord-shell .legend { display: flex; flex-wrap: wrap; gap: 18px; padding: 14px 18px; background: var(--bg-main); border-radius: 12px; margin-top: 18px; }
+.coord-shell .legend-item { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--text-body); font-weight: 500; }
+.coord-shell .legend-dot { width: 14px; height: 14px; border-radius: 4px; border: 1.5px solid; flex-shrink: 0; }
+
+.coord-shell .trend-up { color: var(--green); font-weight: 700; }
+.coord-shell .trend-down { color: var(--red); font-weight: 700; }
+
+/* ===== Tabela de indicadores (criança × indicador) ===== */
+.coord-shell .ind-table-wrap { background: var(--bg-card); border-radius: 18px; padding: 24px; overflow-x: auto; animation: coordFadeUp 0.5s ease-out 0.25s backwards; }
+.coord-shell .table-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 20px; gap: 16px; flex-wrap: wrap; }
+.coord-shell .table-title { font-size: 18px; font-weight: 700; color: var(--text-dark); display: flex; align-items: center; }
+.coord-shell .table-subtitle { font-size: 12px; color: var(--text-muted); margin-top: 2px; }
+.coord-shell .table-actions { display: flex; gap: 8px; }
+
+.coord-shell .indicators-table { width: 100%; min-width: 900px; border-collapse: collapse; font-size: 12px; }
+.coord-shell .indicators-table thead th { background: var(--bg-card); text-align: left; padding: 10px 8px; font-weight: 600; color: var(--text-muted); border-bottom: 2px solid var(--border); white-space: nowrap; font-size: 11px; text-transform: uppercase; letter-spacing: 0.3px; }
+.coord-shell .indicators-table thead th.rotated { text-align: center; min-width: 58px; max-width: 58px; padding: 8px 4px; vertical-align: bottom; height: 140px; }
+.coord-shell .indicators-table thead th.rotated > div { writing-mode: vertical-rl; transform: rotate(180deg); margin: 0 auto; white-space: normal; line-height: 1.25; font-size: 10.5px; font-weight: 600; color: var(--text-body); text-transform: none; letter-spacing: 0; max-height: 130px; overflow: hidden; }
+.coord-shell .indicators-table thead th.category { text-align: center; color: var(--purple); font-weight: 700; background: var(--purple-softer); font-size: 11px; border-bottom: 2px solid var(--purple-soft); }
+.coord-shell .indicators-table tbody tr { transition: background 0.12s; }
+.coord-shell .indicators-table tbody tr:hover { background: var(--bg-main); }
+.coord-shell .indicators-table td { padding: 10px 8px; border-bottom: 1px solid var(--border-light); }
+.coord-shell .indicators-table td.name { font-weight: 600; color: var(--text-dark); white-space: nowrap; cursor: pointer; min-width: 160px; }
+.coord-shell .indicators-table td.name:hover { color: var(--purple); }
+.coord-shell .cell-center { text-align: center; }
+.coord-shell .indicators-table thead th.prod-col { text-align: left; min-width: 96px; color: var(--purple); background: var(--purple-softer); text-transform: none; letter-spacing: 0; font-size: 11px; }
+.coord-shell .indicators-table td.prod-cell { font-size: 11.5px; color: var(--text-body); white-space: nowrap; background: var(--purple-softer); }
+.coord-shell .cell-mark { display: inline-flex; align-items: center; justify-content: center; width: 22px; height: 22px; border-radius: 6px; font-size: 11px; font-weight: 800; border: 1.5px solid; transition: transform 0.1s; cursor: help; }
+.coord-shell .cell-mark:hover { transform: scale(1.15); }
+.coord-shell .cell-mark.naoObs { color: transparent; background: white; border-color: var(--border); }
+.coord-shell .cell-mark.asVezes { color: var(--amber); background: var(--amber-bg); border-color: var(--amber); }
+.coord-shell .cell-mark.emDesenv { color: var(--blue); background: var(--blue-bg); border-color: var(--blue); }
+.coord-shell .cell-mark.desenv { color: var(--green); background: var(--green-bg); border-color: var(--green); }
+.coord-shell .cell-phase { display: inline-block; padding: 3px 9px; border-radius: 99px; font-size: 10px; font-weight: 700; color: var(--purple); background: var(--purple-soft); white-space: nowrap; }
+
+.coord-shell .legend-dot.naoObs { background: white; border-color: var(--border); }
+.coord-shell .legend-dot.asVezes { background: var(--amber-bg); border-color: var(--amber); }
+.coord-shell .legend-dot.emDesenv { background: var(--blue-bg); border-color: var(--blue); }
+.coord-shell .legend-dot.desenv { background: var(--green-bg); border-color: var(--green); }
+
+@media (max-width: 900px) {
+  .coord-shell .state-summary { grid-template-columns: repeat(2, 1fr); }
+}
+@media (max-width: 560px) {
+  .coord-shell .state-summary { grid-template-columns: 1fr; }
+}

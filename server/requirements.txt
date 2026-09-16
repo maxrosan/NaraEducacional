@@ -1,0 +1,26 @@
+asgiref==3.9.1
+Django==5.2.4
+djangorestframework==3.16.0
+sqlparse==0.5.3
+typing_extensions==4.14.1
+tzdata==2025.2
+django-cors-headers==4.3.1
+gunicorn==21.2.0
+python-dotenv==1.0.0
+openai>=1.0.0
+Pillow>=11.1.0
+pillow-heif>=1.6.0
+psycopg2-binary==2.9.9
+boto3==1.35.47
+httpx==0.27.2
+mailtrap
+# noisereduce, soundfile, numpy e scipy saíram em setembro de 2026 junto com a
+# etapa de redução de ruído do áudio. O Whisper foi treinado em áudio ruidoso e
+# não precisava dela; o preparo do áudio hoje é só uma chamada de ffmpeg.
+sentry-sdk
+# Extração de texto de uploads de planejamento (PDF / DOCX)
+pypdf>=4.0.0
+python-docx>=1.1.0
+# Producer Celery: enfileira refresh do cache da coordenação no broker do
+# scheduler (o backend não roda worker, apenas publica a task).
+celery[redis]>=5.4.0

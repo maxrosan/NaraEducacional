@@ -1,0 +1,207 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/compose-spec/compose-spec/master/schema/compose-spec.json
+#
+# Stack isolada do multi-nara. Renomeado para não colidir com os containers
+# do projeto nara original (nara-backend, nara-frontend, nara-postgres-prod).
+services:
+  # PostgreSQL Database
+  postgres:
+    image: postgres:14-alpine
+    container_name: multi-nara-postgres
+    restart: unless-stopped
+    profiles:
+      - local-db
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-multi_nara_production}
+      POSTGRES_USER: ${POSTGRES_USER:-multi_nara_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-secure_password}
+    ports:
+      - "${POSTGRES_PORT:-5433}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-multi_nara_user}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - multi-nara-network
+
+  backend:
+    build:
+      context: ./server
+      dockerfile: Dockerfile.dev
+    container_name: multi-nara-backend
+    restart: unless-stopped
+    env_file:
+      - .env
+    command:
+      - sh
+      - -c
+      - |
+        set -e
+        echo 'Waiting for PostgreSQL...'
+        max_attempts=30
+        attempt=1
+        while ! pg_isready -h "${POSTGRES_HOST:-postgres}" -p "${POSTGRES_PORT:-5432}" -U "${POSTGRES_USER:-multi_nara_user}"; do
+          if [ "$attempt" -ge "$max_attempts" ]; then
+            echo 'PostgreSQL not available after retries.' >&2
+            exit 1
+          fi
+          echo 'Database not ready, retrying...'
+          attempt=$((attempt + 1))
+          sleep 2
+        done
+        python manage.py makemigrations --noinput
+        echo 'Running migrations...'
+        python manage.py migrate --noinput
+        echo 'Importing backup data...'
+        python manage.py import_backup --path /backups/20251129 || echo 'Backup not found, using seed...'
+        echo 'Starting Django server...'
+        python manage.py runserver 0.0.0.0:8001
+    environment:
+      # Django
+      DJANGO_DEBUG: ${DJANGO_DEBUG:-true}
+      DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY:-change-me}
+      DJANGO_ALLOWED_HOSTS: ${DJANGO_ALLOWED_HOSTS:-localhost,127.0.0.1,backend}
+
+      # PostgreSQL
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: ${POSTGRES_DB:-multi_nara_production}
+      POSTGRES_USER: ${POSTGRES_USER:-multi_nara_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-secure_password}
+
+      # OpenAI
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
+
+      # AWS S3
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
+      AWS_S3_BUCKET_NAME: ${AWS_S3_BUCKET_NAME}
+      AWS_REGION: ${AWS_REGION:-us-east-1}
+
+      # Experimental: Speech Recognition
+      ELEVENLABS_API_KEY: ${ELEVENLABS_API_KEY}
+      GEMINI_API_KEY: ${GEMINI_API_KEY}
+
+      # Report generator (Playwright microservice)
+      REPORT_GENERATOR_URL: ${REPORT_GENERATOR_URL:-http://report_generator:8000}
+      REPORT_GENERATOR_SECRET: ${REPORT_GENERATOR_SECRET:-}
+
+      # Transcription service (faster-whisper)
+      TRANSCRIPTION_PROVIDER: ${TRANSCRIPTION_PROVIDER:-openai}
+      TRANSCRIPTION_SERVICE_URL: ${TRANSCRIPTION_SERVICE_URL:-http://transcription:8000}
+      TRANSCRIPTION_SERVICE_TOKEN: ${TRANSCRIPTION_SERVICE_TOKEN:-}
+
+      # Scheduler: token compartilhado para /api/internal/cache/coordenacao/
+      NARA_INTERNAL_TOKEN: ${NARA_INTERNAL_TOKEN:-}
+      # UUID da instituição servida por este backend (fonte de verdade).
+      NARA_INSTITUICAO_ID: ${NARA_INSTITUICAO_ID:-}
+    ports:
+      - "8011:8001"
+    volumes:
+      - ./server:/app
+      - ./backups:/backups
+      - backend_uploads:/app/uploads
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8001/api/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    networks:
+      - multi-nara-network
+
+  report_generator:
+    build:
+      context: ./report_generator
+      dockerfile: Dockerfile
+    container_name: multi-nara-report-generator
+    restart: unless-stopped
+    environment:
+      PORT: 8000
+      MAX_QUEUE_SIZE: ${REPORT_GENERATOR_MAX_QUEUE_SIZE:-100}
+      RENDER_TIMEOUT_SECONDS: ${REPORT_GENERATOR_TIMEOUT:-60}
+      RENDERER_SHARED_SECRET: ${REPORT_GENERATOR_SECRET:-}
+    ports:
+      # Exposto apenas para debugging/dev. Em produção, remover a porta pública
+      # e deixar o serviço acessível somente via rede interna do compose.
+      - "8012:8000"
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/health').status==200 else 1)\""]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+    networks:
+      - multi-nara-network
+
+  transcription:
+    build:
+      context: ./transcription_service
+      dockerfile: Dockerfile
+    container_name: multi-nara-transcription
+    restart: unless-stopped
+    environment:
+      # Em dev usamos modelo pequeno para não travar o laptop e não baixar 3GB.
+      MODEL_SIZE: ${TRANSCRIPTION_MODEL_SIZE:-small}
+      DEVICE: ${TRANSCRIPTION_DEVICE:-cpu}
+      COMPUTE_TYPE: ${TRANSCRIPTION_COMPUTE_TYPE:-int8}
+      CPU_THREADS: ${TRANSCRIPTION_CPU_THREADS:-0}
+      MAX_CONCURRENT: ${TRANSCRIPTION_MAX_CONCURRENT:-1}
+      QUEUE_MAX_SIZE: ${TRANSCRIPTION_QUEUE_MAX_SIZE:-50}
+      JOB_TTL_SECONDS: ${TRANSCRIPTION_JOB_TTL_SECONDS:-3600}
+      DEFAULT_LANGUAGE: pt
+      VAD_FILTER: "true"
+      BEAM_SIZE: ${TRANSCRIPTION_BEAM_SIZE:-5}
+      INTERNAL_TOKEN: ${TRANSCRIPTION_SERVICE_TOKEN:-}
+      MAX_UPLOAD_MB: ${MAX_AUDIO_UPLOAD_MB:-100}
+      LOG_LEVEL: ${TRANSCRIPTION_LOG_LEVEL:-INFO}
+    volumes:
+      - whisper_models:/models
+    ports:
+      # Exposta apenas para debug local; em prod manter só rede interna.
+      - "8013:8000"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8000/readyz || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 300s
+    networks:
+      - multi-nara-network
+
+  frontend:
+    build:
+      context: ./client
+      dockerfile: Dockerfile.dev
+    container_name: multi-nara-frontend
+    restart: unless-stopped
+    command: npm run dev -- --host
+    environment:
+      VITE_API_BASE_URL: ${VITE_API_BASE_URL:-http://localhost:8011}
+    ports:
+      - "5174:5173"
+    volumes:
+      - ./client:/app
+      - /app/node_modules
+    depends_on:
+      - backend
+    networks:
+      - multi-nara-network
+
+volumes:
+  postgres_data:
+    name: multi_nara_postgres_data
+    driver: local
+  backend_uploads:
+    name: multi_nara_backend_uploads
+    driver: local
+  whisper_models:
+    name: multi_nara_whisper_models
+    driver: local
+
+networks:
+  multi-nara-network:
+    name: multi-nara-network
+    driver: bridge

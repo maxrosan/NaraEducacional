@@ -1,0 +1,23 @@
+# Registry de escolas para o scheduler central.
+#
+# Para cada escola, informe:
+#   id              identificador único interno (livre).
+#   nome            nome legível (usado em logs).
+#   backend_url     URL base do backend daquela escola (sem /api).
+#   internal_token  token compartilhado com a setting NARA_INTERNAL_TOKEN
+#                   no backend. Use `env:NOME_DA_VAR` para ler de variável
+#                   de ambiente e evitar commitar segredos.
+#   instituicao_id  (OPCIONAL) UUID da instituição. Se omitido, o backend
+#                   resolve o seu próprio via NARA_INSTITUICAO_ID — modelo
+#                   recomendado, já que cada deploy serve uma escola só.
+#                   Útil apenas em backends multi-tenant.
+#
+# Duplique este arquivo como `escolas.yaml` no ambiente onde o scheduler
+# rodar. `escolas.yaml` NÃO deve ser versionado (veja .gitignore).
+
+escolas:
+  - id: escola-demo
+    nome: Escola Demonstração
+    backend_url: https://backend-escola-demo.nara.example
+    internal_token: env:NARA_INTERNAL_TOKEN_ESCOLA_DEMO
+    # instituicao_id: 00000000-0000-0000-0000-000000000000  # opcional

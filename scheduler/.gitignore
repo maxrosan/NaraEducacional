@@ -1,0 +1,7 @@
+.env
+escolas.yaml
+__pycache__/
+*.pyc
+*.pyo
+celerybeat-schedule
+celerybeat.pid

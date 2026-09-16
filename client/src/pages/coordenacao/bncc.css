@@ -1,0 +1,27 @@
+/* Estilos da tela Cobertura BNCC por turma (escopados em .coord-shell) */
+
+.coord-shell .breadcrumb { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-muted); margin-bottom: 10px; font-weight: 500; }
+.coord-shell .breadcrumb a, .coord-shell .breadcrumb button { color: var(--text-muted); text-decoration: none; cursor: pointer; transition: color 0.15s; background: none; border: none; font-family: inherit; font-size: 12px; padding: 0; }
+.coord-shell .breadcrumb a:hover, .coord-shell .breadcrumb button:hover { color: var(--purple); }
+.coord-shell .breadcrumb-sep { color: var(--text-light); }
+
+.coord-shell .turma-hero { background: var(--bg-card); border-radius: 18px; padding: 22px 26px; margin-bottom: 20px; display: flex; align-items: center; gap: 18px; animation: coordFadeUp 0.5s ease-out; flex-wrap: wrap; }
+.coord-shell .turma-hero-badge { width: 64px; height: 64px; border-radius: 16px; background: linear-gradient(135deg, var(--purple-soft), var(--green-soft)); display: flex; align-items: center; justify-content: center; color: var(--purple-dark); font-weight: 700; font-size: 22px; flex-shrink: 0; }
+.coord-shell .turma-hero-info { flex: 1; min-width: 0; }
+.coord-shell .turma-hero-name { font-size: 22px; font-weight: 700; color: var(--text-dark); letter-spacing: -0.3px; }
+.coord-shell .turma-hero-meta { font-size: 13px; color: var(--text-muted); margin-top: 4px; }
+.coord-shell .turma-hero-meta strong { color: var(--text-dark); font-weight: 600; }
+
+.coord-shell .field-row { margin-bottom: 16px; }
+.coord-shell .field-row:last-child { margin-bottom: 0; }
+.coord-shell .field-row-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; font-size: 13px; gap: 10px; }
+.coord-shell .field-row-name { color: var(--text-body); font-weight: 500; display: flex; align-items: center; gap: 8px; }
+.coord-shell .field-circle { width: 14px; height: 14px; border-radius: 50%; border: 2px solid; flex-shrink: 0; }
+.coord-shell .field-row-value { font-weight: 700; font-size: 13px; white-space: nowrap; }
+.coord-shell .field-bar { height: 9px; background: var(--bg-main); border-radius: 99px; overflow: hidden; }
+.coord-shell .field-bar-fill { height: 100%; border-radius: 99px; transition: width 1s cubic-bezier(0.16, 1, 0.3, 1); }
+.coord-shell .b-corpo { background: #00BFA5; border-color: #00BFA5; }
+.coord-shell .b-eu { background: var(--purple); border-color: var(--purple); }
+.coord-shell .b-escuta { background: var(--blue); border-color: var(--blue); }
+.coord-shell .b-espacos { background: #EF5350; border-color: #EF5350; }
+.coord-shell .b-tracos { background: var(--amber); border-color: var(--amber); }

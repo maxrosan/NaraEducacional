@@ -1,0 +1,17 @@
+FROM python:3.12-slim
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1
+
+WORKDIR /app
+
+COPY requirements.txt ./
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY celery_app.py config.py tasks.py ./
+
+# Imagem dedicada ao Celery beat (scheduler). O worker usa o Dockerfile
+# padrão. Necessário porque o Easypanel não permite sobrescrever o comando
+# de start por serviço — cada papel precisa da sua própria imagem.
+CMD ["celery", "-A", "celery_app", "beat", "--loglevel=INFO"]

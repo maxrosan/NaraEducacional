@@ -1,0 +1,1863 @@
+/*
+ * ATENÇÃO: arquivo gerado automaticamente.
+ * Fonte: client/src/styles/relatorio-editor.css
+ * Gerado por: client/tools/copy-pdf-css.js (npm run build / npm run copy:pdf-css)
+ * NÃO EDITE AQUI — edite o arquivo fonte e rode `npm run copy:pdf-css`.
+ */
+@import url('https://fonts.googleapis.com/css2?family=Nunito:wght@400;600;700;800;900&family=Lora:ital,wght@0,400;0,600;1,400&family=Playfair+Display:wght@400;700;900&family=Merriweather:wght@400;700;900&family=PT+Serif:wght@400;700&display=swap');
+
+
+:root {
+  --roxo: #9b87d4;
+  --roxo-escuro: #6b5db0;
+  --roxo-claro: #e8e2f7;
+  --roxo-ultra-claro: #f4f1fc;
+  --verde: #8bc4a0;
+  --verde-escuro: #5a9b74;
+  --verde-claro: #dff0e6;
+  --verde-ultra-claro: #f0f8f3;
+  --amarelo: #f9c74f;
+  --amarelo-escuro: #b8860b;
+  --amarelo-claro: #fef8e3;
+  --coral: #f4827a;
+  --coral-escuro: #c0392b;
+  --coral-claro: #fde8e7;
+  --azul: #74b3e8;
+  --azul-escuro: #1a4a8a;
+  --azul-claro: #e3f1fb;
+  --cinza-escuro: #2d2d3a;
+  --cinza-medio: #5a5a72;
+  --cinza-claro: #9494aa;
+  --branco: #ffffff;
+  --fundo: #f7f5fc;
+  --borda: #e2dcf5;
+}
+
+.ProseMirror {
+  font-family: var(--fonte-titulo, 'Nunito', sans-serif);
+  color: var(--cinza-escuro);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+/* ===== PAGINA A4 ===== */
+.ProseMirror .pagina {
+  width: 100%;
+  min-height: 1123px;
+  /* A4 height at 96 DPI */
+  background: var(--branco);
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  overflow: visible;
+  box-sizing: border-box;
+}
+
+/* ===== CAPA ===== */
+.ProseMirror .capa {
+  min-height: 1100px;
+}
+
+.ProseMirror .capa-escola {
+  padding: 32px 28px 20px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  flex-shrink: 0;
+}
+
+.ProseMirror .capa-logo {
+  width: 80px;
+  height: 80px;
+  background: #ffffff;
+  border-radius: 12px;
+  border: 2px solid var(--borda);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 6px;
+  margin-bottom: 10px;
+}
+
+.ProseMirror .capa-logo img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.ProseMirror .capa-escola-nome {
+  font-size: 18px;
+  font-weight: 900;
+  color: var(--azul-escuro);
+  /* era #1a4a8a fixo */
+  line-height: 1.2;
+}
+
+.ProseMirror .capa-escola-endereco {
+  font-size: 10px;
+  color: var(--cinza-claro);
+  margin-top: 4px;
+  line-height: 1.4;
+}
+
+.ProseMirror .capa-hero {
+  background: linear-gradient(135deg, var(--roxo) 0%, var(--roxo-escuro) 60%, #4a3d8f 100%);
+  padding: 50px 36px;
+  position: relative;
+  overflow: hidden;
+  text-align: center;
+  margin: 12px 28px;
+  border-radius: 16px;
+  flex-shrink: 0;
+}
+
+.ProseMirror .capa-hero-deco {
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(circle at 85% 20%, rgba(139, 196, 160, 0.25) 0%, transparent 50%),
+    radial-gradient(circle at 15% 80%, rgba(255, 255, 255, 0.08) 0%, transparent 40%),
+    radial-gradient(circle at 50% 50%, rgba(255, 255, 255, 0.03) 0%, transparent 70%);
+  pointer-events: none;
+}
+
+.ProseMirror .capa-hero-conteudo {
+  position: relative;
+  z-index: 1;
+}
+
+.ProseMirror .capa-tipo-doc {
+  font-size: 13px;
+  font-weight: 700;
+  color: rgba(255, 255, 255, 0.65);
+  text-transform: uppercase;
+  letter-spacing: 3px;
+  margin-bottom: 6px;
+}
+
+.ProseMirror .capa-periodo-label {
+  font-size: calc(28px * var(--escala-titulo, 1));
+  font-weight: 900;
+  color: #fff;
+  letter-spacing: -0.5px;
+  line-height: 1.2;
+}
+
+.ProseMirror .capa-hero-linha {
+  width: 60px;
+  height: 3px;
+  background: var(--verde);
+  margin: 16px auto;
+  border-radius: 2px;
+}
+
+.ProseMirror .capa-nome-crianca {
+  font-size: calc(20px * var(--escala-nome, 1));
+  font-weight: 800;
+  color: #fff;
+  letter-spacing: -0.3px;
+}
+
+.ProseMirror .capa-detalhes {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 12px;
+  padding: 20px 28px;
+  flex-shrink: 0;
+}
+
+.ProseMirror .capa-detalhe-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: var(--roxo-ultra-claro);
+  border: 1.5px solid var(--borda);
+  border-radius: 10px;
+  padding: 12px 14px;
+}
+
+.ProseMirror .capa-detalhe-icone {
+  font-size: 20px;
+  line-height: 1;
+  flex-shrink: 0;
+}
+
+.ProseMirror .capa-detalhe-item label {
+  font-size: 9px;
+  font-weight: 800;
+  color: var(--roxo);
+  text-transform: uppercase;
+  letter-spacing: 0.7px;
+  display: block;
+  margin-bottom: 1px;
+}
+
+.ProseMirror .capa-detalhe-item span:not(.capa-detalhe-icone) {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--cinza-escuro);
+}
+
+.ProseMirror .capa-sumario {
+  margin: 8px 28px 0;
+  padding: 18px 22px;
+  background: var(--fundo);
+  border: 1.5px solid var(--borda);
+  border-radius: 12px;
+  flex-shrink: 0;
+}
+
+.ProseMirror .capa-sumario-titulo {
+  font-size: 10px;
+  font-weight: 800;
+  color: var(--roxo);
+  text-transform: uppercase;
+  letter-spacing: 0.7px;
+  margin-bottom: 12px;
+}
+
+.ProseMirror .capa-sumario-itens {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.ProseMirror .capa-sumario-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--cinza-escuro);
+}
+
+.ProseMirror .capa-sum-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+/* ===== BARRAS ===== */
+.ProseMirror .barra-topo {
+  height: 7px;
+  background: linear-gradient(90deg, var(--roxo) 0%, var(--verde) 100%);
+  flex-shrink: 0;
+}
+
+.ProseMirror .barra-rodape {
+  height: 5px;
+  background: linear-gradient(90deg, var(--verde) 0%, var(--roxo) 100%);
+  flex-shrink: 0;
+}
+
+/* ===== HEADER DA ESCOLA ===== */
+.ProseMirror .header-escola {
+  padding: 16px 28px;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  border-bottom: 2px solid var(--borda);
+  flex-shrink: 0;
+}
+
+.ProseMirror .logo-escola {
+  width: 60px;
+  height: 60px;
+  background: #ffffff;
+  border-radius: 8px;
+  border: 1.5px solid var(--borda);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  padding: 4px;
+}
+
+.ProseMirror .logo-escola img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  background: white;
+}
+
+.ProseMirror .escola-info h1 {
+  font-size: 14px;
+  font-weight: 900;
+  color: var(--azul-escuro);
+  /* era #1a4a8a fixo */
+  line-height: 1.2;
+}
+
+.ProseMirror .escola-info p {
+  font-size: 10px;
+  color: var(--cinza-claro);
+  margin-top: 3px;
+  line-height: 1.4;
+}
+
+/* ===== BANNER ===== */
+.ProseMirror .banner-relatorio {
+  background: linear-gradient(135deg, var(--roxo) 0%, var(--roxo-escuro) 100%);
+  padding: 18px 28px;
+  position: relative;
+  overflow: hidden;
+  flex-shrink: 0;
+}
+
+.ProseMirror .banner-relatorio::before {
+  content: '';
+  position: absolute;
+  right: -30px;
+  top: -30px;
+  width: 120px;
+  height: 120px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.07);
+}
+
+.ProseMirror .banner-relatorio::after {
+  content: '';
+  position: absolute;
+  right: 50px;
+  bottom: -40px;
+  width: 90px;
+  height: 90px;
+  border-radius: 50%;
+  background: rgba(139, 196, 160, 0.2);
+}
+
+.ProseMirror .banner-titulo {
+  font-size: 18px;
+  font-weight: 900;
+  color: #fff;
+  letter-spacing: -0.3px;
+  position: relative;
+  z-index: 1;
+}
+
+.ProseMirror .banner-sub {
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.72);
+  margin-top: 3px;
+  position: relative;
+  z-index: 1;
+}
+
+/* ===== FICHA DO ALUNO ===== */
+.ProseMirror .ficha-aluno {
+  padding: 14px 28px;
+  background: var(--roxo-ultra-claro);
+  border-bottom: 2px solid var(--borda);
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 12px;
+  flex-shrink: 0;
+}
+
+.ProseMirror .ficha-item label {
+  font-size: 9px;
+  font-weight: 800;
+  color: var(--roxo);
+  text-transform: uppercase;
+  letter-spacing: 0.7px;
+  display: block;
+  margin-bottom: 2px;
+}
+
+.ProseMirror .ficha-item span {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--cinza-escuro);
+}
+
+/* ===== CONTEUDO ===== */
+.ProseMirror .conteudo {
+  padding: 20px 28px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  flex: 1;
+}
+
+/* ===== SECAO ===== */
+.ProseMirror .secao {
+  border-radius: 12px;
+  overflow: hidden;
+  border: 1.5px solid var(--borda);
+}
+
+.ProseMirror .secao-header {
+  padding: 10px 16px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.ProseMirror .secao-header .icone {
+  font-size: 15px;
+  line-height: 1;
+}
+
+.ProseMirror .secao-header h2 {
+  font-size: 16px;
+  font-weight: 800;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  margin: 0;
+}
+
+.ProseMirror .secao-body {
+  padding: 12px;
+  background: var(--branco);
+}
+
+.ProseMirror .secao-body p {
+  font-family: var(--fonte-corpo, 'Lora', serif);
+  font-size: 12px;
+  line-height: 1.8;
+  color: var(--cinza-escuro);
+  margin-bottom: 10px;
+  text-align: justify;
+  /* text-indent: 50px; */
+}
+
+.ProseMirror .secao-body p:last-child {
+  margin-bottom: 0;
+}
+
+/* cores por secao */
+.ProseMirror .sec-planejamento .secao-header {
+  background: var(--verde-claro);
+}
+
+.ProseMirror .sec-planejamento .secao-header h2 {
+  color: var(--verde-escuro);
+}
+
+.ProseMirror .sec-planejamento {
+  border-color: var(--verde);
+}
+
+.ProseMirror .sec-planejamento .secao-body p {
+  text-indent: 50px;
+}
+
+.ProseMirror .sec-relato .secao-header {
+  background: var(--azul-claro);
+}
+
+.ProseMirror .sec-relato .secao-header h2 {
+  color: var(--azul-escuro);
+}
+
+/* era #3a7ec4 fixo */
+.ProseMirror .sec-relato {
+  border-color: var(--azul);
+}
+
+.ProseMirror .sec-relato .secao-body p {
+  text-indent: 50px;
+}
+
+.ProseMirror .sec-producoes .secao-header {
+  background: var(--roxo-claro);
+}
+
+.ProseMirror .sec-producoes .secao-header h2 {
+  color: var(--roxo-escuro);
+}
+
+.ProseMirror .sec-producoes {
+  border-color: var(--roxo);
+}
+
+.ProseMirror .sec-portfolio .secao-header {
+  background: var(--amarelo-claro);
+}
+
+.ProseMirror .sec-portfolio .secao-header h2 {
+  color: var(--amarelo-escuro);
+}
+
+/* era #b8860b fixo */
+.ProseMirror .sec-portfolio {
+  border-color: var(--amarelo);
+}
+
+.ProseMirror .sec-bncc .secao-header {
+  background: var(--coral-claro);
+}
+
+.ProseMirror .sec-bncc .secao-header h2 {
+  color: var(--coral-escuro);
+}
+
+/* era #c0392b fixo */
+.ProseMirror .sec-bncc {
+  border-color: var(--coral);
+}
+
+.ProseMirror .sec-conclusao .secao-header {
+  background: linear-gradient(90deg, var(--amarelo-claro), var(--amarelo));
+}
+
+/* era gradiente #ffd6a5→#ffb347 fixo */
+.ProseMirror .sec-conclusao .secao-header h2 {
+  color: var(--amarelo-escuro);
+}
+
+/* era #8b4513 fixo */
+.ProseMirror .sec-conclusao {
+  border-color: var(--amarelo);
+}
+
+.ProseMirror .sec-conclusao .secao-body p {
+  text-indent: 50px;
+}
+
+/* ===== PRODUCOES ===== */
+.ProseMirror .producao-bloco {
+  border-bottom: 1.5px solid var(--borda);
+}
+
+.ProseMirror .producao-bloco:last-child {
+  border-bottom: none;
+}
+
+.ProseMirror .producao-tipo {
+  background: var(--roxo-claro);
+  padding: 8px 14px;
+  font-size: 10px;
+  font-weight: 800;
+  color: var(--roxo-escuro);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  border-bottom: 1px solid var(--borda);
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.ProseMirror .producao-conteudo {
+  display: grid;
+  grid-template-columns: 210px 1fr;
+}
+
+.ProseMirror .producao-imagem {
+  background: var(--fundo);
+  border-right: 1.5px dashed var(--borda);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 16px 14px;
+  gap: 8px;
+  min-height: 190px;
+}
+
+.ProseMirror .producao-imagem .img-placeholder {
+  width: 176px;
+  height: 155px;
+  border-radius: 10px;
+  border: 2px dashed var(--borda);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 48px;
+  background: var(--branco);
+  overflow: hidden;
+}
+
+.ProseMirror .producao-imagem .img-placeholder img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: 8px;
+}
+
+.ProseMirror .producao-imagem span {
+  font-size: 9px;
+  color: var(--cinza-claro);
+  text-align: center;
+  font-weight: 600;
+}
+
+.ProseMirror .producao-texto {
+  padding: 14px;
+}
+
+.ProseMirror .producao-texto h3 {
+  font-size: 12px;
+  font-weight: 800;
+  color: var(--roxo-escuro);
+  margin-bottom: 6px;
+}
+
+.ProseMirror .producao-texto p {
+  font-family: var(--fonte-corpo, 'Lora', serif);
+  font-size: 11.5px;
+  line-height: 1.75;
+  color: var(--cinza-medio);
+  margin-bottom: 6px;
+  text-align: justify;
+}
+
+.ProseMirror .sec-producoes .secao-body p {
+  text-indent: 50px;
+}
+
+.ProseMirror .producao-texto p:last-child {
+  margin-bottom: 0;
+}
+
+.ProseMirror .tag-status {
+  display: inline-block;
+  padding: 2px 9px;
+  border-radius: 20px;
+  font-size: 9px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  margin-bottom: 6px;
+}
+
+.ProseMirror .tag-escrita {
+  background: #e8f5e9;
+  color: #2e7d32;
+}
+
+.ProseMirror .tag-desenho {
+  background: #fff3e0;
+  color: #e65100;
+}
+
+.ProseMirror .tag-leitura {
+  background: #e3f2fd;
+  color: #1565c0;
+}
+
+/* ===== PORTFOLIO ===== */
+.ProseMirror .portfolio-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  grid-template-rows: auto auto;
+  gap: 10px;
+}
+
+.ProseMirror .portfolio-item {
+  border-radius: 10px;
+  overflow: hidden;
+  border: 1.5px solid var(--borda);
+  background: var(--fundo);
+}
+
+.ProseMirror .portfolio-item.horizontal {
+  grid-column: span 2;
+}
+
+.ProseMirror .portfolio-item.vertical {
+  grid-row: span 2;
+}
+
+.ProseMirror .portfolio-foto {
+  width: 100%;
+  background: linear-gradient(135deg, var(--roxo-claro), var(--verde-claro));
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 40px;
+  border-bottom: 1px solid var(--borda);
+  overflow: hidden;
+}
+
+.ProseMirror .portfolio-item:not(.horizontal):not(.vertical) .portfolio-foto {
+  height: auto;
+}
+
+.ProseMirror .portfolio-item.horizontal .portfolio-foto {
+  height: auto;
+}
+
+.ProseMirror .portfolio-item.vertical .portfolio-foto {
+  height: auto;
+}
+
+.ProseMirror .portfolio-foto img {
+  width: 100%;
+  height: auto;
+  object-fit: cover;
+}
+
+.ProseMirror .portfolio-legenda {
+  padding: 7px 10px;
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--cinza-medio);
+  text-align: center;
+}
+
+/* ===== TABELA BNCC ===== */
+.ProseMirror .bncc-tabela {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.ProseMirror .bncc-tabela thead th {
+  background: var(--coral-claro);
+  color: var(--coral-escuro);
+  font-size: 9px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  padding: 6px 10px;
+  text-align: left;
+  border-bottom: 2px solid var(--coral);
+}
+
+.ProseMirror .bncc-tabela thead th:last-child {
+  text-align: center;
+  width: 150px;
+}
+
+.ProseMirror .bncc-tabela tbody tr {
+  border-bottom: 1px solid var(--borda);
+}
+
+.ProseMirror .bncc-tabela tbody tr:last-child {
+  border-bottom: none;
+}
+
+.ProseMirror .bncc-tabela tbody tr:nth-child(even) {
+  background: #fafafa;
+}
+
+.ProseMirror .bncc-tabela tbody td {
+  padding: 5px 10px;
+  font-size: 10px;
+  color: var(--cinza-escuro);
+  vertical-align: middle;
+  line-height: 1.4;
+}
+
+.ProseMirror .bncc-tabela tbody td:last-child {
+  text-align: center;
+}
+
+/* Badges de status BNCC: são semáforo (nível de desenvolvimento), não
+   identidade visual da escola — ficam de fora da paleta do template
+   de propósito, pra não perder o significado (verde=desenvolvido etc.). */
+.ProseMirror .badge-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 2px 8px;
+  border-radius: 20px;
+  font-size: 9px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.ProseMirror .badge-desenvolvido {
+  background: #e8f5e9;
+  color: #2e7d32;
+  border: 1px solid #a5d6a7;
+}
+
+.ProseMirror .badge-desenvolvendo {
+  background: #fff8e1;
+  color: #f57f17;
+  border: 1px solid #ffcc80;
+}
+
+.ProseMirror .badge-avezes {
+  background: #e3f2fd;
+  color: #1565c0;
+  border: 1px solid #90caf9;
+}
+
+.ProseMirror .badge-nao-observado {
+  background: #f5f5f5;
+  color: #9e9e9e;
+  border: 1px solid #e0e0e0;
+}
+
+/* ===== ASSINATURA ===== */
+.ProseMirror .conclusao-assinatura {
+  margin-top: 18px;
+  display: flex;
+  justify-content: flex-end;
+}
+
+.ProseMirror .assinatura-linha {
+  text-align: right;
+  border-top: 2px solid var(--borda);
+  padding-top: 4px;
+  width: 200px;
+}
+
+.ProseMirror .assinatura-despedida {
+  font-size: 11px;
+  color: var(--cinza-claro);
+  margin-bottom: 2px;
+}
+
+.ProseMirror .assinatura-nome {
+  font-size: 12px;
+  font-weight: 800;
+  color: var(--cinza-escuro);
+}
+
+.ProseMirror .assinatura-cargo {
+  font-size: 10px;
+  color: var(--cinza-claro);
+  margin-top: 1px;
+}
+
+/* ===== RODAPE ===== */
+.ProseMirror .rodape {
+  padding: 10px 28px;
+  border-top: 1.5px solid var(--borda);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: var(--roxo-ultra-claro);
+  flex-shrink: 0;
+  margin-top: auto;
+}
+
+.ProseMirror .rodape-nota {
+  font-size: 9px;
+  color: var(--cinza-claro);
+  font-style: italic;
+}
+
+.ProseMirror .rodape-nara {
+  font-size: 9px;
+  font-weight: 700;
+  color: var(--roxo);
+}
+
+/* ===== GALERIA DE PRODUÇÕES (seção Análise das Produções) =====
+   Precisa viver AQUI (e não em <style> inline no conteúdo do relatório):
+   o ProseMirror descarta tags <style> ao salvar, mas preserva os divs/classes. */
+.ProseMirror .producao-galeria {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  margin-bottom: 24px;
+}
+
+.ProseMirror .producao-galeria-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  flex: 0 1 180px;
+  max-width: 220px;
+}
+
+.ProseMirror .producao-galeria-item img {
+  width: 100%;
+  height: 160px;
+  object-fit: cover;
+  border-radius: 8px;
+  border: 1px solid #e5e7eb;
+}
+
+/* o label pode virar <p> após o round-trip do editor */
+.ProseMirror .producao-galeria-label,
+.ProseMirror .producao-galeria-item p {
+  margin: 6px 0 0;
+  font-size: 11px;
+  color: #6b7280;
+  text-align: center;
+}
+
+.ProseMirror .producao-galeria-nota {
+  font-size: 11px;
+  color: #6b7280;
+  font-style: italic;
+  margin: -12px 0 16px;
+}
+
+/* Quadro da análise por modalidade (páginas "Análise de Produções — Escrita/Desenho"):
+   imagem da produção CENTRALIZADA no topo — na orientação original, sem crop,
+   com altura limitada para não estourar a página A4 fixa — e o texto da
+   análise abaixo, em largura total (sem centralizar). */
+.ProseMirror .producao-quadro {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+}
+
+.ProseMirror .producao-quadro-img {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  max-width: 100%;
+}
+
+.ProseMirror .producao-quadro-img img {
+  max-width: 100%;
+  max-height: 340px;
+  width: auto;
+  height: auto;
+  object-fit: contain;
+  border-radius: 8px;
+  border: 1px solid #e5e7eb;
+  display: block;
+}
+
+.ProseMirror .producao-quadro-texto {
+  width: 100%;
+}
+
+/* ===== PRINT ===== */
+@media print {
+  .ProseMirror .pagina {
+    width: 210mm;
+    min-height: 297mm;
+    box-shadow: none;
+    margin: 0;
+    page-break-after: always;
+    break-after: page;
+  }
+
+  .ProseMirror .pagina:last-child {
+    page-break-after: avoid;
+    break-after: avoid;
+  }
+}
+
+/* ===== CAPAS ALTERNATIVAS (RelatorioTemplate.modelo) =====
+   A capa 'classico' usa as classes .capa/.capa-hero/.capa-detalhes/etc.
+   já declaradas acima. Os 4 modelos abaixo (memorias, mascote, natureza,
+   essencial) são capas visualmente distintas, cada uma com seu próprio
+   namespace de classe (.capa-memorias-*, .capa-mascote-*, ...) para não
+   colidir com o clássico nem entre si. Todas reaproveitam --roxo/--verde
+   (e seus tons) em vez de cores próprias, para que a paleta escolhida no
+   RelatorioTemplate.config se aplique de forma consistente nas 5 capas. */
+
+/* ---------- MEMÓRIAS DA INFÂNCIA ---------- */
+.ProseMirror .capa-memorias {
+  padding: 40px 44px 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  position: relative;
+  overflow: hidden;
+}
+
+.ProseMirror .capa-memorias-blob {
+  position: absolute;
+  border-radius: 50%;
+  z-index: 0;
+  pointer-events: none;
+}
+
+.ProseMirror .capa-memorias-blob.b1 {
+  width: 200px;
+  height: 200px;
+  right: -60px;
+  top: 280px;
+  background: var(--roxo-claro);
+}
+
+.ProseMirror .capa-memorias-blob.b2 {
+  width: 240px;
+  height: 210px;
+  left: -90px;
+  top: 560px;
+  background: var(--verde-claro);
+  border-radius: 52% 48% 40% 60%;
+}
+
+.ProseMirror .capa-memorias-leaf {
+  position: absolute;
+  left: 26px;
+  bottom: 500px;
+  width: 80px;
+  height: 150px;
+  z-index: 1;
+  pointer-events: none;
+}
+
+.ProseMirror .capa-memorias-dots {
+  position: absolute;
+  right: 34px;
+  bottom: 280px;
+  width: 75px;
+  height: 75px;
+  z-index: 1;
+  pointer-events: none;
+}
+
+.ProseMirror .capa-memorias-logo-placeholder {
+  border: 1.5px dashed var(--roxo-claro);
+  border-radius: 10px;
+  padding: 8px 16px;
+  font-size: 8px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--roxo);
+  line-height: 1.4;
+}
+
+.ProseMirror .capa-memorias-topo {
+  position: relative;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.ProseMirror .capa-memorias-escola-nome {
+  font-size: 16px;
+  font-weight: 800;
+  color: var(--roxo-escuro);
+  margin-top: 10px;
+}
+
+.ProseMirror .capa-memorias-kicker {
+  margin-top: 20px;
+  font-size: 10.5px;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--cinza-medio);
+  font-weight: 700;
+}
+
+.ProseMirror .capa-memorias-nome-crianca {
+  font-family: var(--fonte-corpo, 'Lora', serif);
+  font-weight: 400;
+  font-style: italic;
+  color: var(--cor-texto-capa, var(--roxo-escuro));
+  font-size: calc(52px * var(--escala-nome, 1));
+  line-height: 1.15;
+  margin-top: 6px;
+  position: relative;
+  z-index: 2;
+  max-width: 640px;
+  overflow-wrap: break-word;
+  text-align: center;
+}
+
+.ProseMirror .capa-memorias-foto-wrap {
+  position: relative;
+  z-index: 2;
+  margin-top: 26px;
+  width: 450px;
+  height: 450px;
+}
+
+.ProseMirror .capa-memorias-foto-arco {
+  width: 100%;
+  height: 100%;
+  border-radius: 50% 50% 24px 24px;
+  overflow: hidden;
+  border: 3px solid var(--branco);
+  box-shadow: 0 10px 28px rgba(0, 0, 0, .12);
+  background: var(--roxo-ultra-claro);
+}
+
+.ProseMirror .capa-memorias-foto-arco img,
+.ProseMirror .capa-memorias-foto-arco svg {
+  width: 100% !important;
+  height: 100% !important;
+  max-width: none !important;
+  object-fit: cover !important;
+  display: block !important;
+  margin: 0 !important;
+  border-radius: 0 !important;
+}
+
+.ProseMirror .capa-memorias-meta {
+  position: relative;
+  z-index: 2;
+  margin-top: auto;
+  display: flex;
+  justify-content: center;
+  gap: 0;
+  width: 100%;
+}
+
+.ProseMirror .capa-memorias-meta-item {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 0 4px;
+  border-right: 1px solid var(--borda);
+}
+
+.ProseMirror .capa-memorias-meta-item:last-child {
+  border-right: 0;
+}
+
+.ProseMirror .capa-memorias-meta-item .icone-svg {
+  color: var(--roxo);
+  display: inline-flex;
+}
+
+.ProseMirror .capa-memorias-meta-item .rotulo {
+  font-size: 7.5px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  font-weight: 700;
+  color: var(--cinza-medio);
+  text-align: center;
+}
+
+.ProseMirror .capa-memorias-wave {
+  width: 100%;
+  height: 22px;
+  margin-top: 16px;
+  flex-shrink: 0;
+  position: relative;
+  z-index: 2;
+}
+
+.ProseMirror .capa-memorias-rodape {
+  position: relative;
+  z-index: 2;
+  margin-top: 0;
+  padding: 8px 0 28px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  text-align: center;
+}
+
+.ProseMirror .capa-memorias-nara-lock,
+.ProseMirror .capa-mascote-rodape .capa-memorias-nara-lock {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.ProseMirror .capa-memorias-nara-lock .nara-word {
+  font-weight: 900;
+  font-size: 14px;
+  color: var(--cinza-escuro);
+  text-align: left;
+}
+
+.ProseMirror .capa-memorias-nara-lock .nara-word em {
+  color: var(--roxo);
+  font-style: normal;
+}
+
+.ProseMirror .capa-memorias-nara-lock .nara-sub {
+  font-size: 6.5px;
+  color: var(--cinza-claro);
+  text-align: left;
+  line-height: 1.3;
+}
+
+.ProseMirror .capa-memorias-rodape .frase {
+  font-size: 10px;
+  font-style: italic;
+  color: var(--roxo-escuro);
+  line-height: 1.5;
+}
+
+/* ---------- COM A NARA ---------- */
+.ProseMirror .capa-mascote {
+  padding: 40px 44px 0;
+  position: relative;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.ProseMirror .capa-mascote-blob {
+  position: absolute;
+  z-index: 0;
+  pointer-events: none;
+}
+
+.ProseMirror .capa-mascote-blob.b1 {
+  width: 280px;
+  height: 250px;
+  right: -80px;
+  top: -50px;
+  background: var(--verde-claro);
+  border-radius: 50% 50% 46% 54%;
+}
+
+.ProseMirror .capa-mascote-blob.b2 {
+  width: 340px;
+  height: 270px;
+  left: -110px;
+  bottom: 60px;
+  background: var(--roxo-ultra-claro);
+  border-radius: 48% 52% 60% 40%;
+}
+
+.ProseMirror .capa-mascote-blob.b3 {
+  width: 220px;
+  height: 200px;
+  right: -40px;
+  bottom: 140px;
+  background: var(--roxo-ultra-claro);
+  border-radius: 55% 45% 42% 58%;
+}
+
+.ProseMirror .capa-mascote-sparks {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  z-index: 1;
+  pointer-events: none;
+}
+
+.ProseMirror .capa-mascote-logo-placeholder {
+  border: 1.5px dashed var(--roxo-claro);
+  border-radius: 10px;
+  padding: 8px 16px;
+  font-size: 8px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--roxo);
+  line-height: 1.4;
+  text-align: center;
+}
+
+.ProseMirror .capa-mascote-head {
+  position: relative;
+  z-index: 2;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+}
+
+.ProseMirror .capa-mascote-escola-nome {
+  font-size: 14px;
+  font-weight: 800;
+  color: var(--roxo-escuro);
+  text-align: right;
+  max-width: 220px;
+  padding-top: 10px;
+}
+
+.ProseMirror .capa-mascote-kicker {
+  position: relative;
+  z-index: 2;
+  margin-top: 26px;
+  text-align: center;
+  font-size: 10.5px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  font-weight: 700;
+  color: var(--roxo);
+}
+
+.ProseMirror .capa-mascote-titulo {
+  position: relative;
+  z-index: 2;
+  text-align: center;
+  font-family: var(--fonte-corpo, 'Lora', serif);
+  color: var(--cor-texto-capa, var(--roxo-escuro));
+  font-weight: 700;
+  line-height: 1.12;
+  font-size: calc(46px * var(--escala-titulo, 1));
+  margin-top: 8px;
+  max-width: 560px;
+  margin-left: auto;
+  margin-right: auto;
+}
+
+.ProseMirror .capa-mascote-swoosh {
+  position: relative;
+  z-index: 2;
+  width: 90px;
+  height: 4px;
+  background: var(--verde);
+  border-radius: 4px;
+  margin: 14px auto 0;
+}
+
+.ProseMirror .capa-mascote-pill {
+  position: relative;
+  z-index: 2;
+  margin: 18px auto 0;
+  background: var(--verde-claro);
+  border-radius: 999px;
+  padding: 12px 32px;
+  width: fit-content;
+  max-width: 82%;
+  font-weight: 800;
+  color: var(--cor-texto-capa, var(--roxo-escuro));
+  font-family: var(--fonte-corpo, 'Lora', serif);
+  font-size: calc(26px * var(--escala-nome, 1));
+  text-align: center;
+}
+
+.ProseMirror .capa-mascote-corpo {
+  position: relative;
+  z-index: 2;
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 30px;
+  margin-right: -44px;
+}
+
+.ProseMirror .capa-mascote-infocard {
+  background: var(--branco);
+  border-radius: 18px;
+  padding: 16px 20px;
+  box-shadow: 0 8px 20px rgba(44, 39, 64, .1);
+  width: 240px;
+  flex-shrink: 0;
+}
+
+.ProseMirror .capa-mascote-infocard .r {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 9px 0;
+  border-bottom: 1px dashed var(--borda);
+}
+
+.ProseMirror .capa-mascote-infocard .r:last-child {
+  border-bottom: 0;
+}
+
+.ProseMirror .capa-mascote-infocard .ic {
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.ProseMirror .capa-mascote-infocard .tx {
+  font-size: 11.5px;
+  font-weight: 700;
+  color: var(--cinza-escuro);
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+}
+
+.ProseMirror .capa-mascote-ilustracao {
+  flex-shrink: 0;
+  width: 250px;
+}
+
+.ProseMirror .capa-mascote-ilustracao svg,
+.ProseMirror .capa-mascote-ilustracao img {
+  width: 100% !important;
+  height: auto !important;
+  max-width: none !important;
+  display: block !important;
+  margin: 0 !important;
+}
+
+.ProseMirror .capa-mascote-rodape {
+  position: relative;
+  z-index: 2;
+  margin-top: auto;
+  padding: 10px 0 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+}
+
+.ProseMirror .capa-mascote-rodape .frase {
+  font-family: var(--fonte-corpo, 'Lora', serif);
+  font-style: italic;
+  font-size: 12px;
+  color: var(--roxo-escuro);
+  line-height: 1.4;
+  text-align: left;
+}
+
+.ProseMirror .capa-mascote-heart-sep {
+  width: 20px;
+  height: 20px;
+  flex-shrink: 0;
+}
+
+/* ---------- PEQUENAS DESCOBERTAS ---------- */
+.ProseMirror .capa-natureza {
+  padding: 40px 44px 0;
+  position: relative;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  background: var(--verde-ultra-claro);
+}
+
+.ProseMirror .capa-natureza-topdec-esquerda {
+  position: absolute;
+  left: -10px;
+  top: -10px;
+  width: 240px;
+  height: auto;
+  z-index: 1;
+  pointer-events: none;
+}
+
+.ProseMirror .capa-natureza-topdec-direita {
+  position: absolute;
+  right: -6px;
+  top: 60px;
+  width: 190px;
+  height: auto;
+  z-index: 1;
+  pointer-events: none;
+}
+
+.ProseMirror .capa-natureza-bot {
+  position: absolute;
+  left: 0;
+  bottom: 190px;
+  width: 100%;
+  height: auto;
+  z-index: 1;
+  pointer-events: none;
+}
+
+.ProseMirror .capa-natureza-logo-placeholder {
+  border: 1.5px dashed var(--verde);
+  border-radius: 10px;
+  padding: 8px 16px;
+  font-size: 8px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--verde-escuro);
+  line-height: 1.4;
+  text-align: center;
+}
+
+.ProseMirror .capa-natureza-head {
+  position: relative;
+  z-index: 2;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+}
+
+.ProseMirror .capa-natureza-escola-nome {
+  font-family: var(--fonte-corpo, 'Lora', serif);
+  font-size: 14px;
+  color: var(--verde-escuro);
+  text-align: right;
+  max-width: 220px;
+  padding-top: 8px;
+}
+
+.ProseMirror .capa-natureza-bloco {
+  position: relative;
+  z-index: 2;
+  margin-top: 32px;
+}
+
+.ProseMirror .capa-natureza-bloco.align-center {
+  text-align: center;
+}
+
+.ProseMirror .capa-natureza-bloco.align-left {
+  text-align: left;
+}
+
+.ProseMirror .capa-natureza-bloco.align-left .capa-natureza-namerow {
+  justify-content: flex-start;
+}
+
+.ProseMirror .capa-natureza-bloco.align-center .capa-natureza-namerow {
+  justify-content: center;
+}
+
+.ProseMirror .capa-natureza-kicker {
+  font-size: 10.5px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--cinza-medio);
+  font-weight: 700;
+}
+
+.ProseMirror .capa-natureza-titulo {
+  font-family: var(--fonte-corpo, 'Lora', serif);
+  line-height: 1.12;
+  font-size: calc(50px * var(--escala-titulo, 1));
+  color: var(--cor-texto-capa, var(--verde-escuro));
+  margin-top: 12px;
+  max-width: 560px;
+}
+
+.ProseMirror .capa-natureza-bloco.align-center .capa-natureza-titulo {
+  margin-left: auto;
+  margin-right: auto;
+}
+
+.ProseMirror .capa-natureza-titulo em {
+  font-style: normal;
+  color: var(--coral);
+}
+
+.ProseMirror .capa-natureza-namerow {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-top: 16px;
+}
+
+.ProseMirror .capa-natureza-sprig {
+  width: 22px;
+  height: 40px;
+  color: var(--coral);
+  flex-shrink: 0;
+  display: inline-flex;
+}
+
+.ProseMirror .capa-natureza-nome-crianca {
+  font-family: var(--fonte-corpo, 'Lora', serif);
+  font-size: calc(36px * var(--escala-nome, 1));
+  color: var(--cinza-escuro);
+}
+
+.ProseMirror .capa-natureza-foto {
+  width: 68px;
+  height: 68px;
+  border-radius: 50%;
+  border: 2px dashed var(--verde);
+  flex-shrink: 0;
+  overflow: hidden;
+}
+
+.ProseMirror .capa-natureza-foto img,
+.ProseMirror .capa-natureza-foto svg {
+  width: 100% !important;
+  height: 100% !important;
+  max-width: none !important;
+  object-fit: cover !important;
+  display: block !important;
+  margin: 0 !important;
+  border-radius: 0 !important;
+}
+
+.ProseMirror .capa-natureza-divider {
+  position: relative;
+  z-index: 2;
+  margin-top: auto;
+  border-top: 1px solid var(--borda);
+}
+
+.ProseMirror .capa-natureza-meta {
+  position: relative;
+  z-index: 2;
+  padding-top: 16px;
+  display: flex;
+}
+
+.ProseMirror .capa-natureza-meta-item {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  border-right: 1px solid var(--borda);
+}
+
+.ProseMirror .capa-natureza-meta-item:last-child {
+  border-right: 0;
+}
+
+.ProseMirror .capa-natureza-meta-item .icone-svg {
+  width: 16px;
+  height: 28px;
+  color: var(--coral);
+  display: inline-flex;
+}
+
+.ProseMirror .capa-natureza-meta-item .rotulo {
+  font-size: 8px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  font-weight: 700;
+  color: var(--cinza-medio);
+  text-align: center;
+}
+
+.ProseMirror .capa-natureza-rodape {
+  position: relative;
+  z-index: 2;
+  padding: 12px 0 22px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  text-align: center;
+}
+
+.ProseMirror .capa-natureza-frase-linha {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.ProseMirror .capa-natureza-frase-linha .dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--coral);
+  flex-shrink: 0;
+}
+
+.ProseMirror .capa-natureza-rodape .frase {
+  font-family: var(--fonte-corpo, 'Lora', serif);
+  font-style: italic;
+  font-size: 10.5px;
+  color: var(--verde-escuro);
+}
+
+/* ---------- ESSENCIAL ---------- */
+.ProseMirror .capa-essencial {
+  padding: 40px 48px 0;
+  position: relative;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  background: var(--branco);
+}
+
+.ProseMirror .capa-essencial-band {
+  position: absolute;
+  right: 0;
+  top: 0;
+  bottom: 400px;
+  width: 230px;
+  background: var(--roxo);
+  border-radius: 130px 0 0 130px;
+  z-index: 1;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  padding-bottom: 40px;
+}
+
+.ProseMirror .capa-essencial-mascote-wrap {
+  width: 190px;
+}
+
+.ProseMirror .capa-essencial-mascote-wrap img {
+  width: 100%;
+  height: auto;
+  display: block;
+}
+
+.ProseMirror .capa-essencial-marca-fallback {
+  color: var(--branco);
+  font-family: 'Nunito', sans-serif;
+  font-weight: 800;
+  font-size: 13px;
+  letter-spacing: 0.08em;
+  text-align: center;
+}
+
+.ProseMirror .capa-essencial-logo-placeholder {
+  border: 1.5px dashed var(--roxo-claro);
+  border-radius: 10px;
+  padding: 8px 16px;
+  font-size: 8px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--roxo);
+  line-height: 1.4;
+  text-align: center;
+  flex-shrink: 0;
+}
+
+.ProseMirror .capa-essencial-head {
+  position: relative;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.ProseMirror .capa-essencial-divisor {
+  width: 2px;
+  height: 34px;
+  background: var(--verde);
+  flex-shrink: 0;
+}
+
+.ProseMirror .capa-essencial-escola-nome {
+  font-size: 16px;
+  font-weight: 800;
+  color: var(--cinza-escuro);
+  line-height: 1.3;
+}
+
+.ProseMirror .capa-essencial-escola-linha {
+  font-size: 10px;
+  font-weight: 400;
+  color: var(--cinza-claro);
+  margin-top: 4px;
+}
+
+.ProseMirror .capa-essencial-bloco {
+  position: relative;
+  z-index: 2;
+  margin-top: 60px;
+}
+
+.ProseMirror .capa-essencial-bloco.align-center {
+  text-align: center;
+}
+
+.ProseMirror .capa-essencial-kicker {
+  font-size: 10.5px;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--cinza-claro);
+  font-weight: 700;
+  line-height: 1.8;
+  max-width: 300px;
+}
+
+.ProseMirror .capa-essencial-titulo {
+  font-weight: 800;
+  letter-spacing: -0.01em;
+  line-height: 1.05;
+  font-size: calc(46px * var(--escala-titulo, 1));
+  color: var(--cor-texto-capa, var(--cinza-escuro));
+  margin-top: 10px;
+  max-width: 340px;
+}
+
+.ProseMirror .capa-essencial-bloco.align-center .capa-essencial-titulo {
+  margin-left: auto;
+  margin-right: auto;
+}
+
+.ProseMirror .capa-essencial-regua {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 24px;
+}
+
+.ProseMirror .capa-essencial-regua > p {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0;
+}
+
+.ProseMirror .capa-essencial-bloco.align-center .capa-essencial-regua {
+  justify-content: center;
+}
+
+.ProseMirror .capa-essencial-regua .linha {
+  height: 1.5px;
+  width: 100px;
+  background: var(--borda);
+}
+
+.ProseMirror .capa-essencial-regua .circulo {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--verde);
+  flex-shrink: 0;
+}
+
+.ProseMirror .capa-essencial-nome-crianca {
+  font-family: var(--fonte-corpo, 'Lora', serif);
+  font-size: calc(32px * var(--escala-nome, 1));
+  color: var(--cinza-escuro);
+  margin-top: 18px;
+}
+
+.ProseMirror .capa-essencial-meta {
+  position: relative;
+  z-index: 2;
+  margin-top: auto;
+  padding-top: 24px;
+  display: grid;
+  grid-template-columns: repeat(2, auto);
+  gap: 16px 60px;
+  width: fit-content;
+}
+
+.ProseMirror .capa-essencial-bloco.align-center~.capa-essencial-meta {
+  margin-left: auto;
+  margin-right: auto;
+}
+
+.ProseMirror .capa-essencial-meta-item {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.ProseMirror .capa-essencial-meta-item > p {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin: 0;
+}
+
+.ProseMirror .capa-essencial-meta-item .rotulo {
+  font-size: 8.5px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--cinza-claro);
+  font-weight: 700;
+}
+
+.ProseMirror .capa-essencial-meta-item .valor {
+  font-size: 13px;
+  color: var(--cinza-escuro);
+  font-weight: 700;
+}
+
+.ProseMirror .capa-essencial-greenline {
+  position: relative;
+  z-index: 2;
+  margin-top: 20px;
+  height: 1.5px;
+  background: var(--verde);
+}
+
+.ProseMirror .capa-essencial-rodape {
+  position: relative;
+  z-index: 2;
+  padding: 18px 0 28px;
+  display: flex;
+  align-items: center;
+  gap: 20px;
+}
+
+.ProseMirror .capa-essencial-rodape .frase {
+  font-size: 10.5px;
+  color: var(--cinza-medio);
+  line-height: 1.5;
+  flex: 1;
+}
+
+.ProseMirror .capa-essencial-rodape .site {
+  font-size: 10.5px;
+  color: var(--roxo);
+  font-weight: 700;
+  flex-shrink: 0;
+}

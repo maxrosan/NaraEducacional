@@ -1,0 +1,70 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/compose-spec/compose-spec/master/schema/compose-spec.json
+#
+# Stack do scheduler central (Redis + Celery beat + Celery worker).
+# Roda separado da infra de cada escola. Configure escolas.yaml com os
+# parâmetros (URL do backend, instituicao_id, token interno) de cada escola.
+services:
+  redis:
+    image: redis:7-alpine
+    container_name: nara-scheduler-redis
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - scheduler-net
+
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: nara-scheduler-worker
+    restart: unless-stopped
+    command: ["celery", "-A", "celery_app", "worker", "--loglevel=INFO", "--concurrency=4"]
+    environment:
+      CELERY_BROKER_URL: ${CELERY_BROKER_URL:-redis://redis:6379/0}
+      CELERY_RESULT_BACKEND: ${CELERY_RESULT_BACKEND:-}
+      CELERY_TIMEZONE: ${CELERY_TIMEZONE:-America/Sao_Paulo}
+      ESCOLAS_JSON: ${ESCOLAS_JSON:-}
+      ESCOLAS_YAML: ${ESCOLAS_YAML:-}
+      SENTRY_DSN: ${SENTRY_DSN:-}
+    env_file:
+      - .env
+    extra_hosts:
+      # Permite que o worker alcance o backend rodando no host em dev local
+      # (por exemplo, `http://host.docker.internal:8001`).
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - scheduler-net
+
+  beat:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: nara-scheduler-beat
+    restart: unless-stopped
+    command: ["celery", "-A", "celery_app", "beat", "--loglevel=INFO"]
+    environment:
+      CELERY_BROKER_URL: ${CELERY_BROKER_URL:-redis://redis:6379/0}
+      CELERY_RESULT_BACKEND: ${CELERY_RESULT_BACKEND:-}
+      CELERY_TIMEZONE: ${CELERY_TIMEZONE:-America/Sao_Paulo}
+      CACHE_REFRESH_HOUR: ${CACHE_REFRESH_HOUR:-2}
+      CACHE_REFRESH_MINUTE: ${CACHE_REFRESH_MINUTE:-0}
+      ESCOLAS_JSON: ${ESCOLAS_JSON:-}
+      ESCOLAS_YAML: ${ESCOLAS_YAML:-}
+    env_file:
+      - .env
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - scheduler-net
+
+networks:
+  scheduler-net:
+    driver: bridge

@@ -1,0 +1,21 @@
+## Pages
+- [NARA - Detalhe do Alerta](/notificationdetail): Detalhe completo do alerta de registros.
+- [NARA - Gerar Relatórios](/reportselection): Selecione a turma e a criança para gerar o relatório.
+- [NARA - Gestão de Perguntas BNCC](/bnccquestions): Gerencie as perguntas pedagógicas baseadas na BNCC.
+- [NARA - Gravação](/recording): Grave observações de voz e transcreva com IA.
+- [NARA - Home do Professor](/professorhome): Página inicial do professor no NARA. Acesse registros, relatórios, planejamentos e mais.
+- [NARA - Indicadores da Coordenação](/coordinatorindicators): Página de indicadores para a coordenação pedagógica.
+- [NARA - Login](/login): Acesse o NARA - Núcleo de Acompanhamento e Registro da Aprendizagem. Faça login para acompanhar o desenvolvimento educacional.
+- [NARA - Meus Indicadores](/indicators): Acompanhe seus indicadores de prática pedagógica.
+- [NARA - Meus Projetos](/projects): Cadastre e gerencie os projetos pedagógicos.
+- [NARA - Nova Observação](/newobservation): No description available
+- [NARA - Painel Administrativo](/admin): Área de administração e configuração do NARA.
+- [NARA - Painel da Coordenação](/coordinatorhome): Painel de controle para a coordenação pedagógica.
+- [NARA - Planejamento Semanal](/planning): Crie e gerencie o planejamento semanal da sua turma.
+- [NARA - Portfólios](/portfolios): Gerencie os portfólios das crianças.
+- [NARA - Recuperar Senha](/forgotpassword): No description available
+- [NARA - Redefinir Senha](/resetpassword): No description available
+- [NARA - Registro de Especialista](/specialistobservation): Registre sua observação especializada.
+- [NARA - Registro Guiado](/guidedobservation): Realize o registro de observação guiado por perguntas.
+- [NARA - Relatório do Especialista](/specialistreport): Registre suas observações para as turmas.
+- [Relatório Bimestral:](/bimonthlyreport): No description available

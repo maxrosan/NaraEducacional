@@ -1,0 +1,144 @@
+# === SERVER (Django) ===
+# Banco de dados SQLite
+server/*.sqlite3
+server/*.db
+server/db.sqlite3
+
+# Arquivos de upload
+server/uploads/
+server/uploads/*
+
+# Arquivos Python
+server/__pycache__/
+server/*/__pycache__/
+server/*/*/__pycache__/
+server/*.pyc
+server/*.pyo
+server/.env
+server/venv/
+
+# Logs Django
+server/*.log
+
+# === CLIENT (React/Vite) ===
+# Dependências
+client/node_modules/
+client/.pnp
+client/.pnp.js
+
+# Build
+client/dist/
+client/build/
+
+# Cache
+client/.vite/
+client/.cache/
+
+# Logs
+client/npm-debug.log*
+client/yarn-debug.log*
+client/yarn-error.log*
+
+# Environment
+/.env
+/.env.prod
+client/.env
+client/.env.local
+client/.env.development.local
+client/.env.test.local
+client/.env.production.local
+
+# Node modules (raiz)
+node_modules/
+
+# === SCHEDULER (Celery beat + worker) ===
+scheduler/.env
+scheduler/escolas.yaml
+scheduler/__pycache__/
+scheduler/*/__pycache__/
+scheduler/*.pyc
+scheduler/*.pyo
+scheduler/venv/
+scheduler/celerybeat-schedule
+scheduler/celerybeat-schedule.*
+scheduler/celerybeat.pid
+scheduler/*.log
+
+# === REPORT GENERATOR (FastAPI + Playwright) ===
+report_generator/__pycache__/
+report_generator/*.pyc
+report_generator/*.pyo
+
+# === TRANSCRIPTION SERVICE (FastAPI + faster-whisper) ===
+transcription_service/.env
+transcription_service/__pycache__/
+transcription_service/*/__pycache__/
+transcription_service/*/*/__pycache__/
+transcription_service/*.pyc
+transcription_service/*.pyo
+transcription_service/venv/
+transcription_service/models/
+transcription_service/*.log
+
+# === TESTES (pasta raiz) ===
+venv/
+tests/.env
+tests/__pycache__/
+tests/out.txt
+tests/*
+# Exceção: os testes de componente (vitest + jsdom) precisam ser versionados
+# para pegar regressão no CI e na máquina dos outros. O vitest.config.js já
+# aponta o include para cá. O resto de tests/ — E2E Playwright, .env,
+# artefatos de execução — continua local.
+!tests/frontend/
+
+# === KIT DE TESTES DO GRAVADOR (docs/gravador) ===
+# Artefatos gerados ao rodar os scripts — o token é uma credencial do aparelho
+docs/gravador/token.txt
+docs/gravador/teste.wav
+docs/gravador/__pycache__/
+
+# === GERAL ===
+# AI Assistant configs
+.github/
+CLAUDE.md
+.claude/
+
+# IDE
+.vscode/settings.json
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Arquivos de teste temporários (fora da pasta tests/)
+test_*.html
+test_*.py
+!tests/test_*.py
+*.tmp
+*.temp
+test-files/
+server/test/
+
+# Backup files
+*.bak
+*.backup
+backups/
+
+# Scripts auxiliares (dados sensíveis/temporários)
+scripts/
+
+# Estado de trabalho pessoal (uso local, não versionar)
+LAST_STATE.md
+start_backend.bat
+start_frontend.bat
+setup_report_generator.bat
+start_report_generator.bat
+start_transcription.bat
+start_worker_gravador.bat
+desenho-nara*
+escrita-nara*
+docs/PLANO_SUBSTITUICAO_COORDENACAO.md

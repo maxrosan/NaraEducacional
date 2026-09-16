@@ -1,0 +1,12 @@
+HTTP/1.1 200 OK
+x-amz-request-id: 4RM01NWZNDYXJSDP
+x-amz-id-2: FK/Rc1TX9EuAQtYxXSB/iKIhkVuU85AEXaXr2GFuuMY8oE4q85phL8MRckFiaE6Wbw1jEBDAbCALUzfGPQ1BBg9jGbqOLPwU
+Content-Length: 821
+Accept-Ranges: bytes
+Date: Tue, 15 Sep 2026 14:49:43 GMT
+Server: AmazonS3
+Last-Modified: Tue, 15 Sep 2026 14:37:22 GMT
+ETag: "ad5a83f64834fe035e1c205215b1b294"
+Content-Type: image/heic
+x-amz-server-side-encryption: AES256
+

@@ -1,0 +1,27 @@
+# Dockerfile.ep.prod — Frontend React/Vite para EasyPanel
+# EasyPanel já fornece reverse proxy (Traefik), não precisa de nginx
+
+FROM node:20-alpine AS build
+
+WORKDIR /app
+
+COPY package*.json ./
+RUN npm ci --legacy-peer-deps
+
+COPY . .
+
+ARG VITE_API_BASE_URL
+ENV VITE_API_BASE_URL=${VITE_API_BASE_URL}
+
+RUN npm run build
+
+# Estágio final: serve estático com 'serve'
+FROM node:20-alpine
+
+RUN npm install -g serve
+
+COPY --from=build /app/dist /app/dist
+
+EXPOSE 80
+
+CMD ["serve", "-s", "/app/dist", "-l", "80"]

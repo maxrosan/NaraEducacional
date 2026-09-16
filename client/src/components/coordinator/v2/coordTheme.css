@@ -1,0 +1,549 @@
+/*
+ * Tema da NOVA coordenação (NARAEDU).
+ * IMPORTANTE: todo seletor é escopado sob `.coord-shell` para NÃO vazar
+ * estilos globais e não afetar os perfis professor/especialista/admin.
+ * Portado fielmente dos mockups HTML enviados pelo dono do projeto.
+ */
+@import url('https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700;800&display=swap');
+
+.coord-shell {
+  --bg-main: #F5F5F7;
+  --bg-card: #FFFFFF;
+
+  --purple: #7E5BBE;
+  --purple-strong: #6B4FA8;
+  --purple-dark: #4A3370;
+  --purple-soft: #EDE7F6;
+  --purple-softer: #F5F0FB;
+
+  --green: #4CAF50;
+  --green-soft: #A5D6A7;
+  --green-bg: #E8F5E9;
+
+  --red: #EF5350;
+  --red-soft: #E57373;
+  --red-bg: #FFEBEE;
+
+  --blue: #5C9CE6;
+  --blue-bg: #E3F2FD;
+
+  --amber: #FFA726;
+  --amber-bg: #FFF3E0;
+
+  --text-dark: #1A1A2E;
+  --text-body: #2F2F42;
+  --text-muted: #6B7280;
+  --text-light: #9CA3AF;
+
+  --border: #E5E7EB;
+  --border-light: #F3F4F6;
+
+  background: var(--bg-main);
+  color: var(--text-dark);
+  font-family: 'Poppins', -apple-system, sans-serif;
+  font-size: 14px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  min-height: 100vh;
+}
+
+.coord-shell *,
+.coord-shell *::before,
+.coord-shell *::after { box-sizing: border-box; }
+
+/* ============ TOOLTIP / INFO TIP ============ */
+.coord-shell .tip {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 16px; height: 16px; border-radius: 50%;
+  border: 1.5px solid var(--text-light); color: var(--text-light);
+  font-size: 10px; font-weight: 700; font-family: 'Poppins', sans-serif;
+  cursor: help; position: relative; margin-left: 6px; flex-shrink: 0;
+  transition: all 0.15s; background: transparent; line-height: 1;
+  user-select: none; vertical-align: middle;
+}
+.coord-shell .tip:hover, .coord-shell .tip:focus {
+  border-color: var(--purple); color: var(--purple);
+  background: var(--purple-softer); outline: none;
+}
+.coord-shell .tip::before {
+  content: attr(data-tip); position: absolute; bottom: calc(100% + 12px);
+  left: 50%; transform: translateX(-50%) translateY(6px);
+  background: #1A1A2E; color: white; padding: 12px 14px; border-radius: 10px;
+  font-size: 12px; font-weight: 400; line-height: 1.55; width: max-content;
+  max-width: 280px; white-space: normal; text-align: left; letter-spacing: 0.1px;
+  opacity: 0; visibility: hidden; pointer-events: none;
+  transition: opacity 0.18s, transform 0.18s, visibility 0.18s;
+  z-index: 100; box-shadow: 0 12px 32px rgba(0,0,0,0.2);
+}
+.coord-shell .tip::after {
+  content: ''; position: absolute; bottom: calc(100% + 6px); left: 50%;
+  transform: translateX(-50%) translateY(6px); width: 0; height: 0;
+  border-left: 6px solid transparent; border-right: 6px solid transparent;
+  border-top: 6px solid #1A1A2E; opacity: 0; visibility: hidden;
+  pointer-events: none; transition: opacity 0.18s, transform 0.18s, visibility 0.18s; z-index: 100;
+}
+.coord-shell .tip:hover::before, .coord-shell .tip:hover::after,
+.coord-shell .tip:focus::before, .coord-shell .tip:focus::after {
+  opacity: 1; visibility: visible; transform: translateX(-50%) translateY(0);
+}
+.coord-shell .tip.left::before { left: auto; right: -8px; transform: translateY(6px); }
+.coord-shell .tip.left::after { left: auto; right: 0; transform: translateY(6px); }
+.coord-shell .tip.left:hover::before, .coord-shell .tip.left:focus::before { transform: translateY(0); }
+.coord-shell .tip.left:hover::after, .coord-shell .tip.left:focus::after { transform: translateY(0); }
+
+/* ============ TOPBAR ============ */
+.coord-shell .topbar {
+  background: var(--bg-card); border-bottom: 1px solid var(--border-light);
+  padding: 16px 28px; display: flex; align-items: center; justify-content: space-between;
+  position: sticky; top: 0; z-index: 20;
+}
+.coord-shell .logo-block { display: flex; align-items: center; gap: 12px; }
+.coord-shell .logo-icon { width: 38px; height: 38px; flex-shrink: 0; display: block; object-fit: contain; }
+.coord-shell .logo-text-wrap { display: flex; flex-direction: column; line-height: 1; }
+.coord-shell .logo-text { font-size: 20px; font-weight: 800; color: var(--purple); letter-spacing: -0.5px; }
+.coord-shell .logo-text-sub { font-size: 8.5px; font-weight: 700; color: var(--green); letter-spacing: 0.8px; margin-top: 2px; }
+.coord-shell .topbar-right { display: flex; align-items: center; gap: 14px; }
+.coord-shell .bell-btn, .coord-shell .avatar-btn {
+  position: relative; width: 40px; height: 40px; border-radius: 12px;
+  background: transparent; border: none; display: flex; align-items: center;
+  justify-content: center; cursor: pointer; color: var(--text-dark); transition: background 0.15s;
+}
+.coord-shell .bell-btn:hover, .coord-shell .avatar-btn:hover { background: var(--bg-main); }
+.coord-shell .bell-dot {
+  position: absolute; top: 10px; right: 10px; width: 8px; height: 8px;
+  background: var(--red); border-radius: 50%; border: 2px solid var(--bg-card);
+}
+
+/* ============ DROPDOWN DE NOTIFICAÇÕES ============ */
+.coord-shell .notif-wrap { position: relative; }
+.coord-shell .notif-panel {
+  position: absolute; top: calc(100% + 8px); right: 0; width: 320px; max-width: 90vw;
+  background: var(--bg-card); border-radius: 14px; border: 1px solid var(--border-light);
+  box-shadow: 0 16px 40px rgba(26, 26, 46, 0.16); padding: 14px; z-index: 50;
+  animation: coordFadeUp 0.15s ease-out;
+}
+.coord-shell .notif-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+.coord-shell .notif-title { font-size: 13px; font-weight: 700; color: var(--text-dark); }
+.coord-shell .notif-count { font-size: 11px; color: var(--text-muted); }
+.coord-shell .notif-empty { font-size: 13px; color: var(--text-muted); padding: 8px 2px; }
+.coord-shell .notif-loading { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--text-muted); padding: 8px 2px; }
+.coord-shell .notif-list { list-style: none; margin: 0; padding: 0; max-height: 320px; overflow-y: auto; display: flex; flex-direction: column; gap: 2px; }
+.coord-shell .notif-item {
+  width: 100%; text-align: left; background: transparent; border: none; border-radius: 10px;
+  padding: 9px 10px; font-size: 13px; color: var(--text-body); cursor: pointer;
+  font-family: inherit; transition: background 0.12s;
+}
+.coord-shell .notif-item:hover { background: var(--purple-softer); color: var(--purple-strong); }
+
+/* ============ TABBAR ============ */
+.coord-shell .tabbar {
+  background: var(--bg-card); padding: 10px 20px; display: flex; gap: 4px;
+  border-bottom: 1px solid var(--border-light); position: sticky; top: 71px;
+  z-index: 15; overflow-x: auto; scrollbar-width: none;
+}
+.coord-shell .tabbar::-webkit-scrollbar { display: none; }
+.coord-shell .tab {
+  width: 54px; height: 48px; border-radius: 12px; border: none; background: transparent;
+  display: flex; align-items: center; justify-content: center; cursor: pointer;
+  color: var(--text-muted); transition: all 0.2s; flex-shrink: 0; position: relative;
+  text-decoration: none;
+}
+.coord-shell .tab:hover { background: var(--bg-main); color: var(--purple); }
+.coord-shell .tab.active { background: var(--purple-soft); color: var(--purple); }
+.coord-shell .tab svg { width: 22px; height: 22px; stroke-width: 2; }
+.coord-shell .tab-badge {
+  position: absolute; top: 6px; right: 8px; min-width: 18px; height: 18px; padding: 0 5px;
+  border-radius: 9px; background: var(--red); color: white; font-size: 10px; font-weight: 700;
+  display: flex; align-items: center; justify-content: center;
+}
+
+/* ============ CONTENT ============ */
+.coord-shell .content { max-width: 100%; padding: 24px 32px 48px; }
+
+/* cache status line (funcionalidade preservada do layout antigo) */
+.coord-shell .cache-line {
+  max-width: 100%; padding: 8px 32px 0; font-size: 11.5px;
+  color: var(--text-muted); display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+}
+.coord-shell .cache-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+.coord-shell .cache-dot.ok { background: var(--green); }
+.coord-shell .cache-dot.stale { background: var(--amber); }
+.coord-shell .cache-refresh {
+  border: none; background: var(--purple-soft); color: var(--purple); cursor: pointer;
+  font-family: inherit; font-weight: 600; font-size: 11px; padding: 4px 10px; border-radius: 8px;
+  display: inline-flex; align-items: center; gap: 5px;
+}
+.coord-shell .cache-refresh:hover { background: var(--purple); color: #fff; }
+.coord-shell .cache-refresh:disabled { opacity: 0.5; cursor: default; }
+
+/* Seletor de período avaliativo — recorta TODAS as telas da coordenação. */
+.coord-shell .periodo-label {
+  font-weight: 600; color: var(--text-dark); text-transform: uppercase;
+  letter-spacing: 0.4px; font-size: 10.5px;
+}
+.coord-shell .periodo-select {
+  font-family: inherit; font-size: 12px; font-weight: 600;
+  color: var(--purple); background: var(--purple-soft);
+  border: 1px solid transparent; border-radius: 8px;
+  padding: 4px 10px; cursor: pointer; max-width: 100%;
+}
+.coord-shell .periodo-select:hover:not(:disabled) { border-color: var(--purple); }
+.coord-shell .periodo-select:focus-visible { outline: 2px solid var(--purple); outline-offset: 1px; }
+.coord-shell .periodo-select:disabled { opacity: 0.55; cursor: default; }
+.coord-shell .periodo-intervalo { color: var(--text-muted); }
+.coord-shell .cache-sep { color: var(--text-light); }
+.coord-shell .periodo-datas { display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.coord-shell .periodo-data-input {
+  font-family: inherit; font-size: 11.5px; color: var(--text-dark);
+  border: 1px solid var(--purple-soft); border-radius: 8px; padding: 3px 8px; background: #fff;
+}
+.coord-shell .periodo-data-input:focus-visible { outline: 2px solid var(--purple); outline-offset: 1px; }
+
+/* ---- Tabela de produção docente (dentro do indicator-card, roxo) ----
+   Texto claro sobre roxo: os tokens --text-* são para superfície branca e
+   sumiam no fundo. Nome com reticências em vez de quebrar em três linhas, e
+   zeros esmaecidos para o olho ir ao que tem valor. */
+.coord-shell .prod-scroll {
+  position: relative; margin-top: 12px; max-height: 260px; overflow-y: auto; overflow-x: auto;
+}
+.coord-shell .prod-scroll::-webkit-scrollbar { width: 6px; height: 6px; }
+.coord-shell .prod-scroll::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.3); border-radius: 99px; }
+.coord-shell .prod-scroll::-webkit-scrollbar-track { background: transparent; }
+
+.coord-shell .prod-table { width: 100%; border-collapse: collapse; font-size: 12.5px; color: #fff; }
+
+.coord-shell .prod-table thead th {
+  position: sticky; top: 0; z-index: 1;
+  background: var(--purple-strong, #6b4bb8);
+  text-align: left; white-space: nowrap; cursor: pointer; user-select: none;
+  font-size: 9.5px; font-weight: 700; letter-spacing: 0.3px; text-transform: uppercase;
+  color: rgba(255,255,255,0.7);
+  padding: 6px 10px 8px 0;
+  border-bottom: 1px solid rgba(255,255,255,0.22);
+}
+.coord-shell .prod-table thead th:hover { color: #fff; }
+.coord-shell .prod-table thead th.sorted { color: var(--green-soft, #a5d6a7); }
+.coord-shell .prod-table thead th:focus-visible { outline: 2px solid #fff; outline-offset: -2px; }
+
+/* Colunas numericas: largura minima, para o nome ficar com o resto. */
+.coord-shell .prod-table th.num,
+.coord-shell .prod-table td.num {
+  text-align: right; padding-right: 2px; padding-left: 10px;
+  font-variant-numeric: tabular-nums; width: 1%; white-space: nowrap;
+}
+
+.coord-shell .prod-table td {
+  padding: 9px 12px 9px 0;
+  border-bottom: 1px solid rgba(255,255,255,0.10);
+  vertical-align: middle;
+}
+.coord-shell .prod-table tbody tr:last-child td { border-bottom: none; }
+.coord-shell .prod-table tbody tr:hover td { background: rgba(255,255,255,0.08); }
+
+/* Nome ocupa o espaço restante e trunca — evita linha de 3 alturas. */
+.coord-shell .prod-nome {
+  max-width: 1px; width: 99%;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  font-weight: 600;
+}
+.coord-shell .prod-table td.num { font-weight: 600; }
+.coord-shell .prod-zero { opacity: 0.35; font-weight: 400; }
+
+/* Total: primeira coluna depois do nome, com peso visual de sintese. */
+.coord-shell .prod-table td.destaque { font-size: 14px; font-weight: 700; color: var(--green-soft, #a5d6a7); }
+.coord-shell .prod-table td.destaque.prod-zero { color: inherit; }
+.coord-shell .prod-table th.destaque { color: rgba(255,255,255,0.85); }
+.coord-shell .prod-table th.destaque.sorted { color: var(--green-soft, #a5d6a7); }
+
+.coord-shell .sort-arrow { margin-left: 5px; font-size: 8px; opacity: 0.55; }
+.coord-shell .prod-table thead th.sorted .sort-arrow { opacity: 1; }
+
+.coord-shell .prod-nota {
+  position: relative; margin-top: 10px;
+  font-size: 11px; line-height: 1.45; color: rgba(255,255,255,0.7);
+}
+
+.coord-shell .greeting { margin-bottom: 24px; animation: coordFadeIn 0.5s ease-out; }
+.coord-shell .greeting-title { font-size: 28px; font-weight: 700; color: var(--text-dark); letter-spacing: -0.5px; }
+.coord-shell .greeting-sub { font-size: 14px; color: var(--text-muted); margin-top: 4px; font-weight: 400; }
+.coord-shell .greeting-highlight { color: var(--purple); font-weight: 600; }
+
+/* ============ CARDS ============ */
+.coord-shell .card {
+  background: var(--bg-card); border-radius: 18px; padding: 22px 24px;
+  position: relative; overflow: visible; animation: coordFadeUp 0.5s ease-out backwards;
+}
+.coord-shell .card::before {
+  content: ''; position: absolute; left: 0; top: 16px; bottom: 16px; width: 4px; border-radius: 0 3px 3px 0;
+}
+.coord-shell .card.green::before { background: var(--green-soft); }
+.coord-shell .card.purple::before { background: var(--purple); }
+.coord-shell .card.blue::before { background: var(--blue); }
+.coord-shell .card.red::before { background: var(--red-soft); }
+.coord-shell .card.amber::before { background: var(--amber); }
+.coord-shell .card-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; margin-bottom: 14px; }
+.coord-shell .card-title-wrap { display: flex; align-items: center; }
+.coord-shell .card-title { font-size: 15px; font-weight: 600; color: var(--text-dark); line-height: 1.35; }
+.coord-shell .card-icon { width: 24px; height: 24px; color: var(--text-light); flex-shrink: 0; }
+.coord-shell .card-number { font-size: 38px; font-weight: 700; color: var(--text-dark); line-height: 1.1; letter-spacing: -1px; margin-bottom: 4px; }
+.coord-shell .card-number .frac { font-size: 26px; color: var(--text-muted); font-weight: 600; }
+.coord-shell .card-desc { font-size: 13px; color: var(--text-muted); font-weight: 400; }
+.coord-shell .card-link {
+  display: inline-flex; align-items: center; gap: 6px; color: var(--purple);
+  font-weight: 600; font-size: 13px; margin-top: 12px; text-decoration: none; cursor: pointer; background: none; border: none; font-family: inherit;
+}
+.coord-shell .card-link:hover { color: var(--purple-strong); }
+.coord-shell .progress-bar { height: 10px; background: var(--border-light); border-radius: 99px; overflow: hidden; margin-top: 12px; }
+.coord-shell .progress-bar-fill { height: 100%; border-radius: 99px; transition: width 1.2s cubic-bezier(0.16, 1, 0.3, 1); }
+.coord-shell .progress-bar-fill.green { background: var(--green); }
+.coord-shell .top-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; margin-bottom: 20px; }
+.coord-shell .top-grid .card:nth-child(1) { animation-delay: 0.05s; }
+.coord-shell .top-grid .card:nth-child(2) { animation-delay: 0.1s; }
+.coord-shell .top-grid .card:nth-child(3) { animation-delay: 0.15s; }
+.coord-shell .top-grid .card:nth-child(4) { animation-delay: 0.2s; }
+
+/* ============ ATENÇÃO DA SEMANA ============ */
+.coord-shell .attention-card { background: var(--bg-card); border-radius: 18px; padding: 24px 26px; margin-bottom: 20px; animation: coordFadeUp 0.5s ease-out 0.25s backwards; overflow: visible; }
+.coord-shell .attention-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 18px; gap: 16px; flex-wrap: wrap; }
+.coord-shell .attention-title-wrap { display: flex; align-items: center; gap: 12px; }
+.coord-shell .attention-icon-box { width: 42px; height: 42px; border-radius: 12px; background: var(--amber-bg); display: flex; align-items: center; justify-content: center; color: var(--amber); flex-shrink: 0; }
+.coord-shell .attention-title-text { display: flex; align-items: center; }
+.coord-shell .attention-title { font-size: 17px; font-weight: 700; color: var(--text-dark); line-height: 1.2; }
+.coord-shell .attention-subtitle { font-size: 12px; color: var(--text-muted); margin-top: 2px; font-weight: 400; }
+.coord-shell .attention-pill { background: var(--amber-bg); color: var(--amber); padding: 6px 14px; border-radius: 99px; font-size: 12px; font-weight: 700; white-space: nowrap; }
+.coord-shell .attention-list { display: flex; flex-direction: column; gap: 10px; }
+.coord-shell .attention-row { background: var(--bg-main); border-radius: 14px; padding: 14px 16px; display: flex; align-items: center; gap: 14px; cursor: pointer; transition: all 0.15s; border: 1px solid transparent; }
+.coord-shell .attention-row:hover { background: white; border-color: var(--purple-soft); transform: translateX(2px); }
+.coord-shell .attention-row-icon { width: 38px; height: 38px; border-radius: 11px; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+.coord-shell .attention-row-icon.critical { background: var(--red-bg); color: var(--red); }
+.coord-shell .attention-row-icon.warning { background: var(--amber-bg); color: var(--amber); }
+.coord-shell .attention-row-icon.info { background: var(--purple-soft); color: var(--purple); }
+.coord-shell .attention-row-body { flex: 1; min-width: 0; }
+.coord-shell .attention-row-title { font-size: 14px; font-weight: 600; color: var(--text-dark); line-height: 1.4; }
+.coord-shell .attention-row-title em { font-style: normal; color: var(--purple); font-weight: 600; }
+.coord-shell .attention-row-meta { font-size: 12px; color: var(--text-muted); margin-top: 3px; font-weight: 400; }
+.coord-shell .attention-row-arrow { color: var(--text-light); flex-shrink: 0; transition: all 0.15s; }
+.coord-shell .attention-row:hover .attention-row-arrow { color: var(--purple); transform: translateX(3px); }
+.coord-shell .empty-hint { font-size: 13px; color: var(--text-muted); padding: 18px; text-align: center; background: var(--bg-main); border-radius: 14px; }
+
+/* ============ DOUBLE GRID ============ */
+.coord-shell .double-grid { display: grid; grid-template-columns: 1.3fr 1fr; gap: 20px; margin-bottom: 20px; }
+.coord-shell .bncc-block, .coord-shell .alfa-block { background: var(--bg-card); border-radius: 18px; padding: 22px 24px; animation: coordFadeUp 0.5s ease-out 0.3s backwards; overflow: visible; }
+.coord-shell .engajamento-block { background: var(--bg-card); border-radius: 18px; padding: 22px 24px; margin-bottom: 20px; animation: coordFadeUp 0.5s ease-out 0.35s backwards; }
+.coord-shell .engajamento-chart { margin-top: 6px; }
+.coord-shell .engajamento-chart .recharts-text { fill: var(--text-muted); }
+.coord-shell .alfa-block { animation-delay: 0.35s; }
+.coord-shell .block-head { display: flex; align-items: flex-start; justify-content: space-between; margin-bottom: 20px; }
+.coord-shell .block-head-left { display: flex; align-items: center; gap: 10px; }
+.coord-shell .block-mini-icon { color: var(--purple); flex-shrink: 0; }
+.coord-shell .block-title-wrap { display: flex; align-items: center; }
+.coord-shell .block-title { font-size: 16px; font-weight: 700; color: var(--text-dark); }
+.coord-shell .block-subtitle { font-size: 12px; color: var(--text-muted); margin-top: 2px; font-weight: 400; }
+.coord-shell .pill-ok { background: var(--green-bg); color: var(--green); padding: 6px 14px; border-radius: 99px; font-size: 11px; font-weight: 700; }
+.coord-shell .pill-warn { background: var(--amber-bg); color: var(--amber); padding: 6px 14px; border-radius: 99px; font-size: 11px; font-weight: 700; }
+.coord-shell .block-head-actions { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+.coord-shell .bncc-turma-select { min-width: 0; max-width: 190px; padding: 7px 10px; font-size: 12px; }
+.coord-shell .icon-link { display: flex; align-items: center; justify-content: center; width: 34px; height: 34px; border-radius: 10px; background: #EDE7F6; color: #7E5BBE; text-decoration: none; transition: all 0.15s; border: none; cursor: pointer; }
+.coord-shell .icon-link:hover { background: #7E5BBE; color: #fff; }
+.coord-shell .bncc-row { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; }
+.coord-shell .bncc-row:last-child { margin-bottom: 0; }
+
+/* Blocos por taxonomia: campos de experiência (Infantil) e componentes
+   curriculares (Fundamental) são réguas diferentes da BNCC e ficam separados,
+   cada um com percentual próprio. */
+.coord-shell .bncc-bloco + .bncc-bloco { margin-top: 18px; padding-top: 16px; border-top: 1px solid var(--border-light); }
+.coord-shell .bncc-bloco-titulo {
+  display: flex; align-items: baseline; justify-content: space-between; gap: 8px;
+  font-size: 10.5px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.4px;
+  color: var(--text-muted); margin-bottom: 12px;
+}
+.coord-shell .bncc-bloco-total { font-weight: 600; letter-spacing: 0; text-transform: none; color: var(--text-light); }
+.coord-shell .bncc-bar-emoji { width: 34px; height: 34px; border-radius: 10px; background: var(--purple-softer); display: flex; align-items: center; justify-content: center; font-size: 17px; flex-shrink: 0; }
+.coord-shell .bncc-info { flex: 1; min-width: 0; }
+.coord-shell .bncc-label { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
+.coord-shell .bncc-name { font-size: 13px; font-weight: 600; color: var(--text-dark); }
+.coord-shell .bncc-pct { font-size: 13px; font-weight: 700; color: var(--text-dark); }
+.coord-shell .bncc-bar-wrap { height: 8px; background: var(--border-light); border-radius: 99px; overflow: hidden; }
+.coord-shell .bncc-bar { height: 100%; border-radius: 99px; transition: width 1.2s cubic-bezier(0.16, 1, 0.3, 1); }
+.coord-shell .bncc-bar.good { background: var(--green); }
+.coord-shell .bncc-bar.attention { background: var(--amber); }
+.coord-shell .bncc-bar.critical { background: var(--red); }
+.coord-shell .bncc-bar.neutral { background: var(--text-light); }
+.coord-shell .alfa-list { display: flex; flex-direction: column; gap: 10px; }
+.coord-shell .alfa-item { background: var(--bg-main); border-radius: 14px; padding: 14px; cursor: pointer; transition: all 0.15s; }
+.coord-shell .alfa-item:hover { background: var(--purple-softer); }
+.coord-shell .alfa-item-head { display: flex; align-items: center; gap: 12px; margin-bottom: 10px; }
+.coord-shell .alfa-emoji { width: 34px; height: 34px; background: white; border-radius: 10px; display: flex; align-items: center; justify-content: center; font-size: 17px; flex-shrink: 0; }
+.coord-shell .alfa-name-wrap { flex: 1; }
+.coord-shell .alfa-name { font-size: 13px; font-weight: 600; color: var(--text-dark); }
+.coord-shell .alfa-detail { font-size: 11px; color: var(--text-muted); margin-top: 1px; }
+.coord-shell .alfa-movement { display: flex; gap: 8px; align-items: center; }
+.coord-shell .move { display: flex; align-items: center; gap: 3px; font-size: 11px; font-weight: 700; padding: 3px 8px; border-radius: 8px; }
+.coord-shell .move.up { background: var(--green-bg); color: var(--green); }
+.coord-shell .move.stable { background: var(--border-light); color: var(--text-muted); }
+.coord-shell .move.down { background: var(--red-bg); color: var(--red); }
+
+/* Distribuição de alfabetização (escrita/leitura) no card do Pulso */
+.coord-shell .alfa-dist-wrap { max-height: 320px; overflow-y: auto; padding-right: 4px; }
+.coord-shell .alfa-dist-group { margin-bottom: 14px; }
+.coord-shell .alfa-dist-group:last-child { margin-bottom: 0; }
+.coord-shell .alfa-dist-title { font-size: 13px; font-weight: 700; color: var(--text-dark); margin-bottom: 10px; }
+.coord-shell .alfa-dist-total { font-size: 11px; font-weight: 500; color: var(--text-muted); }
+.coord-shell .alfa-dist-empty { font-size: 12px; color: var(--text-muted); padding: 4px 0 10px; }
+.coord-shell .bncc-row-clickable { cursor: pointer; border-radius: 8px; padding: 4px 6px; margin-left: -6px; margin-right: -6px; transition: background 0.15s ease; }
+.coord-shell .bncc-row-clickable:hover { background: var(--purple-soft, rgba(124, 58, 237, 0.08)); }
+.coord-shell .bncc-row-clickable:focus-visible { outline: 2px solid var(--purple); outline-offset: 1px; }
+
+/* ============ FINAL GRID ============ */
+.coord-shell .final-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+.coord-shell .indicator-card { background: linear-gradient(135deg, var(--purple) 0%, var(--purple-strong) 100%); border-radius: 18px; padding: 24px 26px; color: white; position: relative; overflow: visible; animation: coordFadeUp 0.5s ease-out 0.4s backwards; }
+.coord-shell .indicator-card-bg { position: absolute; top: -60px; right: -60px; width: 240px; height: 240px; background: radial-gradient(circle, rgba(165, 214, 167, 0.3), transparent 70%); border-radius: 50%; pointer-events: none; overflow: hidden; }
+.coord-shell .indicator-head { display: flex; align-items: center; position: relative; }
+.coord-shell .indicator-title { font-size: 15px; font-weight: 600; opacity: 0.9; }
+.coord-shell .indicator-subtitle { font-size: 12px; opacity: 0.7; margin-bottom: 16px; font-weight: 400; position: relative; }
+.coord-shell .indicator-score { font-size: 56px; font-weight: 700; letter-spacing: -2px; line-height: 1; position: relative; }
+.coord-shell .indicator-score-suffix { font-size: 22px; opacity: 0.6; font-weight: 500; margin-left: 4px; }
+.coord-shell .indicator-bar { height: 8px; background: rgba(255,255,255,0.18); border-radius: 99px; margin: 18px 0 12px; overflow: hidden; position: relative; }
+.coord-shell .indicator-bar-fill { height: 100%; background: linear-gradient(90deg, var(--green-soft), #C8E6C9); border-radius: 99px; transition: width 1.2s cubic-bezier(0.16, 1, 0.3, 1); }
+.coord-shell .indicator-meta { font-size: 12px; opacity: 0.85; position: relative; line-height: 1.5; }
+.coord-shell .indicator-meta strong { color: var(--green-soft); font-weight: 700; }
+
+/* Ranking de produção docente dentro do indicator-card (texto claro sobre roxo) */
+.coord-shell .rank-legend { font-size: 10.5px; opacity: 0.8; margin: 10px 0 8px; position: relative; }
+.coord-shell .rank-list { max-height: 232px; overflow-y: auto; display: flex; flex-direction: column; gap: 6px; padding-right: 4px; position: relative; }
+.coord-shell .rank-list::-webkit-scrollbar { width: 6px; }
+.coord-shell .rank-list::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.3); border-radius: 99px; }
+.coord-shell .rank-list::-webkit-scrollbar-track { background: transparent; }
+.coord-shell .rank-row { display: flex; align-items: center; gap: 10px; background: rgba(255, 255, 255, 0.10); border-radius: 10px; padding: 8px 10px; }
+.coord-shell .rank-pos { width: 18px; text-align: center; font-weight: 700; font-size: 12px; opacity: 0.85; flex-shrink: 0; }
+.coord-shell .rank-info { flex: 1; min-width: 0; }
+.coord-shell .rank-name { font-size: 13px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.coord-shell .rank-stats { font-size: 11px; opacity: 0.85; margin-top: 1px; white-space: nowrap; }
+.coord-shell .rank-total { font-size: 16px; font-weight: 700; flex-shrink: 0; color: var(--green-soft); }
+.coord-shell .indicator-card .tip { border-color: rgba(255,255,255,0.5); color: rgba(255,255,255,0.85); }
+.coord-shell .indicator-card .tip:hover, .coord-shell .indicator-card .tip:focus { border-color: white; color: white; background: rgba(255,255,255,0.15); }
+.coord-shell .invisible-card { background: var(--bg-card); border-radius: 18px; padding: 22px 24px; position: relative; overflow: visible; animation: coordFadeUp 0.5s ease-out 0.45s backwards; }
+.coord-shell .invisible-card::before { content: ''; position: absolute; left: 0; top: 16px; bottom: 16px; width: 4px; background: var(--red-soft); border-radius: 0 3px 3px 0; }
+.coord-shell .invisible-head { display: flex; align-items: center; }
+.coord-shell .invisible-title { font-size: 15px; font-weight: 600; color: var(--text-dark); }
+.coord-shell .invisible-subtitle { font-size: 12px; color: var(--text-muted); margin-bottom: 14px; font-weight: 400; margin-top: 2px; }
+.coord-shell .invisible-number { font-size: 48px; font-weight: 700; color: var(--red); letter-spacing: -1.5px; line-height: 1; margin-bottom: 4px; }
+.coord-shell .invisible-desc { font-size: 12px; color: var(--text-muted); margin-bottom: 14px; line-height: 1.5; }
+.coord-shell .tags-wrap { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 16px; }
+.coord-shell .tag { font-size: 11px; padding: 5px 10px; background: var(--red-bg); color: var(--red); border-radius: 99px; font-weight: 600; }
+.coord-shell .btn-primary { background: var(--purple); color: white; border: none; padding: 11px 16px; border-radius: 12px; font-size: 13px; font-weight: 600; cursor: pointer; font-family: inherit; transition: all 0.15s; display: inline-flex; align-items: center; gap: 6px; width: 100%; justify-content: center; }
+.coord-shell .btn-primary:hover { background: var(--purple-strong); transform: translateY(-1px); }
+.coord-shell .manifesto { margin-top: 36px; padding: 22px 26px; background: var(--purple-softer); border-radius: 18px; border-left: 4px solid var(--purple); display: flex; align-items: center; gap: 16px; animation: coordFadeUp 0.5s ease-out 0.5s backwards; }
+.coord-shell .manifesto-icon { width: 44px; height: 44px; background: white; border-radius: 12px; display: flex; align-items: center; justify-content: center; color: var(--purple); flex-shrink: 0; }
+.coord-shell .manifesto-text { font-size: 13.5px; color: var(--text-body); line-height: 1.55; }
+.coord-shell .manifesto-text strong { color: var(--purple-strong); font-weight: 700; }
+
+/* ============ COMPARTILHADOS ENTRE TELAS (page header, section, pill, btn) ============ */
+.coord-shell .page-header { margin-bottom: 24px; animation: coordFadeIn 0.5s ease-out; display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
+.coord-shell .page-title { font-size: 28px; font-weight: 700; color: var(--text-dark); letter-spacing: -0.5px; }
+.coord-shell .page-subtitle { font-size: 14px; color: var(--text-muted); margin-top: 4px; font-weight: 400; }
+
+.coord-shell .section { background: var(--bg-card); border-radius: 18px; padding: 24px; margin-bottom: 20px; animation: coordFadeUp 0.5s ease-out backwards; }
+.coord-shell .section-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; margin-bottom: 18px; flex-wrap: wrap; }
+.coord-shell .section-title { font-size: 16px; font-weight: 700; color: var(--text-dark); display: flex; align-items: center; }
+.coord-shell .section-subtitle { font-size: 12px; color: var(--text-muted); margin-top: 3px; }
+
+.coord-shell .tip.todo { border-color: var(--amber); color: var(--amber); background: var(--amber-bg); }
+.coord-shell .tip.todo:hover, .coord-shell .tip.todo:focus { background: var(--amber); color: white; }
+
+.coord-shell .pill { padding: 5px 12px; border-radius: 99px; font-size: 11px; font-weight: 700; white-space: nowrap; display: inline-flex; align-items: center; gap: 4px; }
+.coord-shell .pill-ok { background: var(--green-bg); color: var(--green); }
+.coord-shell .pill-warn { background: var(--amber-bg); color: var(--amber); }
+.coord-shell .pill-critical { background: var(--red-bg); color: var(--red); }
+.coord-shell .pill-info { background: var(--blue-bg); color: var(--blue); }
+.coord-shell .pill-neutral { background: var(--border-light); color: var(--text-muted); }
+.coord-shell .pill-purple { background: var(--purple-soft); color: var(--purple); }
+
+.coord-shell .btn { display: inline-flex; align-items: center; gap: 6px; padding: 10px 16px; border-radius: 12px; font-size: 13px; font-weight: 600; cursor: pointer; font-family: inherit; border: none; transition: all 0.15s; text-decoration: none; }
+.coord-shell .btn-primary { background: var(--purple); color: white; }
+.coord-shell .btn-primary:hover { background: var(--purple-strong); transform: translateY(-1px); }
+.coord-shell .btn-secondary { background: var(--bg-card); color: var(--text-dark); border: 1px solid var(--border); }
+.coord-shell .btn-secondary:hover { border-color: var(--purple); color: var(--purple); }
+
+/* ============ FILTROS (chips/search) REUTILIZÁVEIS ============ */
+.coord-shell .filter-bar { background: var(--bg-card); border-radius: 18px; padding: 16px 20px; display: flex; align-items: center; gap: 14px; margin-bottom: 20px; flex-wrap: wrap; }
+.coord-shell .filter-label { font-size: 12px; font-weight: 600; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px; }
+.coord-shell .filter-chip { padding: 7px 14px; border-radius: 99px; background: var(--bg-main); font-size: 12px; font-weight: 600; color: var(--text-muted); cursor: pointer; border: none; font-family: inherit; transition: all 0.15s; }
+.coord-shell .filter-chip:hover { background: var(--purple-softer); color: var(--purple); }
+.coord-shell .filter-chip.active { background: var(--purple-soft); color: var(--purple); }
+.coord-shell .search-box { flex: 1; min-width: 200px; position: relative; }
+.coord-shell .search-input { width: 100%; padding: 9px 14px 9px 36px; border: 1px solid var(--border); border-radius: 10px; font-size: 13px; font-family: inherit; color: var(--text-dark); background: var(--bg-main); transition: all 0.15s; }
+.coord-shell .search-input:focus { outline: none; border-color: var(--purple); background: white; }
+.coord-shell .search-icon { position: absolute; left: 12px; top: 50%; transform: translateY(-50%); color: var(--text-light); pointer-events: none; }
+
+/* ============ TABELA + FILTROS REUTILIZÁVEIS ============ */
+.coord-shell .coord-filters { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+.coord-shell .coord-select { font-family: inherit; font-size: 13px; font-weight: 500; color: var(--text-dark); background: var(--bg-main); border: 1px solid var(--border-light); border-radius: 10px; padding: 9px 12px; cursor: pointer; min-width: 160px; }
+.coord-shell .coord-select:focus { outline: none; border-color: var(--purple); }
+.coord-shell .coord-search { font-family: inherit; font-size: 13px; color: var(--text-dark); background: var(--bg-main); border: 1px solid var(--border-light); border-radius: 10px; padding: 9px 12px; min-width: 200px; }
+.coord-shell .coord-search:focus { outline: none; border-color: var(--purple); }
+
+.coord-shell .table-wrap { overflow-x: auto; }
+.coord-shell .coord-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.coord-shell .coord-table thead th { text-align: left; font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-muted); font-weight: 700; padding: 10px 12px; border-bottom: 1px solid var(--border-light); white-space: nowrap; }
+.coord-shell .coord-table tbody td { padding: 12px; border-bottom: 1px solid var(--border-light); color: var(--text-body); vertical-align: middle; }
+.coord-shell .coord-table tbody tr { transition: background 0.12s; }
+.coord-shell .coord-table tbody tr:hover { background: var(--purple-softer); }
+.coord-shell .coord-table .td-strong { font-weight: 600; color: var(--text-dark); }
+.coord-shell .icon-btn { width: 32px; height: 32px; border-radius: 9px; border: 1px solid var(--border-light); background: white; color: var(--purple); display: inline-flex; align-items: center; justify-content: center; cursor: pointer; transition: all 0.15s; }
+.coord-shell .icon-btn:hover { background: var(--purple); color: white; border-color: var(--purple); }
+.coord-shell .icon-btn:disabled { opacity: 0.4; cursor: default; }
+
+.coord-shell .coord-pager { display: flex; align-items: center; justify-content: center; gap: 12px; margin-top: 16px; font-size: 12px; color: var(--text-muted); }
+.coord-shell .coord-pager button { border: 1px solid var(--border-light); background: white; border-radius: 8px; padding: 6px 12px; cursor: pointer; font-family: inherit; font-size: 12px; color: var(--text-dark); }
+.coord-shell .coord-pager button:hover:not(:disabled) { border-color: var(--purple); color: var(--purple); }
+.coord-shell .coord-pager button:disabled { opacity: 0.4; cursor: default; }
+
+/* ============ MODAL DE OCUPADO (ex.: baixando PDF) ============ */
+.coord-shell .coord-busy-overlay { position: fixed; inset: 0; background: rgba(26, 26, 46, 0.45); display: flex; align-items: center; justify-content: center; z-index: 120; padding: 20px; animation: coordFadeIn 0.15s ease-out; }
+.coord-shell .coord-busy-modal { background: var(--bg-card); border-radius: 18px; padding: 32px 40px; display: flex; flex-direction: column; align-items: center; gap: 16px; max-width: 380px; text-align: center; animation: coordFadeUp 0.2s ease-out; box-shadow: 0 20px 48px rgba(0, 0, 0, 0.18); }
+.coord-shell .coord-busy-title { font-size: 15px; font-weight: 700; color: var(--text-dark); }
+.coord-shell .coord-busy-sub { font-size: 12.5px; color: var(--text-muted); line-height: 1.5; }
+
+/* loader */
+.coord-shell .coord-loader {
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 16px; min-height: 50vh; color: var(--purple);
+}
+.coord-shell .coord-spin { width: 42px; height: 42px; border: 4px solid var(--purple-soft); border-top-color: var(--purple); border-radius: 50%; animation: coordSpin 0.8s linear infinite; }
+.coord-shell .coord-loader-status { font-size: 13px; color: var(--text-muted); text-align: center; margin: 0; }
+
+/* Status compacto na barra de recorte, ao lado do seletor. */
+.coord-shell .carregando-status { display: inline-flex; align-items: center; gap: 6px; color: var(--text-light); }
+.coord-shell .carregando-spin {
+  width: 11px; height: 11px; flex-shrink: 0; border-radius: 50%;
+  border: 2px solid var(--purple-soft); border-top-color: var(--purple);
+  animation: coordSpin 0.8s linear infinite;
+}
+
+/* Quem prefere menos movimento vê o indicador parado, não piscando. */
+@media (prefers-reduced-motion: reduce) {
+  .coord-shell .coord-spin,
+  .coord-shell .carregando-spin { animation: none; }
+}
+
+@keyframes coordFadeIn { from { opacity: 0; } to { opacity: 1; } }
+@keyframes coordFadeUp { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+@keyframes coordSpin { to { transform: rotate(360deg); } }
+
+@media (max-width: 900px) {
+  .coord-shell .top-grid { grid-template-columns: repeat(2, 1fr); }
+  .coord-shell .double-grid { grid-template-columns: 1fr; }
+  .coord-shell .final-grid { grid-template-columns: 1fr; }
+}
+@media (max-width: 560px) {
+  .coord-shell .topbar { padding: 14px 18px; }
+  .coord-shell .tabbar { padding: 8px 14px; }
+  .coord-shell .content { padding: 20px 14px 40px; }
+  .coord-shell .top-grid { grid-template-columns: 1fr; gap: 10px; }
+  .coord-shell .greeting-title { font-size: 24px; }
+  .coord-shell .card-number { font-size: 32px; }
+  .coord-shell .indicator-score { font-size: 44px; }
+  .coord-shell .attention-head { flex-direction: column; align-items: flex-start; }
+  .coord-shell .icon-btn { min-height: 40px; min-width: 40px; padding: 0 12px; font-size: 13px; }
+}

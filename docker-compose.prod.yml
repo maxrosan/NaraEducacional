@@ -1,0 +1,145 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/compose-spec/compose-spec/master/schema/compose-spec.json
+services:
+  postgres:
+    image: postgres:14-alpine
+    container_name: nara-postgres-prod
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-nara_production}
+      POSTGRES_USER: ${POSTGRES_USER:-nara_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-secure_password}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-nara_user}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - nara-network
+
+  backend:
+    build:
+      context: ./server
+      dockerfile: Dockerfile
+    container_name: nara-backend-prod
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      DJANGO_DEBUG: ${DJANGO_DEBUG:-false}
+      DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY:-change-me}
+      DJANGO_ALLOWED_HOSTS: ${DJANGO_ALLOWED_HOSTS:-localhost,127.0.0.1,backend}
+      DJANGO_CORS_ALLOWED_ORIGINS: ${DJANGO_CORS_ALLOWED_ORIGINS:-}
+      DJANGO_CSRF_TRUSTED_ORIGINS: ${DJANGO_CSRF_TRUSTED_ORIGINS:-}
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: ${POSTGRES_DB:-nara_production}
+      POSTGRES_USER: ${POSTGRES_USER:-nara_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-secure_password}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+      AWS_S3_BUCKET_NAME: ${AWS_S3_BUCKET_NAME:-}
+      AWS_REGION: ${AWS_REGION:-us-east-1}
+      ELEVENLABS_API_KEY: ${ELEVENLABS_API_KEY:-}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      # 2, não 3: ver a justificativa em server/gunicorn.conf.py. O padrão
+      # precisa bater com o do arquivo de config — a variável de ambiente
+      # vence, então deixá-la em 3 aqui anularia o ajuste.
+      GUNICORN_WORKERS: ${GUNICORN_WORKERS:-2}
+      GUNICORN_TIMEOUT: ${GUNICORN_TIMEOUT:-120}
+      # Transcription service (faster-whisper)
+      TRANSCRIPTION_PROVIDER: ${TRANSCRIPTION_PROVIDER:-openai}
+      TRANSCRIPTION_SERVICE_URL: ${TRANSCRIPTION_SERVICE_URL:-http://transcription:8000}
+      TRANSCRIPTION_SERVICE_TOKEN: ${TRANSCRIPTION_SERVICE_TOKEN:-}
+    command:
+      - sh
+      - -c
+      - |
+        set -e
+        echo '⏳ Executando migrations...'
+        python manage.py migrate --noinput
+        echo '✅ Iniciando Gunicorn...'
+        gunicorn nara_api.wsgi:application -c gunicorn.conf.py --bind 0.0.0.0:8001
+    ports:
+      - "${BACKEND_PORT:-8001}:8001"
+    volumes:
+      - ./server:/app
+      - ./backups:/backups
+      - backend_uploads:/app/uploads
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8001/api/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    networks:
+      - nara-network
+
+  transcription:
+    build:
+      context: ./transcription_service
+      dockerfile: Dockerfile
+    container_name: nara-transcription-prod
+    restart: unless-stopped
+    environment:
+      MODEL_SIZE: ${TRANSCRIPTION_MODEL_SIZE:-large-v3}
+      DEVICE: ${TRANSCRIPTION_DEVICE:-cpu}
+      COMPUTE_TYPE: ${TRANSCRIPTION_COMPUTE_TYPE:-int8}
+      CPU_THREADS: ${TRANSCRIPTION_CPU_THREADS:-0}
+      MAX_CONCURRENT: ${TRANSCRIPTION_MAX_CONCURRENT:-2}
+      QUEUE_MAX_SIZE: ${TRANSCRIPTION_QUEUE_MAX_SIZE:-50}
+      JOB_TTL_SECONDS: ${TRANSCRIPTION_JOB_TTL_SECONDS:-3600}
+      DEFAULT_LANGUAGE: pt
+      VAD_FILTER: "true"
+      BEAM_SIZE: ${TRANSCRIPTION_BEAM_SIZE:-5}
+      INTERNAL_TOKEN: ${TRANSCRIPTION_SERVICE_TOKEN:-}
+      MAX_UPLOAD_MB: ${MAX_AUDIO_UPLOAD_MB:-100}
+      LOG_LEVEL: ${TRANSCRIPTION_LOG_LEVEL:-INFO}
+      SENTRY_DSN: ${SENTRY_DSN:-}
+      SENTRY_ENVIRONMENT: ${SENTRY_ENVIRONMENT:-production}
+    volumes:
+      - whisper_models:/models
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8000/readyz || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 300s
+    networks:
+      - nara-network
+
+  frontend:
+    build:
+      context: ./client
+      dockerfile: Dockerfile.prod   # <- era "Dockerfile" (build de DEV), corrigido
+      args:
+        VITE_API_BASE_URL: ${VITE_API_BASE_URL:-http://localhost:${BACKEND_PORT:-8001}}
+    container_name: nara-frontend-prod
+    restart: unless-stopped
+    ports:
+      - "${FRONTEND_PORT:-5173}:80"   # Nginx expõe 80, não 5173
+    depends_on:
+      - backend
+    networks:
+      - nara-network
+
+volumes:
+  postgres_data:
+    driver: local
+  backend_uploads:
+    driver: local
+  whisper_models:
+    driver: local
+
+networks:
+  nara-network:
+    driver: bridge

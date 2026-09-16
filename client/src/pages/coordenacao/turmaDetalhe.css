@@ -1,0 +1,17 @@
+/* Estilos da tela Turma — inventário por aluno (escopados em .coord-shell) */
+
+.coord-shell .breadcrumb { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-muted); margin-bottom: 10px; font-weight: 500; }
+.coord-shell .breadcrumb a { color: var(--text-muted); text-decoration: none; cursor: pointer; transition: color 0.15s; background: none; border: none; font-family: inherit; font-size: 12px; padding: 0; }
+.coord-shell .breadcrumb a:hover { color: var(--purple); }
+.coord-shell .breadcrumb-sep { color: var(--text-light); }
+
+.coord-shell .turma-hero { background: var(--bg-card); border-radius: 18px; padding: 22px 26px; margin-bottom: 20px; display: flex; align-items: center; gap: 18px; animation: coordFadeUp 0.5s ease-out; flex-wrap: wrap; }
+.coord-shell .turma-hero-badge { width: 64px; height: 64px; border-radius: 16px; background: linear-gradient(135deg, var(--purple-soft), var(--green-soft)); display: flex; align-items: center; justify-content: center; color: var(--purple-dark); font-weight: 700; font-size: 22px; flex-shrink: 0; }
+.coord-shell .turma-hero-info { flex: 1; min-width: 0; }
+.coord-shell .turma-hero-name { font-size: 22px; font-weight: 700; color: var(--text-dark); letter-spacing: -0.3px; }
+.coord-shell .turma-hero-meta { font-size: 13px; color: var(--text-muted); margin-top: 4px; }
+.coord-shell .turma-hero-meta strong { color: var(--text-dark); font-weight: 600; }
+
+.coord-shell .aluno-info { display: flex; align-items: center; gap: 10px; }
+.coord-shell .aluno-avatar { width: 32px; height: 32px; border-radius: 10px; background: var(--purple-soft); color: var(--purple); display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 11px; flex-shrink: 0; }
+.coord-shell .aluno-nome { font-size: 13px; font-weight: 600; color: var(--text-dark); }

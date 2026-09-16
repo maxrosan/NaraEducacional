@@ -1,0 +1,50 @@
+# Dockerfile.prod — Backend Django para EasyPanel
+# Não depende de container Postgres (gerenciado pelo EasyPanel)
+
+FROM python:3.11-slim
+
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
+ENV DJANGO_SETTINGS_MODULE=nara_api.settings
+
+# Limita as arenas do alocador do glibc: com várias arenas ele retém memória
+# liberada em vez de devolvê-la ao SO, e o RSS fica preso na marca d'água mais
+# alta. Trocamos um pouco de contenção de alocação por um RSS que encolhe.
+#
+# Entrou por causa dos arrays do processamento de áudio, que não existe mais.
+# Continua valendo para o resto do backend, sobretudo o processamento de imagens
+# (api/storage.py, api/views/analise_producao.py, api/services/relatorio_pdf.py),
+# que decodifica fotos inteiras dentro do worker.
+ENV MALLOC_ARENA_MAX=2
+
+# Dependências de sistema (libpq para psycopg2, curl para healthcheck)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libpq-dev \
+    gcc \
+    ffmpeg \
+    libsndfile1 \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# Instalar dependências Python (camada cacheável)
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Copiar código do projeto
+COPY . .
+
+# Diretórios de uploads e backups
+RUN mkdir -p uploads backups
+
+# Coletar arquivos estáticos
+RUN python manage.py collectstatic --noinput 2>/dev/null || true
+
+EXPOSE 80
+
+# Migrations + Admin + Gunicorn
+#
+# workers/timeout/max-requests agora vêm de gunicorn.conf.py (as mesmas
+# variáveis de ambiente continuam valendo). O --bind fica explícito aqui
+# porque difere entre este deploy (80) e o docker-compose (8001).
+CMD ["sh", "-c", "python manage.py migrate --noinput && python manage.py ensure_admin && gunicorn nara_api.wsgi:application -c gunicorn.conf.py --bind 0.0.0.0:80"]
