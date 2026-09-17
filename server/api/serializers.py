@@ -6,7 +6,21 @@ Provê conversão entre models Django e JSON para endpoints RESTful.
 from rest_framework import serializers
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 
-from .models import Usuario, Instituicao, Escola, Especialista
+from .models import Usuario, Instituicao, Escola, Especialista, Turma
+
+
+class TurmaSerializer(serializers.ModelSerializer):
+    escola_nome = serializers.CharField(source='escola.nome', read_only=True)
+
+    class Meta:
+        model = Turma
+        fields = [
+            'id', 'nome', 'faixa_etaria', 'turno', 'ano_letivo', 'ativa',
+            'etapa', 'ordem', 'idade_min', 'idade_max',
+            'escola', 'escola_nome', 'instituicao',
+            'criado_em', 'atualizado_em',
+        ]
+        read_only_fields = ['id', 'escola', 'instituicao', 'criado_em', 'atualizado_em']
 
 
 class InstituicaoSerializer(serializers.ModelSerializer):
@@ -67,6 +81,38 @@ class UsuarioSerializer(serializers.ModelSerializer):
             'especialista', 'is_active',
         ]
         read_only_fields = fields
+
+
+class UsuarioWriteSerializer(serializers.ModelSerializer):
+    """Serializer de escrita para Usuario — lida com hash de senha via set_password."""
+
+    password = serializers.CharField(write_only=True, required=False, min_length=8)
+
+    class Meta:
+        model = Usuario
+        fields = [
+            'id', 'nome', 'email', 'numero', 'nivel',
+            'escola', 'instituicao', 'especialista', 'is_active', 'password',
+        ]
+        read_only_fields = ['id']
+
+    def create(self, validated_data):
+        password = validated_data.pop('password', None)
+        if not password:
+            raise serializers.ValidationError({'password': 'Senha é obrigatória na criação.'})
+        usuario = Usuario(**validated_data)
+        usuario.set_password(password)
+        usuario.save()
+        return usuario
+
+    def update(self, instance, validated_data):
+        password = validated_data.pop('password', None)
+        for attr, value in validated_data.items():
+            setattr(instance, attr, value)
+        if password:
+            instance.set_password(password)
+        instance.save()
+        return instance
 
 
 class LoginSerializer(TokenObtainPairSerializer):

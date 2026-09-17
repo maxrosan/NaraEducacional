@@ -21,6 +21,18 @@ from .views.especialista import (
     detalhe_especialista,
     atualizar_especialista,
 )
+from .views.usuario import (
+    listar_usuarios,
+    criar_usuario,
+    detalhe_usuario,
+    atualizar_usuario,
+)
+from .views.turma import (
+    listar_turmas,
+    criar_turma,
+    detalhe_turma,
+    atualizar_turma,
+)
 
 urlpatterns = [
     path('health/', health, name='health'),
@@ -50,4 +62,16 @@ urlpatterns = [
     path('especialistas/criar/', criar_especialista, name='criar_especialista'),
     path('especialistas/<uuid:especialista_id>/', detalhe_especialista, name='detalhe_especialista'),
     path('especialistas/<uuid:especialista_id>/atualizar/', atualizar_especialista, name='atualizar_especialista'),
+
+    # Usuários
+    path('usuarios/', listar_usuarios, name='listar_usuarios'),
+    path('usuarios/criar/', criar_usuario, name='criar_usuario'),
+    path('usuarios/<uuid:usuario_id>/', detalhe_usuario, name='detalhe_usuario'),
+    path('usuarios/<uuid:usuario_id>/atualizar/', atualizar_usuario, name='atualizar_usuario'),
+
+    # Turmas
+    path('turmas/', listar_turmas, name='listar_turmas'),
+    path('turmas/criar/', criar_turma, name='criar_turma'),
+    path('turmas/<uuid:turma_id>/', detalhe_turma, name='detalhe_turma'),
+    path('turmas/<uuid:turma_id>/atualizar/', atualizar_turma, name='atualizar_turma'),
 ]
