@@ -16,7 +16,7 @@ def solicitar_recuperacao(email: str) -> None:
     Não levanta exceção se o e-mail não existir (evita enumeração).
     """
     try:
-        usuario = Usuario.objects.get(email=email, ativo=True)
+        usuario = Usuario.objects.get(email=email, is_active=True)
     except Usuario.DoesNotExist:
         return  # silencioso por segurança
 

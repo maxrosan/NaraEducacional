@@ -20,7 +20,7 @@ class UsuarioManager(TenantManager, BaseUserManager):
         extra_fields.setdefault('is_staff', True)
         extra_fields.setdefault('is_superuser', True)
         extra_fields.setdefault('nivel', 'superadmin')
-        extra_fields.setdefault('ativo', True)
+        extra_fields.setdefault('is_active', True)
         return self.create_user(email, password, **extra_fields)
 
 
@@ -170,7 +170,7 @@ class Usuario(AbstractBaseUser, PermissionsMixin):
         'Disciplina', through='UsuarioDisciplina', related_name='professores',
     )
 
-    ativo = models.BooleanField(default=True)
+    is_active = models.BooleanField(default=True)
     is_staff = models.BooleanField(default=False)
     is_superuser = models.BooleanField(default=False)
     criado_em = models.DateTimeField(auto_now_add=True)
