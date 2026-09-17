@@ -6,7 +6,7 @@ Provê conversão entre models Django e JSON para endpoints RESTful.
 from rest_framework import serializers
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 
-from .models import Usuario, Instituicao, Escola, Especialista, Turma, UsuarioTurma
+from .models import Usuario, Instituicao, Escola, Especialista, Turma, UsuarioTurma, Disciplina, UsuarioDisciplina
 
 
 class TurmaSerializer(serializers.ModelSerializer):
@@ -35,6 +35,28 @@ class UsuarioTurmaSerializer(serializers.ModelSerializer):
             'turma', 'data_vinculo', 'criado_em',
         ]
         read_only_fields = ['id', 'turma', 'criado_em']
+
+
+class DisciplinaSerializer(serializers.ModelSerializer):
+    escola_nome = serializers.CharField(source='escola.nome', read_only=True)
+
+    class Meta:
+        model = Disciplina
+        fields = ['id', 'nome', 'ativo', 'escola', 'escola_nome', 'instituicao', 'criado_em']
+        read_only_fields = ['id', 'escola', 'instituicao', 'criado_em']
+
+
+class UsuarioDisciplinaSerializer(serializers.ModelSerializer):
+    usuario_nome = serializers.CharField(source='usuario.nome', read_only=True)
+    disciplina_nome = serializers.CharField(source='disciplina.nome', read_only=True)
+
+    class Meta:
+        model = UsuarioDisciplina
+        fields = [
+            'id', 'usuario', 'usuario_nome', 'disciplina', 'disciplina_nome',
+            'escola', 'instituicao', 'criado_em', 'atualizado_em',
+        ]
+        read_only_fields = ['id', 'escola', 'instituicao', 'criado_em', 'atualizado_em']
 
 
 class InstituicaoSerializer(serializers.ModelSerializer):

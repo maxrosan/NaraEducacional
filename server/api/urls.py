@@ -36,6 +36,15 @@ from .views.turma import (
     vincular_professor_turma,
     desvincular_professor_turma,
 )
+from .views.disciplina import (
+    listar_disciplinas,
+    criar_disciplina,
+    detalhe_disciplina,
+    atualizar_disciplina,
+    listar_professores_disciplina,
+    vincular_usuario_disciplina,
+    desvincular_usuario_disciplina,
+)
 
 urlpatterns = [
     path('health/', health, name='health'),
@@ -81,4 +90,14 @@ urlpatterns = [
     path('turmas/<uuid:turma_id>/professores/vincular/', vincular_professor_turma, name='vincular_professor_turma'),
     path('turmas/<uuid:turma_id>/professores/<uuid:usuario_id>/desvincular/',
          desvincular_professor_turma, name='desvincular_professor_turma'),
+
+    # Disciplinas
+    path('disciplinas/', listar_disciplinas, name='listar_disciplinas'),
+    path('disciplinas/criar/', criar_disciplina, name='criar_disciplina'),
+    path('disciplinas/<uuid:disciplina_id>/', detalhe_disciplina, name='detalhe_disciplina'),
+    path('disciplinas/<uuid:disciplina_id>/atualizar/', atualizar_disciplina, name='atualizar_disciplina'),
+    path('disciplinas/<uuid:disciplina_id>/professores/', listar_professores_disciplina, name='listar_professores_disciplina'),
+    path('disciplinas/<uuid:disciplina_id>/professores/vincular/', vincular_usuario_disciplina, name='vincular_usuario_disciplina'),
+    path('disciplinas/<uuid:disciplina_id>/professores/<uuid:usuario_id>/desvincular/',
+         desvincular_usuario_disciplina, name='desvincular_usuario_disciplina'),
 ]
