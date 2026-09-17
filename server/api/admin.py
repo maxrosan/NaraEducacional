@@ -52,7 +52,6 @@ class UsuarioAdmin(admin.ModelAdmin):
     list_filter = ['nivel', 'is_active', 'is_staff', 'instituicao']
     search_fields = ['nome', 'email']
     autocomplete_fields = ['escola', 'instituicao', 'especialista']
-    filter_horizontal = ['disciplinas']
     exclude = ['password']
     readonly_fields = ['last_login']
 
@@ -226,6 +225,7 @@ class PlanejamentoSemanalAdmin(admin.ModelAdmin):
 class PlanejamentoDiarioAdmin(admin.ModelAdmin):
     list_display = ['planejamento_semanal', 'dia_semana', 'data']
     list_filter = ['dia_semana', 'escola']
+    search_fields = ['planejamento_semanal__turma__nome', 'atividades_propostas']
     autocomplete_fields = ['planejamento_semanal', 'escola', 'instituicao']
 
 
@@ -250,6 +250,7 @@ class PeriodoAvaliativoAdmin(admin.ModelAdmin):
 class RelatorioTemplateAdmin(admin.ModelAdmin):
     list_display = ['nome', 'modelo', 'escola', 'ativo']
     list_filter = ['modelo', 'ativo', 'escola']
+    search_fields = ['nome']
     autocomplete_fields = ['escola', 'instituicao']
 
 

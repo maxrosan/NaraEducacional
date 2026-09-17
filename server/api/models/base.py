@@ -3,7 +3,7 @@ from django.utils import timezone
 from django.contrib.auth.models import AbstractBaseUser, BaseUserManager, PermissionsMixin
 import uuid
 
-from .managers import TenantManager
+from ..managers import TenantManager
 
 
 class UsuarioManager(TenantManager, BaseUserManager):

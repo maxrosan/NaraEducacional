@@ -6,7 +6,32 @@ Provê conversão entre models Django e JSON para endpoints RESTful.
 from rest_framework import serializers
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 
-from .models import Usuario
+from .models import Usuario, Instituicao, Escola
+
+
+class InstituicaoSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Instituicao
+        fields = [
+            'id', 'nome', 'cnpj', 'email_institucional', 'endereco',
+            'cidade', 'estado', 'telefone', 'logo_url', 'ativa',
+            'criado_em', 'atualizado_em',
+        ]
+        read_only_fields = ['id', 'criado_em', 'atualizado_em']
+
+
+class EscolaSerializer(serializers.ModelSerializer):
+    instituicao_nome = serializers.CharField(source='instituicao.nome', read_only=True)
+
+    class Meta:
+        model = Escola
+        fields = [
+            'id', 'instituicao', 'instituicao_nome', 'nome', 'tipo_unidade',
+            'cnpj', 'endereco', 'cidade', 'estado', 'telefone', 'ativa',
+            'tipo_relatorio', 'report_settings', 'ordem_relatorio',
+            'criado_em', 'atualizado_em',
+        ]
+        read_only_fields = ['id', 'instituicao', 'criado_em', 'atualizado_em']
 
 
 class UsuarioSerializer(serializers.ModelSerializer):
