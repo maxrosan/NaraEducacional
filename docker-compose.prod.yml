@@ -1,32 +1,36 @@
 # yaml-language-server: $schema=https://raw.githubusercontent.com/compose-spec/compose-spec/master/schema/compose-spec.json
+#
+# Stack de produção do multi-nara. Renomeado para não colidir com os
+# containers do projeto nara original (nara-postgres-prod, nara-backend-prod,
+# nara-transcription-prod, nara-frontend-prod).
 services:
   postgres:
     image: postgres:14-alpine
-    container_name: nara-postgres-prod
+    container_name: multi-nara-postgres-prod
     restart: unless-stopped
     env_file:
       - .env
     environment:
-      POSTGRES_DB: ${POSTGRES_DB:-nara_production}
-      POSTGRES_USER: ${POSTGRES_USER:-nara_user}
+      POSTGRES_DB: ${POSTGRES_DB:-multi_nara_production}
+      POSTGRES_USER: ${POSTGRES_USER:-multi_nara_user}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-secure_password}
     ports:
-      - "${POSTGRES_PORT:-5432}:5432"
+      - "${POSTGRES_PORT:-5434}:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-nara_user}"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-multi_nara_user}"]
       interval: 10s
       timeout: 5s
       retries: 5
     networks:
-      - nara-network
+      - multi-nara-network
 
   backend:
     build:
       context: ./server
       dockerfile: Dockerfile
-    container_name: nara-backend-prod
+    container_name: multi-nara-backend-prod
     restart: unless-stopped
     env_file:
       - .env
@@ -38,8 +42,8 @@ services:
       DJANGO_CSRF_TRUSTED_ORIGINS: ${DJANGO_CSRF_TRUSTED_ORIGINS:-}
       POSTGRES_HOST: postgres
       POSTGRES_PORT: 5432
-      POSTGRES_DB: ${POSTGRES_DB:-nara_production}
-      POSTGRES_USER: ${POSTGRES_USER:-nara_user}
+      POSTGRES_DB: ${POSTGRES_DB:-multi_nara_production}
+      POSTGRES_USER: ${POSTGRES_USER:-multi_nara_user}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-secure_password}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
@@ -67,7 +71,7 @@ services:
         echo '✅ Iniciando Gunicorn...'
         gunicorn nara_api.wsgi:application -c gunicorn.conf.py --bind 0.0.0.0:8001
     ports:
-      - "${BACKEND_PORT:-8001}:8001"
+      - "${BACKEND_PORT:-8021}:8001"
     volumes:
       - ./server:/app
       - ./backups:/backups
@@ -82,13 +86,13 @@ services:
       retries: 3
       start_period: 40s
     networks:
-      - nara-network
+      - multi-nara-network
 
   transcription:
     build:
       context: ./transcription_service
       dockerfile: Dockerfile
-    container_name: nara-transcription-prod
+    container_name: multi-nara-transcription-prod
     restart: unless-stopped
     environment:
       MODEL_SIZE: ${TRANSCRIPTION_MODEL_SIZE:-large-v3}
@@ -115,31 +119,35 @@ services:
       retries: 3
       start_period: 300s
     networks:
-      - nara-network
+      - multi-nara-network
 
   frontend:
     build:
       context: ./client
       dockerfile: Dockerfile.prod   # <- era "Dockerfile" (build de DEV), corrigido
       args:
-        VITE_API_BASE_URL: ${VITE_API_BASE_URL:-http://localhost:${BACKEND_PORT:-8001}}
-    container_name: nara-frontend-prod
+        VITE_API_BASE_URL: ${VITE_API_BASE_URL:-http://localhost:${BACKEND_PORT:-8021}}
+    container_name: multi-nara-frontend-prod
     restart: unless-stopped
     ports:
-      - "${FRONTEND_PORT:-5173}:80"   # Nginx expõe 80, não 5173
+      - "${FRONTEND_PORT:-5184}:80"   # Nginx expõe 80, não 5173
     depends_on:
       - backend
     networks:
-      - nara-network
+      - multi-nara-network
 
 volumes:
   postgres_data:
+    name: multi_nara_postgres_data
     driver: local
   backend_uploads:
+    name: multi_nara_backend_uploads
     driver: local
   whisper_models:
+    name: multi_nara_whisper_models
     driver: local
 
 networks:
-  nara-network:
+  multi-nara-network:
+    name: multi-nara-network
     driver: bridge

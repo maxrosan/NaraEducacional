@@ -42,13 +42,13 @@ services:
         echo 'Waiting for PostgreSQL...'
         max_attempts=30
         attempt=1
-        while ! pg_isready -h "${POSTGRES_HOST:-postgres}" -p "${POSTGRES_PORT:-5432}" -U "${POSTGRES_USER:-multi_nara_user}"; do
-          if [ "$attempt" -ge "$max_attempts" ]; then
+        while ! pg_isready -h "$${POSTGRES_HOST:-postgres}" -p "5432" -U "$${POSTGRES_USER:-multi_nara_user}"; do
+          if [ "$$attempt" -ge "$$max_attempts" ]; then
             echo 'PostgreSQL not available after retries.' >&2
             exit 1
           fi
           echo 'Database not ready, retrying...'
-          attempt=$((attempt + 1))
+          attempt=$$((attempt + 1))
           sleep 2
         done
         python manage.py makemigrations --noinput
