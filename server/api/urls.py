@@ -45,6 +45,12 @@ from .views.disciplina import (
     vincular_usuario_disciplina,
     desvincular_usuario_disciplina,
 )
+from .views.aluno import (
+    listar_alunos,
+    criar_aluno,
+    detalhe_aluno,
+    atualizar_aluno,
+)
 
 urlpatterns = [
     path('health/', health, name='health'),
@@ -100,4 +106,10 @@ urlpatterns = [
     path('disciplinas/<uuid:disciplina_id>/professores/vincular/', vincular_usuario_disciplina, name='vincular_usuario_disciplina'),
     path('disciplinas/<uuid:disciplina_id>/professores/<uuid:usuario_id>/desvincular/',
          desvincular_usuario_disciplina, name='desvincular_usuario_disciplina'),
+
+    # Alunos
+    path('alunos/', listar_alunos, name='listar_alunos'),
+    path('alunos/criar/', criar_aluno, name='criar_aluno'),
+    path('alunos/<uuid:aluno_id>/', detalhe_aluno, name='detalhe_aluno'),
+    path('alunos/<uuid:aluno_id>/atualizar/', atualizar_aluno, name='atualizar_aluno'),
 ]
