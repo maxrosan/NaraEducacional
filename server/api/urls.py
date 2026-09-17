@@ -57,6 +57,17 @@ from .views.projeto import (
     detalhe_projeto,
     atualizar_projeto,
 )
+from .views.producao import (
+    listar_producoes,
+    criar_producao,
+    detalhe_producao,
+    atualizar_producao,
+    deletar_producao,
+    listar_alunos_producao,
+    vincular_aluno_producao,
+    atualizar_vinculo_producao_aluno,
+    desvincular_aluno_producao,
+)
 
 urlpatterns = [
     path('health/', health, name='health'),
@@ -124,4 +135,17 @@ urlpatterns = [
     path('projetos/criar/', criar_projeto, name='criar_projeto'),
     path('projetos/<uuid:projeto_id>/', detalhe_projeto, name='detalhe_projeto'),
     path('projetos/<uuid:projeto_id>/atualizar/', atualizar_projeto, name='atualizar_projeto'),
+
+    # Produções (Portfólio)
+    path('producoes/', listar_producoes, name='listar_producoes'),
+    path('producoes/criar/', criar_producao, name='criar_producao'),
+    path('producoes/<uuid:producao_id>/', detalhe_producao, name='detalhe_producao'),
+    path('producoes/<uuid:producao_id>/atualizar/', atualizar_producao, name='atualizar_producao'),
+    path('producoes/<uuid:producao_id>/deletar/', deletar_producao, name='deletar_producao'),
+    path('producoes/<uuid:producao_id>/alunos/', listar_alunos_producao, name='listar_alunos_producao'),
+    path('producoes/<uuid:producao_id>/alunos/vincular/', vincular_aluno_producao, name='vincular_aluno_producao'),
+    path('producoes/<uuid:producao_id>/alunos/<uuid:vinculo_id>/atualizar/',
+         atualizar_vinculo_producao_aluno, name='atualizar_vinculo_producao_aluno'),
+    path('producoes/<uuid:producao_id>/alunos/<uuid:aluno_id>/desvincular/',
+         desvincular_aluno_producao, name='desvincular_aluno_producao'),
 ]

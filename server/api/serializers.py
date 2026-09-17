@@ -8,7 +8,7 @@ from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 
 from .models import (
     Usuario, Instituicao, Escola, Especialista, Turma, UsuarioTurma,
-    Disciplina, UsuarioDisciplina, Aluno, Projeto,
+    Disciplina, UsuarioDisciplina, Aluno, Projeto, Producao, ProducaoAluno,
 )
 
 
@@ -180,6 +180,35 @@ class ProjetoSerializer(serializers.ModelSerializer):
             'escola', 'escola_nome', 'instituicao', 'criado_em', 'atualizado_em',
         ]
         read_only_fields = ['id', 'escola', 'instituicao', 'criado_em', 'atualizado_em']
+
+
+class ProducaoSerializer(serializers.ModelSerializer):
+    professor_nome = serializers.CharField(source='professor.nome', read_only=True)
+    turma_nome = serializers.CharField(source='turma.nome', read_only=True)
+
+    class Meta:
+        model = Producao
+        fields = [
+            'id', 'tipo', 'titulo', 'descricao', 'arquivo_url', 'arquivo_nome',
+            'arquivo_hash', 'mime_type', 'tamanho_bytes', 'tags', 'data_registro',
+            'turma', 'turma_nome', 'professor', 'professor_nome', 'projeto',
+            'escola', 'instituicao', 'criado_em', 'atualizado_em',
+        ]
+        read_only_fields = [
+            'id', 'professor', 'escola', 'instituicao', 'criado_em', 'atualizado_em',
+        ]
+
+
+class ProducaoAlunoSerializer(serializers.ModelSerializer):
+    aluno_nome = serializers.CharField(source='aluno.nome_completo', read_only=True)
+
+    class Meta:
+        model = ProducaoAluno
+        fields = [
+            'id', 'legenda', 'legenda_ia', 'destaque', 'incluir_relatorio',
+            'producao', 'aluno', 'aluno_nome', 'criado_em', 'atualizado_em',
+        ]
+        read_only_fields = ['id', 'producao', 'criado_em', 'atualizado_em']
 
 
 class LoginSerializer(TokenObtainPairSerializer):
