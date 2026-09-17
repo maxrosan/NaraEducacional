@@ -8,7 +8,7 @@ from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 
 from .models import (
     Usuario, Instituicao, Escola, Especialista, Turma, UsuarioTurma,
-    Disciplina, UsuarioDisciplina, Aluno,
+    Disciplina, UsuarioDisciplina, Aluno, Projeto,
 )
 
 
@@ -166,6 +166,18 @@ class AlunoSerializer(serializers.ModelSerializer):
             'observacoes', 'foto_url', 'turma', 'turma_nome',
             'escola', 'escola_nome', 'instituicao',
             'criado_em', 'atualizado_em',
+        ]
+        read_only_fields = ['id', 'escola', 'instituicao', 'criado_em', 'atualizado_em']
+
+
+class ProjetoSerializer(serializers.ModelSerializer):
+    escola_nome = serializers.CharField(source='escola.nome', read_only=True)
+
+    class Meta:
+        model = Projeto
+        fields = [
+            'id', 'nome', 'descricao', 'status', 'data_inicio', 'data_fim',
+            'escola', 'escola_nome', 'instituicao', 'criado_em', 'atualizado_em',
         ]
         read_only_fields = ['id', 'escola', 'instituicao', 'criado_em', 'atualizado_em']
 

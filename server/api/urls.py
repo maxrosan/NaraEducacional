@@ -51,6 +51,12 @@ from .views.aluno import (
     detalhe_aluno,
     atualizar_aluno,
 )
+from .views.projeto import (
+    listar_projetos,
+    criar_projeto,
+    detalhe_projeto,
+    atualizar_projeto,
+)
 
 urlpatterns = [
     path('health/', health, name='health'),
@@ -112,4 +118,10 @@ urlpatterns = [
     path('alunos/criar/', criar_aluno, name='criar_aluno'),
     path('alunos/<uuid:aluno_id>/', detalhe_aluno, name='detalhe_aluno'),
     path('alunos/<uuid:aluno_id>/atualizar/', atualizar_aluno, name='atualizar_aluno'),
+
+    # Projetos
+    path('projetos/', listar_projetos, name='listar_projetos'),
+    path('projetos/criar/', criar_projeto, name='criar_projeto'),
+    path('projetos/<uuid:projeto_id>/', detalhe_projeto, name='detalhe_projeto'),
+    path('projetos/<uuid:projeto_id>/atualizar/', atualizar_projeto, name='atualizar_projeto'),
 ]
