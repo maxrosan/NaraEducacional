@@ -3,8 +3,10 @@ from django.utils import timezone
 from django.contrib.auth.models import AbstractBaseUser, BaseUserManager, PermissionsMixin
 import uuid
 
+from .managers import TenantManager
 
-class UsuarioManager(BaseUserManager):
+
+class UsuarioManager(TenantManager, BaseUserManager):
     def create_user(self, email, password=None, **extra_fields):
         if not email:
             raise ValueError('O campo email é obrigatório')
@@ -110,6 +112,8 @@ class Especialista(models.Model):
     )
     criado_em = models.DateTimeField(auto_now_add=True)
     atualizado_em = models.DateTimeField(auto_now=True)
+
+    objects = TenantManager()
 
     class Meta:
         db_table = 'especialistas'
@@ -218,6 +222,8 @@ class Turma(models.Model):
     criado_em = models.DateTimeField(auto_now_add=True)
     atualizado_em = models.DateTimeField(auto_now=True)
 
+    objects = TenantManager()
+
     class Meta:
         db_table = 'turmas'
         managed = True
@@ -260,6 +266,8 @@ class Disciplina(models.Model):
     criado_em = models.DateTimeField(auto_now_add=True)
     atualizado_em = models.DateTimeField(auto_now=True)
 
+    objects = TenantManager()
+
     class Meta:
         db_table = 'disciplinas'
         managed = True
@@ -282,6 +290,8 @@ class UsuarioDisciplina(models.Model):
     instituicao = models.ForeignKey('Instituicao', on_delete=models.CASCADE, related_name='usuario_disciplinas')
     criado_em = models.DateTimeField(auto_now_add=True)
     atualizado_em = models.DateTimeField(auto_now=True)
+
+    objects = TenantManager()
 
     class Meta:
         db_table = 'usuario_disciplinas'
@@ -330,6 +340,8 @@ class Aluno(models.Model):
     criado_em = models.DateTimeField(auto_now_add=True)
     atualizado_em = models.DateTimeField(auto_now=True)
 
+    objects = TenantManager()
+
     class Meta:
         db_table = 'alunos'
         managed = True
@@ -364,6 +376,8 @@ class Projeto(models.Model):
 
     criado_em = models.DateTimeField(auto_now_add=True)
     atualizado_em = models.DateTimeField(auto_now=True)
+
+    objects = TenantManager()
 
     class Meta:
         db_table = 'projetos'
@@ -410,6 +424,8 @@ class Producao(models.Model):
 
     criado_em = models.DateTimeField(auto_now_add=True)
     atualizado_em = models.DateTimeField(auto_now=True)
+
+    objects = TenantManager()
 
     class Meta:
         db_table = 'producoes'
@@ -476,6 +492,8 @@ class RegistroEscrita(models.Model):
     criado_em = models.DateTimeField(auto_now_add=True)
     atualizado_em = models.DateTimeField(auto_now=True)
 
+    objects = TenantManager()
+
     class Meta:
         db_table = 'registro_escrita'
         managed = True
@@ -520,6 +538,8 @@ class RegistroDesenho(models.Model):
 
     criado_em = models.DateTimeField(auto_now_add=True)
     atualizado_em = models.DateTimeField(auto_now=True)
+
+    objects = TenantManager()
 
     class Meta:
         db_table = 'registro_desenho'
@@ -569,6 +589,8 @@ class RegistroLeitura(models.Model):
     criado_em = models.DateTimeField(auto_now_add=True)
     atualizado_em = models.DateTimeField(auto_now=True)
 
+    objects = TenantManager()
+
     class Meta:
         db_table = 'registro_leitura'
         managed = True
@@ -609,6 +631,8 @@ class CampoPedagogico(models.Model):
 
     criado_em = models.DateTimeField(auto_now_add=True)
     atualizado_em = models.DateTimeField(auto_now=True)
+
+    objects = TenantManager()
 
     class Meta:
         db_table = 'campos_pedagogicos'
@@ -685,6 +709,8 @@ class Pergunta(models.Model):
     criado_em = models.DateTimeField(auto_now_add=True)
     atualizado_em = models.DateTimeField(auto_now=True)
 
+    objects = TenantManager()
+
     class Meta:
         db_table = 'perguntas'
         managed = True
@@ -728,6 +754,8 @@ class PerguntaEspecialista(models.Model):
     criado_em = models.DateTimeField(auto_now_add=True)
     atualizado_em = models.DateTimeField(auto_now=True)
 
+    objects = TenantManager()
+
     class Meta:
         db_table = 'perguntas_especialistas'
         managed = True
@@ -763,6 +791,8 @@ class RegistroObservacao(models.Model):
 
     criado_em = models.DateTimeField(auto_now_add=True)
     atualizado_em = models.DateTimeField(auto_now=True)
+
+    objects = TenantManager()
 
     class Meta:
         db_table = 'registros_observacao'
@@ -801,6 +831,8 @@ class ObservacaoTranscricao(models.Model):
     criado_em = models.DateTimeField(auto_now_add=True)
     atualizado_em = models.DateTimeField(auto_now=True)
 
+    objects = TenantManager()
+
     class Meta:
         db_table = 'observacoes_transcricao'
         managed = True
@@ -826,6 +858,8 @@ class PlanejamentoSemanal(models.Model):
 
     criado_em = models.DateTimeField(auto_now_add=True)
     atualizado_em = models.DateTimeField(auto_now=True)
+
+    objects = TenantManager()
 
     class Meta:
         db_table = 'planejamentos_semanais'
@@ -869,6 +903,8 @@ class PlanejamentoDiario(models.Model):
 
     criado_em = models.DateTimeField(auto_now_add=True)
     atualizado_em = models.DateTimeField(auto_now=True)
+
+    objects = TenantManager()
 
     class Meta:
         db_table = 'planejamentos_diarios'
@@ -937,6 +973,8 @@ class PeriodoAvaliativo(models.Model):
     criado_em = models.DateTimeField(auto_now_add=True)
     atualizado_em = models.DateTimeField(auto_now=True)
 
+    objects = TenantManager()
+
     class Meta:
         db_table = 'periodos_avaliativos'
         managed = True
@@ -965,6 +1003,8 @@ class RelatorioTemplate(models.Model):
 
     criado_em = models.DateTimeField(auto_now_add=True)
     atualizado_em = models.DateTimeField(auto_now=True)
+
+    objects = TenantManager()
 
     class Meta:
         db_table = 'relatorio_templates'
@@ -1001,6 +1041,8 @@ class Relatorio(models.Model):
     criado_em = models.DateTimeField(auto_now_add=True)
     atualizado_em = models.DateTimeField(auto_now=True)
 
+    objects = TenantManager()
+
     class Meta:
         db_table = 'relatorios'
         managed = True
@@ -1034,6 +1076,8 @@ class Notificacao(models.Model):
 
     criado_em = models.DateTimeField(auto_now_add=True)
     atualizado_em = models.DateTimeField(auto_now=True)
+
+    objects = TenantManager()
 
     class Meta:
         db_table = 'notificacoes'
@@ -1080,6 +1124,8 @@ class MetaPAEE(models.Model):
     criado_em = models.DateTimeField(auto_now_add=True)
     atualizado_em = models.DateTimeField(auto_now=True)
 
+    objects = TenantManager()
+
     class Meta:
         db_table = 'metas_paee'
         managed = True
@@ -1119,6 +1165,8 @@ class SessaoEspecialista(models.Model):
 
     criado_em = models.DateTimeField(auto_now_add=True)
     atualizado_em = models.DateTimeField(auto_now=True)
+
+    objects = TenantManager()
 
     class Meta:
         db_table = 'sessoes_especialista'
@@ -1177,6 +1225,8 @@ class TarefaPAEE(models.Model):
     criado_em = models.DateTimeField(auto_now_add=True)
     atualizado_em = models.DateTimeField(auto_now=True)
 
+    objects = TenantManager()
+
     class Meta:
         db_table = 'tarefas_paee'
         managed = True
@@ -1209,6 +1259,8 @@ class DispositivoGravador(models.Model):
 
     criado_em = models.DateTimeField(auto_now_add=True)
     atualizado_em = models.DateTimeField(auto_now=True)
+
+    objects = TenantManager()
 
     class Meta:
         db_table = 'dispositivos_gravador'
@@ -1262,6 +1314,8 @@ class CodigoPareamento(models.Model):
 
     criado_em = models.DateTimeField(auto_now_add=True)
     atualizado_em = models.DateTimeField(auto_now=True)
+
+    objects = TenantManager()
 
     class Meta:
         db_table = 'codigos_pareamento'
@@ -1346,6 +1400,8 @@ class AudioDispositivo(models.Model):
     criado_em = models.DateTimeField(auto_now_add=True)
     atualizado_em = models.DateTimeField(auto_now=True)
 
+    objects = TenantManager()
+
     class Meta:
         db_table = 'audios_dispositivo'
         managed = True
@@ -1401,6 +1457,8 @@ class PromptTemplate(models.Model):
     criado_em = models.DateTimeField(auto_now_add=True)
     atualizado_em = models.DateTimeField(auto_now=True)
 
+    objects = TenantManager()
+
     class Meta:
         db_table = 'prompt_templates'
         managed = True
@@ -1441,6 +1499,8 @@ class OpenAIUsage(models.Model):
     criado_em = models.DateTimeField(auto_now_add=True)
     atualizado_em = models.DateTimeField(auto_now=True)
 
+    objects = TenantManager()
+
     class Meta:
         db_table = 'openai_usage'
         managed = True
@@ -1471,6 +1531,8 @@ class CoordenacaoCache(models.Model):
 
     criado_em = models.DateTimeField(auto_now_add=True)
     atualizado_em = models.DateTimeField(auto_now=True)
+
+    objects = TenantManager()
 
     class Meta:
         db_table = 'coordenacao_cache'
@@ -1525,6 +1587,8 @@ class TemplateDocumento(models.Model):
     criado_em = models.DateTimeField(auto_now_add=True)
     atualizado_em = models.DateTimeField(auto_now=True)
 
+    objects = TenantManager()
+
     class Meta:
         db_table = 'templates_documentos'
         managed = True
@@ -1569,6 +1633,8 @@ class Contrato(models.Model):
     criado_em = models.DateTimeField(auto_now_add=True)
     atualizado_em = models.DateTimeField(auto_now=True)
 
+    objects = TenantManager()
+
     class Meta:
         db_table = 'contratos'
         managed = True
@@ -1611,8 +1677,12 @@ class Ticket(models.Model):
     usuario_solicitante = models.ForeignKey(
         'Usuario', on_delete=models.PROTECT, related_name='tickets_solicitados',
     )
-    escola_solicitante = models.ForeignKey(
+    escola = models.ForeignKey(
         'Escola', on_delete=models.SET_NULL, related_name='tickets',
+        null=True, blank=True,
+    )
+    instituicao = models.ForeignKey(
+        'Instituicao', on_delete=models.SET_NULL, related_name='tickets',
         null=True, blank=True,
     )
     responsavel = models.ForeignKey(
@@ -1622,6 +1692,8 @@ class Ticket(models.Model):
 
     criado_em = models.DateTimeField(auto_now_add=True)
     atualizado_em = models.DateTimeField(auto_now=True)
+
+    objects = TenantManager()
 
     class Meta:
         db_table = 'tickets'
@@ -1643,10 +1715,16 @@ class RespostaTicket(models.Model):
         'Escola', on_delete=models.SET_NULL, related_name='respostas_tickets',
         null=True, blank=True,
     )
+    instituicao = models.ForeignKey(
+        'Instituicao', on_delete=models.SET_NULL, related_name='respostas_tickets',
+        null=True, blank=True,
+    )
     ticket = models.ForeignKey('Ticket', on_delete=models.CASCADE, related_name='respostas')
 
     criado_em = models.DateTimeField(auto_now_add=True)
     atualizado_em = models.DateTimeField(auto_now=True)
+
+    objects = TenantManager()
 
     class Meta:
         db_table = 'respostas_tickets'
@@ -1717,6 +1795,8 @@ class LogAuditoria(models.Model):
     criado_em = models.DateTimeField(auto_now_add=True)
     atualizado_em = models.DateTimeField(auto_now=True)
 
+    objects = TenantManager()
+
     class Meta:
         db_table = 'logs_auditoria'
         managed = True
@@ -1748,6 +1828,7 @@ class PermissaoUsuario(models.Model):
 
     usuario = models.ForeignKey('Usuario', on_delete=models.CASCADE, related_name='permissoes')
     escola = models.ForeignKey('Escola', on_delete=models.CASCADE, related_name='permissoes_usuario')
+    instituicao = models.ForeignKey('Instituicao', on_delete=models.CASCADE, related_name='permissoes_usuario')
     concedido_por = models.ForeignKey(
         'Usuario', on_delete=models.SET_NULL, related_name='permissoes_concedidas',
         null=True, blank=True,
@@ -1755,6 +1836,8 @@ class PermissaoUsuario(models.Model):
 
     criado_em = models.DateTimeField(auto_now_add=True)
     atualizado_em = models.DateTimeField(auto_now=True)
+
+    objects = TenantManager()
 
     class Meta:
         db_table = 'permissoes_usuario'
