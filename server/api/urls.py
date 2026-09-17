@@ -15,6 +15,12 @@ from .views.escola import (
     detalhe_escola,
     atualizar_escola,
 )
+from .views.especialista import (
+    listar_especialistas,
+    criar_especialista,
+    detalhe_especialista,
+    atualizar_especialista,
+)
 
 urlpatterns = [
     path('health/', health, name='health'),
@@ -38,4 +44,10 @@ urlpatterns = [
     path('escolas/criar/', criar_escola, name='criar_escola'),
     path('escolas/<uuid:escola_id>/', detalhe_escola, name='detalhe_escola'),
     path('escolas/<uuid:escola_id>/atualizar/', atualizar_escola, name='atualizar_escola'),
+
+    # Especialistas
+    path('especialistas/', listar_especialistas, name='listar_especialistas'),
+    path('especialistas/criar/', criar_especialista, name='criar_especialista'),
+    path('especialistas/<uuid:especialista_id>/', detalhe_especialista, name='detalhe_especialista'),
+    path('especialistas/<uuid:especialista_id>/atualizar/', atualizar_especialista, name='atualizar_especialista'),
 ]

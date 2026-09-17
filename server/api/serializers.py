@@ -6,7 +6,7 @@ Provê conversão entre models Django e JSON para endpoints RESTful.
 from rest_framework import serializers
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 
-from .models import Usuario, Instituicao, Escola
+from .models import Usuario, Instituicao, Escola, Especialista
 
 
 class InstituicaoSerializer(serializers.ModelSerializer):
@@ -32,6 +32,25 @@ class EscolaSerializer(serializers.ModelSerializer):
             'criado_em', 'atualizado_em',
         ]
         read_only_fields = ['id', 'instituicao', 'criado_em', 'atualizado_em']
+
+
+class EspecialistaSerializer(serializers.ModelSerializer):
+    escola_nome = serializers.CharField(source='escola.nome', read_only=True, default=None)
+    instituicao_nome = serializers.CharField(source='instituicao.nome', read_only=True)
+
+    class Meta:
+        model = Especialista
+        fields = [
+            'id', 'tipo_especialista', 'escola', 'escola_nome',
+            'instituicao', 'instituicao_nome', 'criado_em', 'atualizado_em',
+        ]
+        read_only_fields = ['id', 'instituicao', 'criado_em', 'atualizado_em']
+
+    def validate_escola(self, escola):
+        instituicao_id = self.context.get('instituicao_id')
+        if escola is not None and instituicao_id and str(escola.instituicao_id) != str(instituicao_id):
+            raise serializers.ValidationError('A escola informada não pertence à instituição do usuário.')
+        return escola
 
 
 class UsuarioSerializer(serializers.ModelSerializer):
