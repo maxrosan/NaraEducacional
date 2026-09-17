@@ -32,6 +32,9 @@ from .views.turma import (
     criar_turma,
     detalhe_turma,
     atualizar_turma,
+    listar_professores_turma,
+    vincular_professor_turma,
+    desvincular_professor_turma,
 )
 
 urlpatterns = [
@@ -74,4 +77,8 @@ urlpatterns = [
     path('turmas/criar/', criar_turma, name='criar_turma'),
     path('turmas/<uuid:turma_id>/', detalhe_turma, name='detalhe_turma'),
     path('turmas/<uuid:turma_id>/atualizar/', atualizar_turma, name='atualizar_turma'),
+    path('turmas/<uuid:turma_id>/professores/', listar_professores_turma, name='listar_professores_turma'),
+    path('turmas/<uuid:turma_id>/professores/vincular/', vincular_professor_turma, name='vincular_professor_turma'),
+    path('turmas/<uuid:turma_id>/professores/<uuid:usuario_id>/desvincular/',
+         desvincular_professor_turma, name='desvincular_professor_turma'),
 ]
