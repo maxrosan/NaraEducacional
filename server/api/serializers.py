@@ -13,6 +13,7 @@ from .models import (
     CampoPedagogico, HabilidadeBNCC, Pergunta, PerguntaEspecialista,
     RegistroObservacao, ObservacaoTranscricao,
     PlanejamentoSemanal, PlanejamentoDiario, PlanejamentoHabilidade,
+    PeriodoAvaliativo, RelatorioTemplate, Relatorio,
 )
 
 
@@ -398,6 +399,43 @@ class PlanejamentoHabilidadeSerializer(serializers.ModelSerializer):
             'planejamento_diario', 'criado_em', 'atualizado_em',
         ]
         read_only_fields = ['id', 'planejamento_diario', 'criado_em', 'atualizado_em']
+
+
+class PeriodoAvaliativoSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = PeriodoAvaliativo
+        fields = [
+            'id', 'descricao', 'tipo_periodo', 'ano', 'numero',
+            'data_inicio', 'data_fim', 'escola', 'instituicao', 'criado_em', 'atualizado_em',
+        ]
+        read_only_fields = ['id', 'escola', 'instituicao', 'criado_em', 'atualizado_em']
+
+
+class RelatorioTemplateSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = RelatorioTemplate
+        fields = [
+            'id', 'nome', 'modelo', 'usa_foto_aluno', 'config', 'items_sumario',
+            'ativo', 'escola', 'instituicao', 'criado_em', 'atualizado_em',
+        ]
+        read_only_fields = ['id', 'escola', 'instituicao', 'criado_em', 'atualizado_em']
+
+
+class RelatorioSerializer(serializers.ModelSerializer):
+    aluno_nome = serializers.CharField(source='aluno.nome_completo', read_only=True)
+    revisado_por_nome = serializers.CharField(source='revisado_por.nome', read_only=True, default=None)
+
+    class Meta:
+        model = Relatorio
+        fields = [
+            'id', 'conteudo', 'pdf_url', 'periodo',
+            'aluno', 'aluno_nome', 'template',
+            'revisado_por', 'revisado_por_nome',
+            'escola', 'instituicao', 'criado_em', 'atualizado_em',
+        ]
+        read_only_fields = [
+            'id', 'aluno', 'revisado_por', 'escola', 'instituicao', 'criado_em', 'atualizado_em',
+        ]
 
 
 class LoginSerializer(TokenObtainPairSerializer):

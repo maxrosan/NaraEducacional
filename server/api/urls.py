@@ -126,6 +126,22 @@ from .views.planejamento import (
     atualizar_planejamento_semanal,
     aplicar_planejamento_em_semanas,
 )
+from .views.avaliacao import (
+    listar_periodos_avaliativos,
+    criar_periodo_avaliativo,
+    detalhe_periodo_avaliativo,
+    atualizar_periodo_avaliativo,
+    listar_relatorio_templates,
+    criar_relatorio_template,
+    detalhe_relatorio_template,
+    atualizar_relatorio_template,
+    listar_relatorios,
+    criar_relatorio,
+    detalhe_relatorio,
+    atualizar_relatorio,
+    revisar_relatorio,
+    deletar_relatorio,
+)
 
 urlpatterns = [
     path('health/', health, name='health'),
@@ -274,4 +290,24 @@ urlpatterns = [
     path('planejamento/criar/', criar_planejamento_semanal, name='criar_planejamento_semanal'),
     path('planejamento/<uuid:planejamento_id>/atualizar/', atualizar_planejamento_semanal, name='atualizar_planejamento_semanal'),
     path('planejamento/aplicar-em-semanas/', aplicar_planejamento_em_semanas, name='aplicar_planejamento_em_semanas'),
+
+    # Períodos Avaliativos
+    path('periodos-avaliativos/', listar_periodos_avaliativos, name='listar_periodos_avaliativos'),
+    path('periodos-avaliativos/criar/', criar_periodo_avaliativo, name='criar_periodo_avaliativo'),
+    path('periodos-avaliativos/<uuid:periodo_id>/', detalhe_periodo_avaliativo, name='detalhe_periodo_avaliativo'),
+    path('periodos-avaliativos/<uuid:periodo_id>/atualizar/', atualizar_periodo_avaliativo, name='atualizar_periodo_avaliativo'),
+
+    # Templates de Relatório
+    path('relatorio-templates/', listar_relatorio_templates, name='listar_relatorio_templates'),
+    path('relatorio-templates/criar/', criar_relatorio_template, name='criar_relatorio_template'),
+    path('relatorio-templates/<uuid:template_id>/', detalhe_relatorio_template, name='detalhe_relatorio_template'),
+    path('relatorio-templates/<uuid:template_id>/atualizar/', atualizar_relatorio_template, name='atualizar_relatorio_template'),
+
+    # Relatórios
+    path('relatorios/', listar_relatorios, name='listar_relatorios'),
+    path('relatorios/criar/', criar_relatorio, name='criar_relatorio'),
+    path('relatorios/<uuid:relatorio_id>/', detalhe_relatorio, name='detalhe_relatorio'),
+    path('relatorios/<uuid:relatorio_id>/atualizar/', atualizar_relatorio, name='atualizar_relatorio'),
+    path('relatorios/<uuid:relatorio_id>/revisar/', revisar_relatorio, name='revisar_relatorio'),
+    path('relatorios/<uuid:relatorio_id>/deletar/', deletar_relatorio, name='deletar_relatorio'),
 ]
