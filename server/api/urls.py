@@ -85,6 +85,26 @@ from .views.registro import (
     atualizar_registro_leitura,
     deletar_registro_leitura,
 )
+from .views.campo_pedagogico import (
+    listar_campos_pedagogicos,
+    criar_campo_pedagogico,
+    detalhe_campo_pedagogico,
+    atualizar_campo_pedagogico,
+    listar_habilidades_bncc,
+    criar_habilidade_bncc,
+    detalhe_habilidade_bncc,
+    atualizar_habilidade_bncc,
+)
+from .views.pergunta import (
+    listar_perguntas,
+    criar_pergunta,
+    detalhe_pergunta,
+    atualizar_pergunta,
+    listar_perguntas_especialistas,
+    criar_pergunta_especialista,
+    detalhe_pergunta_especialista,
+    atualizar_pergunta_especialista,
+)
 
 urlpatterns = [
     path('health/', health, name='health'),
@@ -186,4 +206,28 @@ urlpatterns = [
     path('registros-leitura/<uuid:registro_id>/', detalhe_registro_leitura, name='detalhe_registro_leitura'),
     path('registros-leitura/<uuid:registro_id>/atualizar/', atualizar_registro_leitura, name='atualizar_registro_leitura'),
     path('registros-leitura/<uuid:registro_id>/deletar/', deletar_registro_leitura, name='deletar_registro_leitura'),
+
+    # Campos Pedagógicos
+    path('campos-pedagogicos/', listar_campos_pedagogicos, name='listar_campos_pedagogicos'),
+    path('campos-pedagogicos/criar/', criar_campo_pedagogico, name='criar_campo_pedagogico'),
+    path('campos-pedagogicos/<uuid:campo_id>/', detalhe_campo_pedagogico, name='detalhe_campo_pedagogico'),
+    path('campos-pedagogicos/<uuid:campo_id>/atualizar/', atualizar_campo_pedagogico, name='atualizar_campo_pedagogico'),
+
+    # Habilidades BNCC (catálogo global)
+    path('habilidades-bncc/', listar_habilidades_bncc, name='listar_habilidades_bncc'),
+    path('habilidades-bncc/criar/', criar_habilidade_bncc, name='criar_habilidade_bncc'),
+    path('habilidades-bncc/<uuid:habilidade_id>/', detalhe_habilidade_bncc, name='detalhe_habilidade_bncc'),
+    path('habilidades-bncc/<uuid:habilidade_id>/atualizar/', atualizar_habilidade_bncc, name='atualizar_habilidade_bncc'),
+
+    # Perguntas (formulário de observação)
+    path('perguntas/', listar_perguntas, name='listar_perguntas'),
+    path('perguntas/criar/', criar_pergunta, name='criar_pergunta'),
+    path('perguntas/<uuid:pergunta_id>/', detalhe_pergunta, name='detalhe_pergunta'),
+    path('perguntas/<uuid:pergunta_id>/atualizar/', atualizar_pergunta, name='atualizar_pergunta'),
+
+    # Perguntas de Especialista
+    path('perguntas-especialistas/', listar_perguntas_especialistas, name='listar_perguntas_especialistas'),
+    path('perguntas-especialistas/criar/', criar_pergunta_especialista, name='criar_pergunta_especialista'),
+    path('perguntas-especialistas/<uuid:pergunta_id>/', detalhe_pergunta_especialista, name='detalhe_pergunta_especialista'),
+    path('perguntas-especialistas/<uuid:pergunta_id>/atualizar/', atualizar_pergunta_especialista, name='atualizar_pergunta_especialista'),
 ]

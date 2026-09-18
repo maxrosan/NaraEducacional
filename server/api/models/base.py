@@ -633,6 +633,7 @@ class CampoPedagogico(models.Model):
     atualizado_em = models.DateTimeField(auto_now=True)
 
     objects = TenantManager()
+    todos = models.Manager()  # sem filtro de tenant — necessário pra combinar "oficial (nulo) OU da minha escola"
 
     class Meta:
         db_table = 'campos_pedagogicos'
@@ -710,6 +711,7 @@ class Pergunta(models.Model):
     atualizado_em = models.DateTimeField(auto_now=True)
 
     objects = TenantManager()
+    todos = models.Manager()  # sem filtro de tenant — necessário pra combinar "oficial (nulo) OU da minha escola"
 
     class Meta:
         db_table = 'perguntas'

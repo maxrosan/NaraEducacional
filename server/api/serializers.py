@@ -10,6 +10,7 @@ from .models import (
     Usuario, Instituicao, Escola, Especialista, Turma, UsuarioTurma,
     Disciplina, UsuarioDisciplina, Aluno, Projeto, Producao, ProducaoAluno,
     RegistroEscrita, RegistroDesenho, RegistroLeitura,
+    CampoPedagogico, HabilidadeBNCC, Pergunta, PerguntaEspecialista,
 )
 
 
@@ -265,6 +266,57 @@ class RegistroLeituraSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = [
             'id', 'turma', 'professor', 'escola', 'instituicao', 'criado_em', 'atualizado_em',
+        ]
+
+
+class CampoPedagogicoSerializer(serializers.ModelSerializer):
+    escola_nome = serializers.CharField(source='escola.nome', read_only=True, default=None)
+
+    class Meta:
+        model = CampoPedagogico
+        fields = [
+            'id', 'nome', 'etapa', 'icone', 'cor', 'ativo',
+            'escola', 'escola_nome', 'instituicao', 'criado_em', 'atualizado_em',
+        ]
+        read_only_fields = ['id', 'criado_em', 'atualizado_em']
+
+
+class HabilidadeBNCCSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = HabilidadeBNCC
+        fields = [
+            'id', 'codigo', 'descricao', 'componente_curricular', 'ano_serie',
+            'campo_atuacao', 'ativa', 'criado_em', 'atualizado_em',
+        ]
+        read_only_fields = ['id', 'criado_em', 'atualizado_em']
+
+
+class PerguntaSerializer(serializers.ModelSerializer):
+    escola_nome = serializers.CharField(source='escola.nome', read_only=True, default=None)
+
+    class Meta:
+        model = Pergunta
+        fields = [
+            'id', 'pergunta', 'pergunta_norma', 'area_conhecimento', 'origem', 'ativa',
+            'faixa_etaria', 'campo_experiencia', 'habilidade_bncc',
+            'escola', 'escola_nome', 'instituicao', 'criado_em', 'atualizado_em',
+        ]
+        read_only_fields = ['id', 'criado_em', 'atualizado_em']
+
+
+class PerguntaEspecialistaSerializer(serializers.ModelSerializer):
+    usuario_especialista_nome = serializers.CharField(source='usuario_especialista.nome', read_only=True)
+
+    class Meta:
+        model = PerguntaEspecialista
+        fields = [
+            'id', 'pergunta', 'pergunta_facilitadora', 'nivel', 'status',
+            'campo_experiencia', 'habilidade_bncc',
+            'usuario_especialista', 'usuario_especialista_nome',
+            'escola', 'instituicao', 'criado_em', 'atualizado_em',
+        ]
+        read_only_fields = [
+            'id', 'usuario_especialista', 'escola', 'instituicao', 'criado_em', 'atualizado_em',
         ]
 
 
