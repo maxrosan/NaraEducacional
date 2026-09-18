@@ -142,6 +142,28 @@ from .views.avaliacao import (
     revisar_relatorio,
     deletar_relatorio,
 )
+from .views.notificacao import (
+    listar_minhas_notificacoes,
+    criar_notificacao,
+    marcar_notificacao_lida,
+)
+from .views.paee import (
+    listar_metas_paee,
+    criar_meta_paee,
+    detalhe_meta_paee,
+    atualizar_meta_paee,
+    listar_sessoes_especialista,
+    criar_sessao_especialista,
+    detalhe_sessao_especialista,
+    atualizar_sessao_especialista,
+    listar_metas_sessao,
+    vincular_meta_sessao,
+    desvincular_meta_sessao,
+    listar_tarefas_paee,
+    criar_tarefa_paee,
+    detalhe_tarefa_paee,
+    atualizar_tarefa_paee,
+)
 
 urlpatterns = [
     path('health/', health, name='health'),
@@ -310,4 +332,31 @@ urlpatterns = [
     path('relatorios/<uuid:relatorio_id>/atualizar/', atualizar_relatorio, name='atualizar_relatorio'),
     path('relatorios/<uuid:relatorio_id>/revisar/', revisar_relatorio, name='revisar_relatorio'),
     path('relatorios/<uuid:relatorio_id>/deletar/', deletar_relatorio, name='deletar_relatorio'),
+
+    # Notificações
+    path('notificacoes/', listar_minhas_notificacoes, name='listar_minhas_notificacoes'),
+    path('notificacoes/criar/', criar_notificacao, name='criar_notificacao'),
+    path('notificacoes/<uuid:notificacao_id>/marcar-lida/', marcar_notificacao_lida, name='marcar_notificacao_lida'),
+
+    # Metas PAEE
+    path('metas-paee/', listar_metas_paee, name='listar_metas_paee'),
+    path('metas-paee/criar/', criar_meta_paee, name='criar_meta_paee'),
+    path('metas-paee/<uuid:meta_id>/', detalhe_meta_paee, name='detalhe_meta_paee'),
+    path('metas-paee/<uuid:meta_id>/atualizar/', atualizar_meta_paee, name='atualizar_meta_paee'),
+
+    # Sessões de Especialista
+    path('sessoes-especialista/', listar_sessoes_especialista, name='listar_sessoes_especialista'),
+    path('sessoes-especialista/criar/', criar_sessao_especialista, name='criar_sessao_especialista'),
+    path('sessoes-especialista/<uuid:sessao_id>/', detalhe_sessao_especialista, name='detalhe_sessao_especialista'),
+    path('sessoes-especialista/<uuid:sessao_id>/atualizar/', atualizar_sessao_especialista, name='atualizar_sessao_especialista'),
+    path('sessoes-especialista/<uuid:sessao_id>/metas/', listar_metas_sessao, name='listar_metas_sessao'),
+    path('sessoes-especialista/<uuid:sessao_id>/metas/vincular/', vincular_meta_sessao, name='vincular_meta_sessao'),
+    path('sessoes-especialista/<uuid:sessao_id>/metas/<uuid:meta_id>/desvincular/',
+         desvincular_meta_sessao, name='desvincular_meta_sessao'),
+
+    # Tarefas PAEE
+    path('tarefas-paee/', listar_tarefas_paee, name='listar_tarefas_paee'),
+    path('tarefas-paee/criar/', criar_tarefa_paee, name='criar_tarefa_paee'),
+    path('tarefas-paee/<uuid:tarefa_id>/', detalhe_tarefa_paee, name='detalhe_tarefa_paee'),
+    path('tarefas-paee/<uuid:tarefa_id>/atualizar/', atualizar_tarefa_paee, name='atualizar_tarefa_paee'),
 ]

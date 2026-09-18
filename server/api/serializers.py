@@ -14,6 +14,7 @@ from .models import (
     RegistroObservacao, ObservacaoTranscricao,
     PlanejamentoSemanal, PlanejamentoDiario, PlanejamentoHabilidade,
     PeriodoAvaliativo, RelatorioTemplate, Relatorio,
+    Notificacao, MetaPAEE, SessaoEspecialista, SessaoPAEEMeta, TarefaPAEE,
 )
 
 
@@ -435,6 +436,77 @@ class RelatorioSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = [
             'id', 'aluno', 'revisado_por', 'escola', 'instituicao', 'criado_em', 'atualizado_em',
+        ]
+
+
+class NotificacaoSerializer(serializers.ModelSerializer):
+    remetente_nome = serializers.CharField(source='remetente.nome', read_only=True, default=None)
+
+    class Meta:
+        model = Notificacao
+        fields = [
+            'id', 'tipo', 'titulo', 'conteudo', 'lido_em',
+            'remetente', 'remetente_nome', 'usuario', 'escola', 'instituicao',
+            'criado_em', 'atualizado_em',
+        ]
+        read_only_fields = [
+            'id', 'remetente', 'usuario', 'escola', 'instituicao', 'criado_em', 'atualizado_em',
+        ]
+
+
+class MetaPAEESerializer(serializers.ModelSerializer):
+    aluno_nome = serializers.CharField(source='aluno.nome_completo', read_only=True)
+    usuario_especialista_nome = serializers.CharField(source='usuario_especialista.nome', read_only=True)
+
+    class Meta:
+        model = MetaPAEE
+        fields = [
+            'id', 'categoria', 'inicio', 'fim', 'objetivo', 'criterio', 'estrategia', 'status',
+            'aluno', 'aluno_nome', 'usuario_especialista', 'usuario_especialista_nome', 'turma',
+            'escola', 'instituicao', 'criado_em', 'atualizado_em',
+        ]
+        read_only_fields = [
+            'id', 'aluno', 'usuario_especialista', 'escola', 'instituicao', 'criado_em', 'atualizado_em',
+        ]
+
+
+class SessaoEspecialistaSerializer(serializers.ModelSerializer):
+    aluno_nome = serializers.CharField(source='aluno.nome_completo', read_only=True)
+    usuario_especialista_nome = serializers.CharField(source='usuario_especialista.nome', read_only=True)
+
+    class Meta:
+        model = SessaoEspecialista
+        fields = [
+            'id', 'data_atendimento', 'duracao', 'resumo', 'status',
+            'aluno', 'aluno_nome', 'usuario_especialista', 'usuario_especialista_nome', 'turma',
+            'escola', 'instituicao', 'criado_em', 'atualizado_em',
+        ]
+        read_only_fields = [
+            'id', 'aluno', 'usuario_especialista', 'escola', 'instituicao', 'criado_em', 'atualizado_em',
+        ]
+
+
+class SessaoPAEEMetaSerializer(serializers.ModelSerializer):
+    meta_paee_objetivo = serializers.CharField(source='meta_paee.objetivo', read_only=True)
+
+    class Meta:
+        model = SessaoPAEEMeta
+        fields = ['id', 'sessao_especialista', 'meta_paee', 'meta_paee_objetivo', 'criado_em']
+        read_only_fields = ['id', 'sessao_especialista', 'criado_em']
+
+
+class TarefaPAEESerializer(serializers.ModelSerializer):
+    professor_conclusao_nome = serializers.CharField(source='professor_conclusao.nome', read_only=True, default=None)
+
+    class Meta:
+        model = TarefaPAEE
+        fields = [
+            'id', 'descricao', 'concluida', 'observacao_professor', 'data_conclusao',
+            'meta_paee', 'professor_conclusao', 'professor_conclusao_nome',
+            'escola', 'instituicao', 'criado_em', 'atualizado_em',
+        ]
+        read_only_fields = [
+            'id', 'meta_paee', 'professor_conclusao', 'escola', 'instituicao', 'criado_em', 'atualizado_em',
         ]
 
 
