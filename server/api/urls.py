@@ -118,19 +118,13 @@ from .views.observacao import (
     deletar_observacao_transcricao,
 )
 from .views.planejamento import (
-    listar_planejamentos_semanais,
+    listar_planejamentos,
+    processar_arquivo_planejamento,
+    sugerir_atividades_planejamento,
+    sugerir_bncc_planejamento,
     criar_planejamento_semanal,
-    detalhe_planejamento_semanal,
     atualizar_planejamento_semanal,
-    deletar_planejamento_semanal,
-    listar_planejamentos_diarios,
-    criar_planejamento_diario,
-    detalhe_planejamento_diario,
-    atualizar_planejamento_diario,
-    deletar_planejamento_diario,
-    listar_habilidades_planejamento_diario,
-    vincular_habilidade_planejamento_diario,
-    desvincular_habilidade_planejamento_diario,
+    aplicar_planejamento_em_semanas,
 )
 
 urlpatterns = [
@@ -272,21 +266,12 @@ urlpatterns = [
     path('observacoes-transcricao/<uuid:observacao_id>/atualizar/', atualizar_observacao_transcricao, name='atualizar_observacao_transcricao'),
     path('observacoes-transcricao/<uuid:observacao_id>/deletar/', deletar_observacao_transcricao, name='deletar_observacao_transcricao'),
 
-    # Planejamentos Semanais
-    path('planejamentos-semanais/', listar_planejamentos_semanais, name='listar_planejamentos_semanais'),
-    path('planejamentos-semanais/criar/', criar_planejamento_semanal, name='criar_planejamento_semanal'),
-    path('planejamentos-semanais/<uuid:planejamento_id>/', detalhe_planejamento_semanal, name='detalhe_planejamento_semanal'),
-    path('planejamentos-semanais/<uuid:planejamento_id>/atualizar/', atualizar_planejamento_semanal, name='atualizar_planejamento_semanal'),
-    path('planejamentos-semanais/<uuid:planejamento_id>/deletar/', deletar_planejamento_semanal, name='deletar_planejamento_semanal'),
-
-    # Planejamentos Diários
-    path('planejamentos-diarios/', listar_planejamentos_diarios, name='listar_planejamentos_diarios'),
-    path('planejamentos-diarios/criar/', criar_planejamento_diario, name='criar_planejamento_diario'),
-    path('planejamentos-diarios/<uuid:diario_id>/', detalhe_planejamento_diario, name='detalhe_planejamento_diario'),
-    path('planejamentos-diarios/<uuid:diario_id>/atualizar/', atualizar_planejamento_diario, name='atualizar_planejamento_diario'),
-    path('planejamentos-diarios/<uuid:diario_id>/deletar/', deletar_planejamento_diario, name='deletar_planejamento_diario'),
-    path('planejamentos-diarios/<uuid:diario_id>/habilidades/', listar_habilidades_planejamento_diario, name='listar_habilidades_planejamento_diario'),
-    path('planejamentos-diarios/<uuid:diario_id>/habilidades/vincular/', vincular_habilidade_planejamento_diario, name='vincular_habilidade_planejamento_diario'),
-    path('planejamentos-diarios/<uuid:diario_id>/habilidades/<uuid:habilidade_id>/desvincular/',
-         desvincular_habilidade_planejamento_diario, name='desvincular_habilidade_planejamento_diario'),
+    # Planejamento (fluxo com IA)
+    path('planejamento/', listar_planejamentos, name='listar_planejamentos'),
+    path('planejamento/processar-arquivo/', processar_arquivo_planejamento, name='processar_arquivo_planejamento'),
+    path('planejamento/sugerir-atividades/', sugerir_atividades_planejamento, name='sugerir_atividades_planejamento'),
+    path('planejamento/sugerir-bncc/', sugerir_bncc_planejamento, name='sugerir_bncc_planejamento'),
+    path('planejamento/criar/', criar_planejamento_semanal, name='criar_planejamento_semanal'),
+    path('planejamento/<uuid:planejamento_id>/atualizar/', atualizar_planejamento_semanal, name='atualizar_planejamento_semanal'),
+    path('planejamento/aplicar-em-semanas/', aplicar_planejamento_em_semanas, name='aplicar_planejamento_em_semanas'),
 ]

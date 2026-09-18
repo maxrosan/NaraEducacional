@@ -340,22 +340,22 @@ def compress_image(content: bytes, max_dimension: int = 800, quality: int = 80) 
     image.save(buffer, format='JPEG', quality=quality, optimize=True)
     return buffer.getvalue(), 'image/jpeg'
 
-def get_foto_url(crianca) -> Optional[str]:
+def get_foto_url(aluno) -> Optional[str]:
     """
     Devolve uma URL válida para a foto da criança, regenerando a presigned
     URL a partir da storage_key quando necessário. Mesmo padrão de
     get_logo_url / ensure_pdf.
     """
-    if not crianca.foto_url and not crianca.foto_storage_key:
+    if not aluno.foto_url and not aluno.foto_storage_key:
         return None
 
     if not is_s3_configured():
-        return crianca.foto_url or None
+        return aluno.foto_url or None
 
-    storage_key = crianca.foto_storage_key
+    storage_key = aluno.foto_storage_key
 
-    if not storage_key and crianca.foto_url:
-        storage_key = extract_storage_key_from_url(crianca.foto_url)
+    if not storage_key and aluno.foto_url:
+        storage_key = extract_storage_key_from_url(aluno.foto_url)
 
     if not storage_key:
         return None
@@ -367,14 +367,14 @@ def get_foto_url(crianca) -> Optional[str]:
         return None
 
     update_fields = []
-    if crianca.foto_storage_key != storage_key:
-        crianca.foto_storage_key = storage_key
+    if aluno.foto_storage_key != storage_key:
+        aluno.foto_storage_key = storage_key
         update_fields.append('foto_storage_key')
-    if crianca.foto_url != presigned:
-        crianca.foto_url = presigned
+    if aluno.foto_url != presigned:
+        aluno.foto_url = presigned
         update_fields.append('foto_url')
 
     if update_fields:
-        crianca.save(update_fields=update_fields)
+        aluno.save(update_fields=update_fields)
 
     return presigned

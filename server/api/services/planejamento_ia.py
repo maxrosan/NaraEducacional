@@ -25,7 +25,7 @@ from uuid import uuid4
 
 from django.db.models import Q
 
-from api.models import HabilidadeBNCC, PerguntaBNCC
+from api.models import HabilidadeBNCC
 from api.openai_client import get_openai_client
 from api.storage import (
     delete_from_s3,
@@ -745,43 +745,26 @@ def sugerir_atividades_a_partir_de_prompt(
 
 
 def _candidatos_bncc(ano_serie: str = "") -> list[dict]:
-    codigos = (
-        PerguntaBNCC.objects.exclude(habilidade_bncc__isnull=True)
-        .exclude(habilidade_bncc__exact="")
-        .values_list("habilidade_bncc", flat=True)
-        .distinct()
-    )
-    codigos = [c.strip() for c in codigos if c and c.strip()]
-    if not codigos:
-        return []
+    """
+    No schema novo, HabilidadeBNCC já É o catálogo oficial (Pergunta.habilidade_bncc
+    é uma FK de verdade pra cá, não um código texto solto) — não precisa mais
+    derivar candidatos a partir de perguntas.
+    """
+    queryset = HabilidadeBNCC.objects.filter(ativa=True)
+    if ano_serie:
+        queryset = queryset.filter(ano_serie__iexact=ano_serie)
 
-    descricoes = {
-        h.codigo: {
+    candidatos = [
+        {
             "id": str(h.id),
             "codigo": h.codigo,
             "descricao": h.descricao,
-            "componente_curricular": h.componente_curricular,
-            "ano_serie": h.ano_serie,
+            "componente_curricular": h.componente_curricular or "",
+            "ano_serie": h.ano_serie or "",
             "campo_atuacao": h.campo_atuacao or "",
         }
-        for h in HabilidadeBNCC.objects.filter(codigo__in=codigos, ativa=True)
-    }
-
-    ano_lower = ano_serie.lower() if ano_serie else ""
-
-    candidatos: list[dict] = []
-    for codigo in codigos:
-        info = descricoes.get(codigo)
-        if info is None:
-            info = {
-                "id": codigo,
-                "codigo": codigo,
-                "descricao": "",
-                "componente_curricular": "",
-                "ano_serie": "",
-                "campo_atuacao": "",
-            }
-        candidatos.append(info)
+        for h in queryset
+    ]
     return candidatos
 
 
@@ -843,7 +826,7 @@ def sugerir_habilidades_bncc(
         return {
             "habilidades": [],
             "origem": "fallback",
-            "mensagem": "Nenhuma habilidade candidata cadastrada em perguntas_bncc.",
+            "mensagem": "Nenhuma habilidade ativa cadastrada no catálogo BNCC.",
         }
 
     fallback_resultado = _fallback_por_palavras(candidatos, texto, limite)

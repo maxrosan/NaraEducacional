@@ -1,11 +1,10 @@
 """
 Helpers compartilhados pelos endpoints de planejamento semanal/diário.
 
-`perguntas_bncc.habilidade_bncc` é a fonte canônica de habilidades BNCC.
-O catálogo `habilidades_bncc` (FK do `PlanejamentoHabilidade`) começa vazio
-e é populado on-demand pelo `resolver_habilidade_bncc`: quando um código
-aparece pela primeira vez, a entrada é materializada com os metadados
-extraídos de `PerguntaBNCC`.
+No schema novo, `HabilidadeBNCC` já é o catálogo oficial — `Pergunta.habilidade_bncc`
+é uma FK de verdade pra lá (não um código texto solto como no legado), então
+`resolver_habilidade_bncc` não precisa mais materializar nada: só busca no
+catálogo por id ou código.
 """
 
 from __future__ import annotations
@@ -13,7 +12,7 @@ from __future__ import annotations
 import logging
 from typing import Optional
 
-from api.models import HabilidadeBNCC, PerguntaBNCC, PlanejamentoSemanal, Turma
+from api.models import HabilidadeBNCC, PlanejamentoSemanal, Turma
 
 logger = logging.getLogger(__name__)
 
@@ -22,7 +21,7 @@ logger = logging.getLogger(__name__)
 # reais do modelo quando chegam em `ordering`.
 ORDERING_ALIASES = {
     'semana_referencia': 'semana_inicio',
-    'id_professor': 'professora_id',
+    'id_professor': 'professor_id',
 }
 
 
@@ -39,8 +38,11 @@ def listar_planejamentos_filtrados(
     frontend. `semana_referencia`/`id_professor` são apenas aliases de leitura
     no serializer — aqui o filtro de data mapeia para ``semana_inicio`` e o
     ordering é traduzido para o campo real do modelo (preservando o ``-``).
+
+    `professora_id` é mantido como nome de parâmetro por compatibilidade com
+    quem já chama esta função — filtra pelo campo `professor` do model.
     """
-    queryset = PlanejamentoSemanal.objects.all().prefetch_related('dias')
+    queryset = PlanejamentoSemanal.objects.all().prefetch_related('planejamentos_diarios')
 
     if instituicao_id:
         turmas_ids = list(
@@ -53,7 +55,7 @@ def listar_planejamentos_filtrados(
         queryset = queryset.filter(turma_id=turma_id)
 
     if professora_id:
-        queryset = queryset.filter(professora_id=professora_id)
+        queryset = queryset.filter(professor_id=professora_id)
 
     # O frontend pode enviar datas em ISO com timezone; usamos só YYYY-MM-DD.
     if semana_gte:
@@ -76,12 +78,10 @@ def listar_planejamentos_filtrados(
 
 def resolver_habilidade_bncc(referencia) -> Optional[HabilidadeBNCC]:
     """
-    Aceita id (UUID/inteiro) ou código BNCC (ex.: ``EI03EO01``, ``EF01LP01``).
-
-    Procura primeiro em ``habilidades_bncc``; se não existir, tenta em
-    ``perguntas_bncc.habilidade_bncc`` e materializa a entrada no catálogo
-    a partir dos metadados da pergunta. Retorna ``None`` quando o código não
-    aparece em nenhuma das duas tabelas.
+    Aceita id (UUID) ou código BNCC (ex.: ``EI03EO01``, ``EF01LP01``).
+    Busca direto no catálogo — não materializa nada, já que HabilidadeBNCC
+    é a fonte de verdade no schema novo (Pergunta a referencia via FK, o
+    que já garante que qualquer código em uso existe no catálogo).
     """
     if referencia is None:
         return None
@@ -90,42 +90,9 @@ def resolver_habilidade_bncc(referencia) -> Optional[HabilidadeBNCC]:
         return None
 
     try:
-        habilidade = (
+        return (
             HabilidadeBNCC.objects.filter(id=ref).first()
             or HabilidadeBNCC.objects.filter(codigo=ref).first()
         )
     except (ValueError, TypeError):
-        habilidade = HabilidadeBNCC.objects.filter(codigo=ref).first()
-
-    if habilidade is not None:
-        return habilidade
-
-    pergunta = (
-        PerguntaBNCC.objects.filter(habilidade_bncc=ref)
-        .exclude(habilidade_bncc__isnull=True)
-        .exclude(habilidade_bncc__exact='')
-        .first()
-    )
-    if pergunta is None:
-        return None
-
-    descricao = (pergunta.pergunta_norma or pergunta.pergunta or '').strip()
-    componente = (pergunta.area_conhecimento or pergunta.campo_experiencia or '').strip()
-    ano_serie = (pergunta.faixa_etaria or '').strip()
-    campo_atuacao = (pergunta.campo_experiencia or '').strip() or None
-
-    habilidade, criado = HabilidadeBNCC.objects.get_or_create(
-        codigo=ref,
-        defaults={
-            'descricao': descricao,
-            'componente_curricular': componente,
-            'ano_serie': ano_serie,
-            'campo_atuacao': campo_atuacao,
-        },
-    )
-    if criado:
-        logger.info(
-            "Habilidade BNCC %s materializada no catálogo a partir de perguntas_bncc.",
-            ref,
-        )
-    return habilidade
+        return HabilidadeBNCC.objects.filter(codigo=ref).first()

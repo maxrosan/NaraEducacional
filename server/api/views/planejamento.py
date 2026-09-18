@@ -1,13 +1,18 @@
 """
-Views novas do Planejamento simplificado: upload de arquivo, assistente de IA,
-sugestão de habilidades BNCC, e os endpoints de criar/atualizar planejamento
-semanal (sobrescrevendo as versões legadas via ``views/__init__.py``).
+Views do Planejamento: upload de arquivo, assistente de IA, sugestão de
+habilidades BNCC, e o CRUD de planejamento semanal/diário.
 
-A reimplementação de criar/atualizar mora aqui porque eles dependem do
-resolver de habilidades BNCC que materializa entradas em ``habilidades_bncc``
-a partir de ``perguntas_bncc`` — assim as sugestões da IA (cujos códigos vêm
-de ``perguntas_bncc``) deixam de cair em "Habilidade BNCC não encontrada"
-durante o save e os relatórios passam a mostrar as habilidades selecionadas.
+Portado do legado com os seguintes ajustes pro schema multi-tenant novo:
+- `professora_id`/`professora_nome` (strings soltas) viraram `professor`
+  (FK pra Usuario) — o nome já vem de lá, não precisa duplicar.
+- `planejamento.dias` (related_name antigo) virou `planejamento.planejamentos_diarios`.
+- `data_modificacao` virou `atualizado_em`.
+- `resolver_habilidade_bncc` não materializa mais nada a partir de
+  perguntas — busca direto no catálogo `HabilidadeBNCC`, que agora é FK
+  de verdade em `Pergunta.habilidade_bncc`.
+- Criação/atualização agora respeitam o mesmo controle de permissão do
+  resto da API (professor só mexe na própria turma, admin/coordenador
+  têm escopo mais amplo).
 """
 
 from __future__ import annotations
@@ -18,20 +23,13 @@ from datetime import timedelta
 from django.utils.dateparse import parse_date
 from rest_framework import status
 from rest_framework.decorators import api_view, permission_classes, throttle_classes
-from rest_framework.permissions import AllowAny, IsAuthenticated
+from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
-from api.models import (
-    PlanejamentoDiario,
-    PlanejamentoHabilidade,
-    PlanejamentoSemanal,
-)
+from api.models import PlanejamentoDiario, PlanejamentoHabilidade, PlanejamentoSemanal, Turma, UsuarioTurma
 from api.serializers import PlanejamentoSemanalSerializer
 from api.throttles import UploadRateThrottle
-from api.services.planejamento import (
-    listar_planejamentos_filtrados,
-    resolver_habilidade_bncc,
-)
+from api.services.planejamento import listar_planejamentos_filtrados, resolver_habilidade_bncc
 from api.services.planejamento_ia import (
     ALLOWED_PLANEJAMENTO_EXTENSIONS,
     ALLOWED_PLANEJAMENTO_MIME_TYPES,
@@ -41,12 +39,9 @@ from api.services.planejamento_ia import (
     salvar_arquivo_planejamento,
     sugerir_atividades_a_partir_de_prompt,
     sugerir_habilidades_bncc,
+    remover_arquivo_planejamento,
 )
-from api.views_legacy import (
-    IA_REQUEST_TIMEOUT_SECONDS,
-    run_with_timeout,
-    validate_uploaded_file,
-)
+from api.ia_utils import IA_REQUEST_TIMEOUT_SECONDS, run_with_timeout, validate_uploaded_file
 
 DIAS_SEMANA_ORDENADOS = ["segunda", "terca", "quarta", "quinta", "sexta"]
 DIAS_SEMANA_VALIDOS = set(DIAS_SEMANA_ORDENADOS)
@@ -54,16 +49,41 @@ DIAS_SEMANA_VALIDOS = set(DIAS_SEMANA_ORDENADOS)
 logger = logging.getLogger(__name__)
 
 
+def _is_superadmin(user):
+    return user.is_superuser or user.nivel == 'superadmin'
+
+
+def _pode_gerenciar_geral(user):
+    return _is_superadmin(user) or user.nivel in ('admin', 'coordenador')
+
+
+def _professor_vinculado_turma(usuario, turma):
+    return UsuarioTurma.objects.filter(usuario=usuario, turma=turma).exists()
+
+
+def _pode_editar(user, planejamento):
+    if _pode_gerenciar_geral(user):
+        return True
+    return planejamento.professor_id == user.id
+
+
 def _get_cliente_id(request):
     """Extrai cliente_id (instituicao_id) do usuário autenticado."""
     return str(request.user.instituicao_id) if getattr(request.user, 'instituicao_id', None) else None
 
 
+# ---------------------------------------------------------------------------
+# Listagem
+# ---------------------------------------------------------------------------
+
 @api_view(["GET"])
-@permission_classes([AllowAny])
+@permission_classes([IsAuthenticated])
 def listar_planejamentos(request):
     """
-    Lista planejamentos semanais com filtros.
+    Lista planejamentos semanais com filtros. Já vem filtrado pelo
+    TenantManager (escola/instituição do usuário); os query params abaixo
+    refinam ainda mais dentro desse escopo.
+
     Query params: instituicao_id, semana_referencia__gte, semana_referencia__lte,
                   turma_id, professora_id (ou o alias id_professor), ordering.
     """
@@ -86,6 +106,10 @@ def listar_planejamentos(request):
             status=status.HTTP_500_INTERNAL_SERVER_ERROR,
         )
 
+
+# ---------------------------------------------------------------------------
+# Upload + extração + sugestão de atividades
+# ---------------------------------------------------------------------------
 
 @api_view(["POST"])
 @permission_classes([IsAuthenticated])
@@ -123,6 +147,15 @@ def processar_arquivo_planejamento(request):
             status=status.HTTP_400_BAD_REQUEST,
         )
 
+    try:
+        turma = Turma.objects.get(id=turma_id)
+    except Turma.DoesNotExist:
+        return Response({"error": "Turma não encontrada."}, status=status.HTTP_404_NOT_FOUND)
+
+    if not _pode_gerenciar_geral(request.user) and not _professor_vinculado_turma(request.user, turma):
+        return Response({"error": "Você não está vinculado a essa turma."},
+                         status=status.HTTP_403_FORBIDDEN)
+
     # 1) Extrai texto antes de subir para o S3 — se o arquivo for inválido, não
     # faz sentido pagar storage por ele.
     try:
@@ -135,9 +168,7 @@ def processar_arquivo_planejamento(request):
         meta_arquivo = salvar_arquivo_planejamento(arquivo, turma_id, dia_semana)
     except RuntimeError as exc:
         logger.exception("Falha ao subir arquivo de planejamento para o S3.")
-        return Response(
-            {"error": str(exc)}, status=status.HTTP_502_BAD_GATEWAY
-        )
+        return Response({"error": str(exc)}, status=status.HTTP_502_BAD_GATEWAY)
 
     # 3) Extrai atividades por dia + janela de datas em uma chamada à IA.
     extracao = None
@@ -175,7 +206,6 @@ def processar_arquivo_planejamento(request):
         "fallback_texto_unico": "",
     }
 
-    # Compat: string consolidada para callers antigos.
     if extracao["dias"]:
         partes = []
         for d in extracao["dias"]:
@@ -219,7 +249,7 @@ def sugerir_atividades_planejamento(request):
     """
     Assistente de IA livre. Recebe ``{prompt, ano_serie?, contexto?}`` e
     devolve ``{atividades_sugeridas}``.
-    O prompt é resolvido do banco (categoria "Planejamento") via cliente_id.
+    O prompt é resolvido do banco (categoria "Planejamento") via instituicao_id.
     """
     payload = request.data or {}
     prompt = (payload.get("prompt") or "").strip()
@@ -263,167 +293,11 @@ def sugerir_atividades_planejamento(request):
 
 @api_view(["POST"])
 @permission_classes([IsAuthenticated])
-def aplicar_planejamento_em_semanas(request):
-    """
-    Cria/atualiza ``PlanejamentoSemanal`` para uma ou mais semanas, sobrescrevendo
-    apenas os dias informados em cada semana.
-
-    Usado quando o upload de arquivo cobre mais de uma semana e o frontend
-    precisa persistir as semanas extras sem que a professora navegue até elas.
-
-    Body:
-        {
-          "turma_id": "...",
-          "professora_id": "...",
-          "professora_nome": "...",
-          "arquivo": {                     # opcional — metadados aplicados a
-            "storage_key": "...",          # cada dia que receber atividades
-            "arquivo_nome_original": "...",
-            "arquivo_content_type": "..."
-          },
-          "semanas": [
-            {
-              "semana_inicio": "YYYY-MM-DD",   # segunda-feira
-              "dias": {
-                "segunda": {"atividades_propostas": "..."},
-                "terca":   {"atividades_propostas": "..."},
-                ...
-              }
-            }
-          ]
-        }
-    """
-    payload = request.data or {}
-    turma_id = (payload.get("turma_id") or "").strip()
-    professora_id = (payload.get("professora_id") or "").strip()
-    professora_nome = (payload.get("professora_nome") or "").strip()
-    arquivo_meta = payload.get("arquivo") or {}
-    semanas_payload = payload.get("semanas") or []
-
-    if not turma_id:
-        return Response(
-            {"error": "Campo obrigatório: turma_id."},
-            status=status.HTTP_400_BAD_REQUEST,
-        )
-    if not isinstance(semanas_payload, list) or not semanas_payload:
-        return Response(
-            {"error": "Campo 'semanas' deve ser uma lista não vazia."},
-            status=status.HTTP_400_BAD_REQUEST,
-        )
-
-    arquivo_storage_key = (arquivo_meta.get("storage_key") or None) if isinstance(
-        arquivo_meta, dict
-    ) else None
-    arquivo_nome = (arquivo_meta.get("arquivo_nome_original") or None) if isinstance(
-        arquivo_meta, dict
-    ) else None
-    arquivo_content_type = (arquivo_meta.get("arquivo_content_type") or None) if isinstance(
-        arquivo_meta, dict
-    ) else None
-
-    semanas_afetadas = []
-
-    for semana_item in semanas_payload:
-        if not isinstance(semana_item, dict):
-            continue
-        semana_inicio_raw = (semana_item.get("semana_inicio") or "").strip()
-        try:
-            semana_inicio = parse_date(semana_inicio_raw)
-        except (TypeError, ValueError):
-            semana_inicio = None
-        if not semana_inicio:
-            return Response(
-                {
-                    "error": (
-                        f"semana_inicio inválida: {semana_inicio_raw!r}. "
-                        "Use YYYY-MM-DD."
-                    )
-                },
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-        if semana_inicio.weekday() != 0:
-            return Response(
-                {
-                    "error": (
-                        f"semana_inicio {semana_inicio.isoformat()} não é "
-                        "segunda-feira."
-                    )
-                },
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
-        semana_fim = semana_inicio + timedelta(days=4)
-
-        planejamento, criado = PlanejamentoSemanal.objects.get_or_create(
-            turma_id=turma_id,
-            semana_inicio=semana_inicio,
-            defaults={
-                "semana_fim": semana_fim,
-                "professora_id": professora_id or "",
-                "professora_nome": professora_nome or "",
-            },
-        )
-
-        # Garante que existem 5 PlanejamentoDiario para esta semana.
-        for i, dia_nome in enumerate(DIAS_SEMANA_ORDENADOS):
-            data_dia = semana_inicio + timedelta(days=i)
-            PlanejamentoDiario.objects.get_or_create(
-                planejamento_semanal=planejamento,
-                dia_semana=dia_nome,
-                defaults={"data": data_dia},
-            )
-
-        dias_input = semana_item.get("dias") or {}
-        if not isinstance(dias_input, dict):
-            dias_input = {}
-
-        dias_aplicados = []
-        for dia_nome, dados_dia in dias_input.items():
-            if dia_nome not in DIAS_SEMANA_VALIDOS or not isinstance(dados_dia, dict):
-                continue
-            dia_obj = planejamento.dias.filter(dia_semana=dia_nome).first()
-            if not dia_obj:
-                continue
-
-            atividades = (dados_dia.get("atividades_propostas") or "").strip()
-            dia_obj.atividades_propostas = atividades
-
-            # Aplica metadados do arquivo (se houver) ao dia preenchido.
-            if arquivo_storage_key:
-                dia_obj.arquivo_storage_key = arquivo_storage_key
-                dia_obj.arquivo_nome_original = arquivo_nome
-                dia_obj.arquivo_content_type = arquivo_content_type
-
-            dia_obj.save()
-            dias_aplicados.append(dia_nome)
-
-        planejamento.save(update_fields=["data_modificacao"])
-
-        semanas_afetadas.append(
-            {
-                "planejamento_id": planejamento.id,
-                "semana_inicio": semana_inicio.isoformat(),
-                "semana_fim": semana_fim.isoformat(),
-                "criado": criado,
-                "dias_aplicados": dias_aplicados,
-            }
-        )
-
-    return Response(
-        {"success": True, "semanas_afetadas": semanas_afetadas},
-        status=status.HTTP_200_OK,
-    )
-
-
-@api_view(["POST"])
-@permission_classes([IsAuthenticated])
 def sugerir_bncc_planejamento(request):
     """
     Recebe ``{atividades_texto, ano_serie?, limite?}`` e devolve as
-    habilidades BNCC sugeridas, com origem ('ia' ou 'fallback').
-    Substitui o antigo ``/api/planejamento/sugestoes-ia/`` mas usa as
-    candidatas vindas de ``perguntas_bncc.habilidade_bncc``.
-    O prompt é resolvido do banco (categoria "Planejamento") via cliente_id.
+    habilidades BNCC sugeridas, com origem ('ia' ou 'fallback'), buscadas
+    no catálogo `HabilidadeBNCC`.
     """
     payload = request.data or {}
     atividades_texto = (payload.get("atividades_texto") or "").strip()
@@ -456,12 +330,15 @@ def sugerir_bncc_planejamento(request):
 
 
 # ---------------------------------------------------------------------------
-# CRUD de PlanejamentoSemanal (sobrescreve as versões em views_legacy.py)
+# CRUD de PlanejamentoSemanal
 # ---------------------------------------------------------------------------
+
+def _resolver_escola_instituicao_para_turma(turma):
+    return turma.escola_id, turma.instituicao_id
 
 
 def _persistir_habilidades(dia_obj: PlanejamentoDiario, refs) -> None:
-    """Recria os vínculos BNCC do dia, materializando códigos novos no catálogo."""
+    """Recria os vínculos BNCC do dia."""
     if not isinstance(refs, list):
         return
     for ref in refs:
@@ -476,28 +353,37 @@ def _persistir_habilidades(dia_obj: PlanejamentoDiario, refs) -> None:
 
 
 @api_view(["POST"])
+@permission_classes([IsAuthenticated])
 def criar_planejamento_semanal(request):
     """
     Cria um novo planejamento semanal (formato simplificado: cada dia tem
     apenas atividades_propostas, prompt_ia, arquivo_* e habilidades).
+    `professor` é opcional no body — se não vier, assume o usuário logado
+    (admin/coordenador podem informar outro professor explicitamente).
     """
+    user = request.user
     try:
-        turma_id = request.data.get("turma_id")
+        turma_id = request.data.get("turma_id") or request.data.get("turma")
         semana_inicio_raw = request.data.get("semana_inicio")
-        professora_id = request.data.get("professora_id")
-        professora_nome = request.data.get("professora_nome")
+        professor_id = request.data.get("professor_id") or request.data.get("professora_id")
         planejamento_dias = request.data.get("dias", {}) or {}
 
-        if not all([turma_id, semana_inicio_raw, professora_id, professora_nome]):
+        if not turma_id or not semana_inicio_raw:
             return Response(
-                {
-                    "error": (
-                        "Campos obrigatórios: turma_id, semana_inicio, "
-                        "professora_id, professora_nome"
-                    )
-                },
+                {"error": "Campos obrigatórios: turma_id, semana_inicio"},
                 status=status.HTTP_400_BAD_REQUEST,
             )
+
+        try:
+            turma = Turma.objects.get(id=turma_id)
+        except Turma.DoesNotExist:
+            return Response({"error": "Turma não encontrada."}, status=status.HTTP_404_NOT_FOUND)
+
+        if not _pode_gerenciar_geral(user) and not _professor_vinculado_turma(user, turma):
+            return Response({"error": "Você não está vinculado a essa turma."},
+                             status=status.HTTP_403_FORBIDDEN)
+
+        professor_id = professor_id or user.id
 
         try:
             semana_inicio = parse_date(semana_inicio_raw)
@@ -522,12 +408,14 @@ def criar_planejamento_semanal(request):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
+        escola_id, instituicao_id = _resolver_escola_instituicao_para_turma(turma)
         planejamento = PlanejamentoSemanal.objects.create(
             turma_id=turma_id,
             semana_inicio=semana_inicio,
             semana_fim=semana_fim,
-            professora_id=professora_id,
-            professora_nome=professora_nome,
+            professor_id=professor_id,
+            escola_id=escola_id,
+            instituicao_id=instituicao_id,
         )
 
         dias_criados = []
@@ -546,6 +434,8 @@ def criar_planejamento_semanal(request):
                 arquivo_storage_key=dados_dia.get("arquivo_storage_key") or None,
                 arquivo_nome_original=dados_dia.get("arquivo_nome_original") or None,
                 arquivo_content_type=dados_dia.get("arquivo_content_type") or None,
+                escola_id=escola_id,
+                instituicao_id=instituicao_id,
             )
 
             habilidades_refs = dados_dia.get("habilidades") or []
@@ -580,20 +470,19 @@ def criar_planejamento_semanal(request):
 
 
 @api_view(["PUT"])
+@permission_classes([IsAuthenticated])
 def atualizar_planejamento_semanal(request, planejamento_id):
     """
     Atualiza um planejamento semanal existente. Quando o arquivo de um dia
     troca (ou é removido), o objeto antigo é apagado do S3 para evitar lixo.
     """
-    from api.services.planejamento_ia import remover_arquivo_planejamento
-
     try:
         planejamento = PlanejamentoSemanal.objects.get(id=planejamento_id)
     except PlanejamentoSemanal.DoesNotExist:
-        return Response(
-            {"error": "Planejamento não encontrado"},
-            status=status.HTTP_404_NOT_FOUND,
-        )
+        return Response({"error": "Planejamento não encontrado"}, status=status.HTTP_404_NOT_FOUND)
+
+    if not _pode_editar(request.user, planejamento):
+        return Response({"error": "Sem permissão."}, status=status.HTTP_403_FORBIDDEN)
 
     try:
         planejamento_dias = request.data.get("dias", {}) or {}
@@ -601,7 +490,7 @@ def atualizar_planejamento_semanal(request, planejamento_id):
         for dia_nome, dados_dia in planejamento_dias.items():
             if not isinstance(dados_dia, dict):
                 continue
-            dia_obj = planejamento.dias.filter(dia_semana=dia_nome).first()
+            dia_obj = planejamento.planejamentos_diarios.filter(dia_semana=dia_nome).first()
             if not dia_obj:
                 continue
 
@@ -622,10 +511,10 @@ def atualizar_planejamento_semanal(request, planejamento_id):
             dia_obj.save()
 
             if "habilidades" in dados_dia:
-                dia_obj.habilidades.all().delete()
+                dia_obj.planejamentos_habilidades.all().delete()
                 _persistir_habilidades(dia_obj, dados_dia.get("habilidades") or [])
 
-        planejamento.save(update_fields=["data_modificacao"])
+        planejamento.save(update_fields=["atualizado_em"])
 
         return Response(
             {
@@ -642,3 +531,123 @@ def atualizar_planejamento_semanal(request, planejamento_id):
             {"error": "Erro ao atualizar planejamento", "details": str(exc)},
             status=status.HTTP_500_INTERNAL_SERVER_ERROR,
         )
+
+
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+def aplicar_planejamento_em_semanas(request):
+    """
+    Cria/atualiza ``PlanejamentoSemanal`` para uma ou mais semanas,
+    sobrescrevendo apenas os dias informados em cada semana.
+
+    Usado quando o upload de arquivo cobre mais de uma semana e o frontend
+    precisa persistir as semanas extras sem que a professora navegue até elas.
+    """
+    user = request.user
+    payload = request.data or {}
+    turma_id = (payload.get("turma_id") or "").strip()
+    professor_id = (payload.get("professor_id") or payload.get("professora_id") or "").strip()
+    arquivo_meta = payload.get("arquivo") or {}
+    semanas_payload = payload.get("semanas") or []
+
+    if not turma_id:
+        return Response({"error": "Campo obrigatório: turma_id."}, status=status.HTTP_400_BAD_REQUEST)
+    if not isinstance(semanas_payload, list) or not semanas_payload:
+        return Response({"error": "Campo 'semanas' deve ser uma lista não vazia."},
+                         status=status.HTTP_400_BAD_REQUEST)
+
+    try:
+        turma = Turma.objects.get(id=turma_id)
+    except Turma.DoesNotExist:
+        return Response({"error": "Turma não encontrada."}, status=status.HTTP_404_NOT_FOUND)
+
+    if not _pode_gerenciar_geral(user) and not _professor_vinculado_turma(user, turma):
+        return Response({"error": "Você não está vinculado a essa turma."},
+                         status=status.HTTP_403_FORBIDDEN)
+
+    professor_id = professor_id or str(user.id)
+    escola_id, instituicao_id = _resolver_escola_instituicao_para_turma(turma)
+
+    arquivo_storage_key = (arquivo_meta.get("storage_key") or None) if isinstance(arquivo_meta, dict) else None
+    arquivo_nome = (arquivo_meta.get("arquivo_nome_original") or None) if isinstance(arquivo_meta, dict) else None
+    arquivo_content_type = (arquivo_meta.get("arquivo_content_type") or None) if isinstance(arquivo_meta, dict) else None
+
+    semanas_afetadas = []
+
+    for semana_item in semanas_payload:
+        if not isinstance(semana_item, dict):
+            continue
+        semana_inicio_raw = (semana_item.get("semana_inicio") or "").strip()
+        try:
+            semana_inicio = parse_date(semana_inicio_raw)
+        except (TypeError, ValueError):
+            semana_inicio = None
+        if not semana_inicio:
+            return Response(
+                {"error": f"semana_inicio inválida: {semana_inicio_raw!r}. Use YYYY-MM-DD."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if semana_inicio.weekday() != 0:
+            return Response(
+                {"error": f"semana_inicio {semana_inicio.isoformat()} não é segunda-feira."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        semana_fim = semana_inicio + timedelta(days=4)
+
+        planejamento, criado = PlanejamentoSemanal.objects.get_or_create(
+            turma_id=turma_id,
+            semana_inicio=semana_inicio,
+            defaults={
+                "semana_fim": semana_fim,
+                "professor_id": professor_id,
+                "escola_id": escola_id,
+                "instituicao_id": instituicao_id,
+            },
+        )
+
+        # Garante que existem 5 PlanejamentoDiario para esta semana.
+        for i, dia_nome in enumerate(DIAS_SEMANA_ORDENADOS):
+            data_dia = semana_inicio + timedelta(days=i)
+            PlanejamentoDiario.objects.get_or_create(
+                planejamento_semanal=planejamento,
+                dia_semana=dia_nome,
+                defaults={"data": data_dia, "escola_id": escola_id, "instituicao_id": instituicao_id},
+            )
+
+        dias_input = semana_item.get("dias") or {}
+        if not isinstance(dias_input, dict):
+            dias_input = {}
+
+        dias_aplicados = []
+        for dia_nome, dados_dia in dias_input.items():
+            if dia_nome not in DIAS_SEMANA_VALIDOS or not isinstance(dados_dia, dict):
+                continue
+            dia_obj = planejamento.planejamentos_diarios.filter(dia_semana=dia_nome).first()
+            if not dia_obj:
+                continue
+
+            atividades = (dados_dia.get("atividades_propostas") or "").strip()
+            dia_obj.atividades_propostas = atividades
+
+            if arquivo_storage_key:
+                dia_obj.arquivo_storage_key = arquivo_storage_key
+                dia_obj.arquivo_nome_original = arquivo_nome
+                dia_obj.arquivo_content_type = arquivo_content_type
+
+            dia_obj.save()
+            dias_aplicados.append(dia_nome)
+
+        planejamento.save(update_fields=["atualizado_em"])
+
+        semanas_afetadas.append(
+            {
+                "planejamento_id": planejamento.id,
+                "semana_inicio": semana_inicio.isoformat(),
+                "semana_fim": semana_fim.isoformat(),
+                "criado": criado,
+                "dias_aplicados": dias_aplicados,
+            }
+        )
+
+    return Response({"success": True, "semanas_afetadas": semanas_afetadas}, status=status.HTTP_200_OK)
