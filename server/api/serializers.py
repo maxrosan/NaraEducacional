@@ -9,6 +9,7 @@ from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 from .models import (
     Usuario, Instituicao, Escola, Especialista, Turma, UsuarioTurma,
     Disciplina, UsuarioDisciplina, Aluno, Projeto, Producao, ProducaoAluno,
+    RegistroEscrita, RegistroDesenho, RegistroLeitura,
 )
 
 
@@ -209,6 +210,62 @@ class ProducaoAlunoSerializer(serializers.ModelSerializer):
             'producao', 'aluno', 'aluno_nome', 'criado_em', 'atualizado_em',
         ]
         read_only_fields = ['id', 'producao', 'criado_em', 'atualizado_em']
+
+
+class RegistroEscritaSerializer(serializers.ModelSerializer):
+    aluno_nome = serializers.CharField(source='aluno.nome_completo', read_only=True)
+    professor_nome = serializers.CharField(source='professor.nome', read_only=True)
+
+    class Meta:
+        model = RegistroEscrita
+        fields = [
+            'id', 'etapa', 'arquivo_nome', 'arquivo_hash', 'arquivo_path',
+            'arquivo_original', 'tamanho_arquivo', 'tipo_arquivo', 'etapa_ia',
+            'analise_detalhada', 'anotacoes_professora',
+            'aluno', 'aluno_nome', 'turma', 'professor', 'professor_nome',
+            'escola', 'instituicao', 'criado_em', 'atualizado_em',
+        ]
+        read_only_fields = [
+            'id', 'turma', 'professor', 'escola', 'instituicao', 'criado_em', 'atualizado_em',
+        ]
+
+
+class RegistroDesenhoSerializer(serializers.ModelSerializer):
+    aluno_nome = serializers.CharField(source='aluno.nome_completo', read_only=True)
+    professor_nome = serializers.CharField(source='professor.nome', read_only=True)
+
+    class Meta:
+        model = RegistroDesenho
+        fields = [
+            'id', 'etapa', 'atividade', 'contexto', 'fase_desenho',
+            'elementos_detectados', 'analise_detalhada', 'anotacoes_professora',
+            'arquivo_nome', 'arquivo_hash', 'arquivo_path', 'arquivo_original',
+            'tamanho_arquivo', 'tipo_arquivo',
+            'aluno', 'aluno_nome', 'turma', 'professor', 'professor_nome',
+            'escola', 'instituicao', 'criado_em', 'atualizado_em',
+        ]
+        read_only_fields = [
+            'id', 'turma', 'professor', 'escola', 'instituicao', 'criado_em', 'atualizado_em',
+        ]
+
+
+class RegistroLeituraSerializer(serializers.ModelSerializer):
+    aluno_nome = serializers.CharField(source='aluno.nome_completo', read_only=True)
+    professor_nome = serializers.CharField(source='professor.nome', read_only=True)
+
+    class Meta:
+        model = RegistroLeitura
+        fields = [
+            'id', 'nara_job_id', 'status', 'arquivo_path', 'arquivo_nome',
+            'arquivo_hash', 'tamanho_arquivo', 'tipo_arquivo', 'duracao_seg',
+            'pieces', 'feat_dim', 'classe_predita', 'classe_escolhida',
+            'probabilidades', 'anotacoes_professora',
+            'aluno', 'aluno_nome', 'turma', 'professor', 'professor_nome',
+            'escola', 'instituicao', 'criado_em', 'atualizado_em',
+        ]
+        read_only_fields = [
+            'id', 'turma', 'professor', 'escola', 'instituicao', 'criado_em', 'atualizado_em',
+        ]
 
 
 class LoginSerializer(TokenObtainPairSerializer):

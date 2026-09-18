@@ -68,6 +68,23 @@ from .views.producao import (
     atualizar_vinculo_producao_aluno,
     desvincular_aluno_producao,
 )
+from .views.registro import (
+    listar_registros_escrita,
+    criar_registro_escrita,
+    detalhe_registro_escrita,
+    atualizar_registro_escrita,
+    deletar_registro_escrita,
+    listar_registros_desenho,
+    criar_registro_desenho,
+    detalhe_registro_desenho,
+    atualizar_registro_desenho,
+    deletar_registro_desenho,
+    listar_registros_leitura,
+    criar_registro_leitura,
+    detalhe_registro_leitura,
+    atualizar_registro_leitura,
+    deletar_registro_leitura,
+)
 
 urlpatterns = [
     path('health/', health, name='health'),
@@ -148,4 +165,25 @@ urlpatterns = [
          atualizar_vinculo_producao_aluno, name='atualizar_vinculo_producao_aluno'),
     path('producoes/<uuid:producao_id>/alunos/<uuid:aluno_id>/desvincular/',
          desvincular_aluno_producao, name='desvincular_aluno_producao'),
+
+    # Registros de Escrita
+    path('registros-escrita/', listar_registros_escrita, name='listar_registros_escrita'),
+    path('registros-escrita/criar/', criar_registro_escrita, name='criar_registro_escrita'),
+    path('registros-escrita/<uuid:registro_id>/', detalhe_registro_escrita, name='detalhe_registro_escrita'),
+    path('registros-escrita/<uuid:registro_id>/atualizar/', atualizar_registro_escrita, name='atualizar_registro_escrita'),
+    path('registros-escrita/<uuid:registro_id>/deletar/', deletar_registro_escrita, name='deletar_registro_escrita'),
+
+    # Registros de Desenho
+    path('registros-desenho/', listar_registros_desenho, name='listar_registros_desenho'),
+    path('registros-desenho/criar/', criar_registro_desenho, name='criar_registro_desenho'),
+    path('registros-desenho/<uuid:registro_id>/', detalhe_registro_desenho, name='detalhe_registro_desenho'),
+    path('registros-desenho/<uuid:registro_id>/atualizar/', atualizar_registro_desenho, name='atualizar_registro_desenho'),
+    path('registros-desenho/<uuid:registro_id>/deletar/', deletar_registro_desenho, name='deletar_registro_desenho'),
+
+    # Registros de Leitura
+    path('registros-leitura/', listar_registros_leitura, name='listar_registros_leitura'),
+    path('registros-leitura/criar/', criar_registro_leitura, name='criar_registro_leitura'),
+    path('registros-leitura/<uuid:registro_id>/', detalhe_registro_leitura, name='detalhe_registro_leitura'),
+    path('registros-leitura/<uuid:registro_id>/atualizar/', atualizar_registro_leitura, name='atualizar_registro_leitura'),
+    path('registros-leitura/<uuid:registro_id>/deletar/', deletar_registro_leitura, name='deletar_registro_leitura'),
 ]
