@@ -105,6 +105,33 @@ from .views.pergunta import (
     detalhe_pergunta_especialista,
     atualizar_pergunta_especialista,
 )
+from .views.observacao import (
+    listar_registros_observacao,
+    criar_registro_observacao,
+    detalhe_registro_observacao,
+    atualizar_registro_observacao,
+    deletar_registro_observacao,
+    listar_observacoes_transcricao,
+    criar_observacao_transcricao,
+    detalhe_observacao_transcricao,
+    atualizar_observacao_transcricao,
+    deletar_observacao_transcricao,
+)
+from .views.planejamento import (
+    listar_planejamentos_semanais,
+    criar_planejamento_semanal,
+    detalhe_planejamento_semanal,
+    atualizar_planejamento_semanal,
+    deletar_planejamento_semanal,
+    listar_planejamentos_diarios,
+    criar_planejamento_diario,
+    detalhe_planejamento_diario,
+    atualizar_planejamento_diario,
+    deletar_planejamento_diario,
+    listar_habilidades_planejamento_diario,
+    vincular_habilidade_planejamento_diario,
+    desvincular_habilidade_planejamento_diario,
+)
 
 urlpatterns = [
     path('health/', health, name='health'),
@@ -230,4 +257,36 @@ urlpatterns = [
     path('perguntas-especialistas/criar/', criar_pergunta_especialista, name='criar_pergunta_especialista'),
     path('perguntas-especialistas/<uuid:pergunta_id>/', detalhe_pergunta_especialista, name='detalhe_pergunta_especialista'),
     path('perguntas-especialistas/<uuid:pergunta_id>/atualizar/', atualizar_pergunta_especialista, name='atualizar_pergunta_especialista'),
+
+    # Registros de Observação
+    path('registros-observacao/', listar_registros_observacao, name='listar_registros_observacao'),
+    path('registros-observacao/criar/', criar_registro_observacao, name='criar_registro_observacao'),
+    path('registros-observacao/<uuid:registro_id>/', detalhe_registro_observacao, name='detalhe_registro_observacao'),
+    path('registros-observacao/<uuid:registro_id>/atualizar/', atualizar_registro_observacao, name='atualizar_registro_observacao'),
+    path('registros-observacao/<uuid:registro_id>/deletar/', deletar_registro_observacao, name='deletar_registro_observacao'),
+
+    # Observações de Transcrição
+    path('observacoes-transcricao/', listar_observacoes_transcricao, name='listar_observacoes_transcricao'),
+    path('observacoes-transcricao/criar/', criar_observacao_transcricao, name='criar_observacao_transcricao'),
+    path('observacoes-transcricao/<uuid:observacao_id>/', detalhe_observacao_transcricao, name='detalhe_observacao_transcricao'),
+    path('observacoes-transcricao/<uuid:observacao_id>/atualizar/', atualizar_observacao_transcricao, name='atualizar_observacao_transcricao'),
+    path('observacoes-transcricao/<uuid:observacao_id>/deletar/', deletar_observacao_transcricao, name='deletar_observacao_transcricao'),
+
+    # Planejamentos Semanais
+    path('planejamentos-semanais/', listar_planejamentos_semanais, name='listar_planejamentos_semanais'),
+    path('planejamentos-semanais/criar/', criar_planejamento_semanal, name='criar_planejamento_semanal'),
+    path('planejamentos-semanais/<uuid:planejamento_id>/', detalhe_planejamento_semanal, name='detalhe_planejamento_semanal'),
+    path('planejamentos-semanais/<uuid:planejamento_id>/atualizar/', atualizar_planejamento_semanal, name='atualizar_planejamento_semanal'),
+    path('planejamentos-semanais/<uuid:planejamento_id>/deletar/', deletar_planejamento_semanal, name='deletar_planejamento_semanal'),
+
+    # Planejamentos Diários
+    path('planejamentos-diarios/', listar_planejamentos_diarios, name='listar_planejamentos_diarios'),
+    path('planejamentos-diarios/criar/', criar_planejamento_diario, name='criar_planejamento_diario'),
+    path('planejamentos-diarios/<uuid:diario_id>/', detalhe_planejamento_diario, name='detalhe_planejamento_diario'),
+    path('planejamentos-diarios/<uuid:diario_id>/atualizar/', atualizar_planejamento_diario, name='atualizar_planejamento_diario'),
+    path('planejamentos-diarios/<uuid:diario_id>/deletar/', deletar_planejamento_diario, name='deletar_planejamento_diario'),
+    path('planejamentos-diarios/<uuid:diario_id>/habilidades/', listar_habilidades_planejamento_diario, name='listar_habilidades_planejamento_diario'),
+    path('planejamentos-diarios/<uuid:diario_id>/habilidades/vincular/', vincular_habilidade_planejamento_diario, name='vincular_habilidade_planejamento_diario'),
+    path('planejamentos-diarios/<uuid:diario_id>/habilidades/<uuid:habilidade_id>/desvincular/',
+         desvincular_habilidade_planejamento_diario, name='desvincular_habilidade_planejamento_diario'),
 ]

@@ -11,6 +11,8 @@ from .models import (
     Disciplina, UsuarioDisciplina, Aluno, Projeto, Producao, ProducaoAluno,
     RegistroEscrita, RegistroDesenho, RegistroLeitura,
     CampoPedagogico, HabilidadeBNCC, Pergunta, PerguntaEspecialista,
+    RegistroObservacao, ObservacaoTranscricao,
+    PlanejamentoSemanal, PlanejamentoDiario, PlanejamentoHabilidade,
 )
 
 
@@ -318,6 +320,84 @@ class PerguntaEspecialistaSerializer(serializers.ModelSerializer):
         read_only_fields = [
             'id', 'usuario_especialista', 'escola', 'instituicao', 'criado_em', 'atualizado_em',
         ]
+
+
+class RegistroObservacaoSerializer(serializers.ModelSerializer):
+    aluno_nome = serializers.CharField(source='aluno.nome_completo', read_only=True)
+
+    class Meta:
+        model = RegistroObservacao
+        fields = [
+            'id', 'resposta', 'observacao', 'data_observacao',
+            'pergunta', 'pergunta_especialista',
+            'aluno', 'aluno_nome', 'professor', 'escola', 'instituicao',
+            'criado_em', 'atualizado_em',
+        ]
+        read_only_fields = ['id', 'professor', 'escola', 'instituicao', 'criado_em', 'atualizado_em']
+
+    def validate(self, attrs):
+        pergunta = attrs.get('pergunta', getattr(self.instance, 'pergunta', None))
+        pergunta_especialista = attrs.get('pergunta_especialista', getattr(self.instance, 'pergunta_especialista', None))
+        if bool(pergunta) == bool(pergunta_especialista):
+            raise serializers.ValidationError(
+                'Preencha exatamente um dos dois: pergunta OU pergunta_especialista (não os dois, não nenhum).'
+            )
+        return attrs
+
+
+class ObservacaoTranscricaoSerializer(serializers.ModelSerializer):
+    aluno_nome_vinculado = serializers.CharField(source='aluno.nome_completo', read_only=True, default=None)
+
+    class Meta:
+        model = ObservacaoTranscricao
+        fields = [
+            'id', 'aluno_nome', 'observacao_texto', 'tipo_observacao', 'data_observacao',
+            'transcricao_completa', 'metadados_ia',
+            'aluno', 'aluno_nome_vinculado', 'turma', 'professor',
+            'escola', 'instituicao', 'criado_em', 'atualizado_em',
+        ]
+        read_only_fields = ['id', 'turma', 'professor', 'escola', 'instituicao', 'criado_em', 'atualizado_em']
+
+
+class PlanejamentoSemanalSerializer(serializers.ModelSerializer):
+    turma_nome = serializers.CharField(source='turma.nome', read_only=True)
+    professor_nome = serializers.CharField(source='professor.nome', read_only=True)
+
+    class Meta:
+        model = PlanejamentoSemanal
+        fields = [
+            'id', 'semana_inicio', 'semana_fim', 'ano_letivo',
+            'turma', 'turma_nome', 'professor', 'professor_nome',
+            'escola', 'instituicao', 'criado_em', 'atualizado_em',
+        ]
+        read_only_fields = [
+            'id', 'turma', 'professor', 'escola', 'instituicao', 'criado_em', 'atualizado_em',
+        ]
+
+
+class PlanejamentoDiarioSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = PlanejamentoDiario
+        fields = [
+            'id', 'dia_semana', 'data', 'atividades_propostas', 'prompt_ia',
+            'arquivo_nome_original', 'arquivo_content_type',
+            'planejamento_semanal', 'escola', 'instituicao', 'criado_em', 'atualizado_em',
+        ]
+        read_only_fields = [
+            'id', 'planejamento_semanal', 'escola', 'instituicao', 'criado_em', 'atualizado_em',
+        ]
+
+
+class PlanejamentoHabilidadeSerializer(serializers.ModelSerializer):
+    habilidade_codigo = serializers.CharField(source='habilidade_bncc.codigo', read_only=True)
+
+    class Meta:
+        model = PlanejamentoHabilidade
+        fields = [
+            'id', 'observacao_habilidade', 'habilidade_bncc', 'habilidade_codigo',
+            'planejamento_diario', 'criado_em', 'atualizado_em',
+        ]
+        read_only_fields = ['id', 'planejamento_diario', 'criado_em', 'atualizado_em']
 
 
 class LoginSerializer(TokenObtainPairSerializer):
