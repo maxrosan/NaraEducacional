@@ -42,6 +42,25 @@ indicadores da coordenação) pode valer a pena revisar antes de descartar.
 Não sabemos o que têm. Prováveis variações/rascunhos do `views_rest.py`.
 Avaliar quando (e se) formos precisar.
 
+### Bloco de áudio do gravador — PORTADO ✅
+`views/dispositivo.py` → `services/dispositivo.py` → `services/dispositivo_processamento.py`
+→ `services/audio.py` → `transcription/` (6 arquivos) → `services/openai_usage.py`
+→ `services/prompt_resolver.py`. Cadeia inteira adaptada e compilando.
+
+Mudanças reais de schema (o resto foi só `views_legacy`→`ia_utils`):
+- `dispositivo_processamento.py`: `Crianca`→`Aluno`, `professora`→`professor`,
+  `crianca_id`→`aluno_id`, removidos `turma_nome`/`professora_nome` (texto solto
+  do legado, agora é só FK `turma`/`professor`), adicionado `escola`/`instituicao`
+  (obrigatórios no schema novo, não existiam no antigo)
+- `base.py` (model `AudioDispositivo`): `STATUS_CHOICES` corrigida pra bater com
+  o que `dispositivo_processamento.py` usa (`falhou` em vez de `erro`, + `comando`)
+
+**Ainda pendente, fora do escopo dessa migração de código:** nada dispara
+`processar_pendentes()` automaticamente — decidir entre Celery, management
+command agendado, ou processamento síncrono no upload.
+
+**Dependência nova:** `pip install httpx` (usada por `transcription/local_backend.py`).
+
 ### `server/api/models/prompt.py`, `paee.py`, `dispositivo.py` — DESCARTADOS
 Renomeados pra `.bak` (não apagados). Todo o conteúdo já foi reconstruído
 dentro de `server/api/models/base.py`. Não precisam de mineração — já foram
@@ -69,3 +88,9 @@ conteúdo. O `admin.py` novo foi escrito do zero, sem depender dele.
 - `views/auth.py` → reconstruído com JWT, mantendo `alterar_senha` original
 - `views/planejamento.py` → portado com ajustes de schema (FK `professor`
   em vez de `professora_id`/`professora_nome`, `related_name` corrigido)
+- `services/dispositivo.py`, `views/dispositivo.py` → escritos com base no
+  legado (M2M `turmas` real adicionada aos models, `CodigoPareamento.valido`
+  e `AudioDispositivo.feedback` são properties novas, sem fonte legada)
+- `services/dispositivo_processamento.py`, `services/audio.py`,
+  `transcription/` (6 arquivos), `services/openai_usage.py` → portados
+  (ver seção "Bloco de áudio do gravador" acima)

@@ -10,7 +10,7 @@ from openai import APIConnectionError
 
 from api.openai_client import get_openai_client
 from api.transcription import get_transcription_backend
-from api.views_legacy import run_with_timeout, IA_REQUEST_TIMEOUT_SECONDS
+from api.ia_utils import run_with_timeout, IA_REQUEST_TIMEOUT_SECONDS
 
 from api.services.openai_usage import registrar_uso_openai, registrar_uso_whisper
 from api.services.prompt_resolver import resolver_prompt
