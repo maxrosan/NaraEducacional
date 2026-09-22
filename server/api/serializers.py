@@ -15,6 +15,8 @@ from .models import (
     PlanejamentoSemanal, PlanejamentoDiario, PlanejamentoHabilidade,
     PeriodoAvaliativo, RelatorioTemplate, Relatorio,
     Notificacao, MetaPAEE, SessaoEspecialista, SessaoPAEEMeta, TarefaPAEE,
+    Ticket, RespostaTicket, AnexoTicket, LogAuditoria, PermissaoUsuario,
+    TemplateDocumento, Contrato,
 )
 
 
@@ -507,6 +509,95 @@ class TarefaPAEESerializer(serializers.ModelSerializer):
         ]
         read_only_fields = [
             'id', 'meta_paee', 'professor_conclusao', 'escola', 'instituicao', 'criado_em', 'atualizado_em',
+        ]
+
+
+class AnexoTicketSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = AnexoTicket
+        fields = ['id', 'arquivo_url', 'arquivo_nome', 'mime_type', 'tamanho_bytes',
+                  'ticket', 'ticket_reply', 'criado_em']
+        read_only_fields = ['id', 'ticket', 'ticket_reply', 'criado_em']
+
+
+class RespostaTicketSerializer(serializers.ModelSerializer):
+    usuario_nome = serializers.CharField(source='usuario.nome', read_only=True)
+    anexos = AnexoTicketSerializer(many=True, read_only=True)
+
+    class Meta:
+        model = RespostaTicket
+        fields = ['id', 'descricao', 'usuario', 'usuario_nome', 'ticket', 'anexos', 'criado_em', 'atualizado_em']
+        read_only_fields = ['id', 'usuario', 'ticket', 'criado_em', 'atualizado_em']
+
+
+class TicketSerializer(serializers.ModelSerializer):
+    usuario_solicitante_nome = serializers.CharField(source='usuario_solicitante.nome', read_only=True)
+    responsavel_nome = serializers.CharField(source='responsavel.nome', read_only=True, default=None)
+
+    class Meta:
+        model = Ticket
+        fields = [
+            'id', 'protocolo', 'titulo', 'descricao', 'status', 'categoria', 'prioridade',
+            'usuario_solicitante', 'usuario_solicitante_nome', 'escola', 'instituicao',
+            'responsavel', 'responsavel_nome', 'criado_em', 'atualizado_em',
+        ]
+        read_only_fields = [
+            'id', 'protocolo', 'usuario_solicitante', 'escola', 'instituicao', 'criado_em', 'atualizado_em',
+        ]
+
+
+class LogAuditoriaSerializer(serializers.ModelSerializer):
+    usuario_nome = serializers.CharField(source='usuario.nome', read_only=True, default=None)
+
+    class Meta:
+        model = LogAuditoria
+        fields = [
+            'id', 'acao', 'tabela_afetada', 'registro_id', 'alteracoes', 'ip',
+            'usuario', 'usuario_nome', 'escola', 'instituicao', 'criado_em',
+        ]
+        read_only_fields = fields
+
+
+class PermissaoUsuarioSerializer(serializers.ModelSerializer):
+    usuario_nome = serializers.CharField(source='usuario.nome', read_only=True)
+    concedido_por_nome = serializers.CharField(source='concedido_por.nome', read_only=True, default=None)
+
+    class Meta:
+        model = PermissaoUsuario
+        fields = [
+            'id', 'modulo', 'acao', 'concedido', 'usuario', 'usuario_nome',
+            'escola', 'instituicao', 'concedido_por', 'concedido_por_nome',
+            'criado_em', 'atualizado_em',
+        ]
+        read_only_fields = [
+            'id', 'escola', 'instituicao', 'concedido_por', 'criado_em', 'atualizado_em',
+        ]
+
+
+class TemplateDocumentoSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = TemplateDocumento
+        fields = [
+            'id', 'titulo', 'documento', 'tipo', 'ativo',
+            'responsavel', 'criado_por', 'atualizado_por',
+            'escola', 'instituicao', 'criado_em', 'atualizado_em',
+        ]
+        read_only_fields = ['id', 'criado_por', 'atualizado_por', 'criado_em', 'atualizado_em']
+
+
+class ContratoSerializer(serializers.ModelSerializer):
+    escola_nome = serializers.CharField(source='escola.nome', read_only=True)
+
+    class Meta:
+        model = Contrato
+        fields = [
+            'id', 'documento', 'status', 'arquivo_url', 'template',
+            'escola', 'escola_nome', 'instituicao',
+            'responsavel', 'gerado_por', 'atualizado_por',
+            'criado_em', 'atualizado_em',
+        ]
+        read_only_fields = [
+            'id', 'gerado_por', 'atualizado_por', 'escola', 'instituicao', 'criado_em', 'atualizado_em',
         ]
 
 

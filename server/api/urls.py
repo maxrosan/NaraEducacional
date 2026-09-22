@@ -164,6 +164,44 @@ from .views.paee import (
     detalhe_tarefa_paee,
     atualizar_tarefa_paee,
 )
+from .views.dispositivo import (
+    gerar_codigo_pareamento,
+    listar_dispositivos,
+    atualizar_dispositivo,
+    revogar_dispositivo,
+    reativar_dispositivo,
+    parear,
+    upload_audio_dispositivo,
+    consultar_audio,
+    status_dispositivo,
+)
+from .views.ticket import (
+    listar_tickets,
+    criar_ticket,
+    detalhe_ticket,
+    atualizar_ticket,
+    listar_respostas_ticket,
+    responder_ticket,
+    anexar_arquivo_ticket,
+    anexar_arquivo_resposta,
+)
+from .views.permissoes_usuario import (
+    listar_logs_auditoria,
+    detalhe_log_auditoria,
+    listar_permissoes_usuario,
+    criar_permissao_usuario,
+    deletar_permissao_usuario,
+)
+from .views.template_documento import (
+    listar_templates_documento,
+    criar_template_documento,
+    detalhe_template_documento,
+    atualizar_template_documento,
+    listar_contratos,
+    criar_contrato,
+    detalhe_contrato,
+    atualizar_contrato,
+)
 
 urlpatterns = [
     path('health/', health, name='health'),
@@ -359,4 +397,44 @@ urlpatterns = [
     path('tarefas-paee/criar/', criar_tarefa_paee, name='criar_tarefa_paee'),
     path('tarefas-paee/<uuid:tarefa_id>/', detalhe_tarefa_paee, name='detalhe_tarefa_paee'),
     path('tarefas-paee/<uuid:tarefa_id>/atualizar/', atualizar_tarefa_paee, name='atualizar_tarefa_paee'),
+
+    # Dispositivos gravadores — plataforma
+    path('dispositivos/codigo/', gerar_codigo_pareamento, name='gerar_codigo_pareamento'),
+    path('dispositivos/', listar_dispositivos, name='listar_dispositivos'),
+    path('dispositivos/<uuid:dispositivo_id>/', atualizar_dispositivo, name='atualizar_dispositivo'),
+    path('dispositivos/<uuid:dispositivo_id>/revogar/', revogar_dispositivo, name='revogar_dispositivo'),
+    path('dispositivos/<uuid:dispositivo_id>/reativar/', reativar_dispositivo, name='reativar_dispositivo'),
+
+    # Dispositivos gravadores — firmware (sem token de usuário)
+    path('dispositivos/parear/', parear, name='parear_dispositivo'),
+    path('dispositivos/audio/', upload_audio_dispositivo, name='upload_audio_dispositivo'),
+    path('dispositivos/audio/<uuid:upload_id>/', consultar_audio, name='consultar_audio'),
+    path('dispositivos/status/', status_dispositivo, name='status_dispositivo'),
+
+    # Tickets
+    path('tickets/', listar_tickets, name='listar_tickets'),
+    path('tickets/criar/', criar_ticket, name='criar_ticket'),
+    path('tickets/<uuid:ticket_id>/', detalhe_ticket, name='detalhe_ticket'),
+    path('tickets/<uuid:ticket_id>/atualizar/', atualizar_ticket, name='atualizar_ticket'),
+    path('tickets/<uuid:ticket_id>/respostas/', listar_respostas_ticket, name='listar_respostas_ticket'),
+    path('tickets/<uuid:ticket_id>/responder/', responder_ticket, name='responder_ticket'),
+    path('tickets/<uuid:ticket_id>/anexar/', anexar_arquivo_ticket, name='anexar_arquivo_ticket'),
+    path('tickets/respostas/<uuid:resposta_id>/anexar/', anexar_arquivo_resposta, name='anexar_arquivo_resposta'),
+
+    # Auditoria e Permissões
+    path('logs-auditoria/', listar_logs_auditoria, name='listar_logs_auditoria'),
+    path('logs-auditoria/<int:log_id>/', detalhe_log_auditoria, name='detalhe_log_auditoria'),
+    path('permissoes-usuario/', listar_permissoes_usuario, name='listar_permissoes_usuario'),
+    path('permissoes-usuario/criar/', criar_permissao_usuario, name='criar_permissao_usuario'),
+    path('permissoes-usuario/<uuid:permissao_id>/deletar/', deletar_permissao_usuario, name='deletar_permissao_usuario'),
+
+    # Documentos e Contratos
+    path('templates-documento/', listar_templates_documento, name='listar_templates_documento'),
+    path('templates-documento/criar/', criar_template_documento, name='criar_template_documento'),
+    path('templates-documento/<uuid:template_id>/', detalhe_template_documento, name='detalhe_template_documento'),
+    path('templates-documento/<uuid:template_id>/atualizar/', atualizar_template_documento, name='atualizar_template_documento'),
+    path('contratos/', listar_contratos, name='listar_contratos'),
+    path('contratos/criar/', criar_contrato, name='criar_contrato'),
+    path('contratos/<uuid:contrato_id>/', detalhe_contrato, name='detalhe_contrato'),
+    path('contratos/<uuid:contrato_id>/atualizar/', atualizar_contrato, name='atualizar_contrato'),
 ]
