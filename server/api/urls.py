@@ -202,6 +202,7 @@ from .views.template_documento import (
     detalhe_contrato,
     atualizar_contrato,
 )
+from .views.alfabetizacao_criancas import alfabetizacao_criancas
 
 urlpatterns = [
     path('health/', health, name='health'),
@@ -437,4 +438,7 @@ urlpatterns = [
     path('contratos/criar/', criar_contrato, name='criar_contrato'),
     path('contratos/<uuid:contrato_id>/', detalhe_contrato, name='detalhe_contrato'),
     path('contratos/<uuid:contrato_id>/atualizar/', atualizar_contrato, name='atualizar_contrato'),
+
+    # Coordenação — drill-down de alfabetização
+    path('coordenacao/alfabetizacao/alunos/', alfabetizacao_criancas, name='alfabetizacao_criancas'),
 ]
