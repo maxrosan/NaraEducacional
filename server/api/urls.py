@@ -210,6 +210,13 @@ from .views.coordenacao_cache import (
 )
 from .views.indicadores_turma import indicadores_turma
 from .views.analytics import contagem_registros, participacao_docente
+from .views.prompts import (
+    listar_prompt_categorias,
+    salvar_prompt_template,
+    criar_prompt_categoria,
+    atualizar_prompt_categoria,
+    deletar_prompt_categoria,
+)
 
 urlpatterns = [
     path('health/', health, name='health'),
@@ -454,4 +461,11 @@ urlpatterns = [
     path('coordenacao/indicadores-turma/', indicadores_turma, name='indicadores_turma'),
     path('analytics/contagem-registros/', contagem_registros, name='contagem_registros'),
     path('analytics/participacao-docente/', participacao_docente, name='participacao_docente'),
+
+    # Biblioteca de Prompts (IA)
+    path('prompts/categorias/', listar_prompt_categorias, name='listar_prompt_categorias'),
+    path('prompts/categorias/criar/', criar_prompt_categoria, name='criar_prompt_categoria'),
+    path('prompts/categorias/<uuid:categoria_id>/atualizar/', atualizar_prompt_categoria, name='atualizar_prompt_categoria'),
+    path('prompts/categorias/<uuid:categoria_id>/deletar/', deletar_prompt_categoria, name='deletar_prompt_categoria'),
+    path('prompts/salvar/', salvar_prompt_template, name='salvar_prompt_template'),
 ]

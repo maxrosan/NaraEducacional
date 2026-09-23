@@ -26,7 +26,9 @@ def resolver_prompt(titulo_categoria: str, cliente_id: str = None, fallback_arqu
       3. Arquivo .txt em /prompts/ (fallback_arquivo)
       4. String vazia
 
-    "Mais recente" é determinado por -id (maior id primeiro), garantindo
+    "Mais recente" é determinado por `-criado_em` (não por `-id`: no schema
+    novo os ids são UUID, sem relação nenhuma com ordem de criação —
+    ordenar por `-id` daria resultado essencialmente aleatório). Garante
     comportamento previsível mesmo se existir mais de um registro para a
     mesma categoria/instituição (cenário de dados legados/duplicados).
 
@@ -48,7 +50,7 @@ def resolver_prompt(titulo_categoria: str, cliente_id: str = None, fallback_arqu
                         categoria=categoria,
                         instituicao_id=cliente_id,
                     )
-                    .order_by('-id')
+                    .order_by('-criado_em')
                     .first()
                 )
                 if tpl and tpl.personalizado.strip():
@@ -64,7 +66,7 @@ def resolver_prompt(titulo_categoria: str, cliente_id: str = None, fallback_arqu
                     categoria=categoria,
                     instituicao__isnull=True,
                 )
-                .order_by('-id')
+                .order_by('-criado_em')
                 .first()
             )
             if tpl_global and tpl_global.prompt_global.strip():

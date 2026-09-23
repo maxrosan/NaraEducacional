@@ -16,7 +16,7 @@ from .models import (
     PeriodoAvaliativo, RelatorioTemplate, Relatorio,
     Notificacao, MetaPAEE, SessaoEspecialista, SessaoPAEEMeta, TarefaPAEE,
     Ticket, RespostaTicket, AnexoTicket, LogAuditoria, PermissaoUsuario,
-    TemplateDocumento, Contrato,
+    TemplateDocumento, Contrato, PromptCategoria, PromptTemplate,
 )
 
 
@@ -599,6 +599,51 @@ class ContratoSerializer(serializers.ModelSerializer):
         read_only_fields = [
             'id', 'gerado_por', 'atualizado_por', 'escola', 'instituicao', 'criado_em', 'atualizado_em',
         ]
+
+
+class PromptTemplateSerializer(serializers.ModelSerializer):
+    instituicao_nome = serializers.CharField(source='instituicao.nome', read_only=True, default=None)
+
+    class Meta:
+        model = PromptTemplate
+        fields = [
+            'id', 'categoria', 'prompt_global', 'personalizado',
+            'escola', 'instituicao', 'instituicao_nome', 'criado_em', 'atualizado_em',
+        ]
+        read_only_fields = ['id', 'categoria', 'criado_em', 'atualizado_em']
+
+
+class PromptCategoriaSerializer(serializers.ModelSerializer):
+    """
+    `template_resolvido` usa o `instituicao_id` do contexto (o da instituição
+    do usuário logado) pra mostrar, na tela de admin, qual texto está
+    valendo de fato pra ela agora — o mesmo critério de `resolver_prompt`
+    (personalizado da instituição > global > vazio), sem o fallback pra
+    arquivo .txt, que não faz sentido nessa tela.
+    """
+    template_resolvido = serializers.SerializerMethodField()
+
+    class Meta:
+        model = PromptCategoria
+        fields = ['id', 'titulo', 'ativo', 'template_resolvido', 'criado_em', 'atualizado_em']
+        read_only_fields = ['id', 'criado_em', 'atualizado_em']
+
+    def get_template_resolvido(self, categoria):
+        instituicao_id = self.context.get('instituicao_id')
+        templates = list(categoria.templates.all())
+
+        if instituicao_id:
+            personalizado = next(
+                (t for t in templates if str(t.instituicao_id) == str(instituicao_id)), None,
+            )
+            if personalizado and personalizado.personalizado.strip():
+                return {'origem': 'personalizado', 'texto': personalizado.personalizado}
+
+        global_tpl = next((t for t in templates if t.instituicao_id is None), None)
+        if global_tpl and global_tpl.prompt_global.strip():
+            return {'origem': 'global', 'texto': global_tpl.prompt_global}
+
+        return {'origem': 'vazio', 'texto': ''}
 
 
 class LoginSerializer(TokenObtainPairSerializer):
