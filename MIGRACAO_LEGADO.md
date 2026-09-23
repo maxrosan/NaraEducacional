@@ -61,6 +61,40 @@ command agendado, ou processamento síncrono no upload.
 
 **Dependência nova:** `pip install httpx` (usada por `transcription/local_backend.py`).
 
+## CRUD da API — status geral
+
+Todas as ~48 entidades do schema (exceto `Plano`/`Assinatura`, adiadas a
+pedido do Arthur — "essas tabelas virão futuramente") já têm serializer +
+views + rotas em `server/api/urls.py`. Arquivos de view por domínio, em
+`server/api/views/`:
+
+`auth.py`, `health.py`, `instituicao.py`, `escola.py`, `especialista.py`,
+`usuario.py`, `turma.py`, `disciplina.py`, `aluno.py`, `projeto.py`,
+`producao.py`, `registro.py` (escrita/desenho/leitura), `campo_pedagogico.py`
+(+ HabilidadeBNCC), `pergunta.py` (+ PerguntaEspecialista), `observacao.py`
+(RegistroObservacao + ObservacaoTranscricao), `planejamento.py`,
+`avaliacao.py` (PeriodoAvaliativo/RelatorioTemplate/Relatorio),
+`notificacao.py`, `paee.py`, `dispositivo.py`, `ticket.py`,
+`permissoes_usuarios.py` (+ LogAuditoria), `template_documento.py`
+(+ Contrato).
+
+Nota: `permissoes_usuarios.py` também contém as views de `LogAuditoria`
+(nome do arquivo não é 1:1 com o conteúdo), e `template_documento.py`
+também contém as de `Contrato` — nomes escolhidos pelo Arthur, vale lembrar
+ao navegar o código.
+
+O último bloco (`Ticket`/`RespostaTicket`/`AnexoTicket`, `LogAuditoria`/
+`PermissaoUsuario`, `TemplateDocumento`/`Contrato`) não tinha equivalente
+direto no legado explorado até aqui — foi escrito do zero seguindo o padrão
+de permissão já estabelecido no restante da API.
+
+### `views/crianca.py` + `services/crianca.py` — DESCARTÁVEIS, sem arquivo próprio
+A lógica de filtro (id, id__in, turma__in, status_vinculo, nome, paginação
+opt-in) foi absorvida direto em `views/aluno.py::listar_alunos` — não virou
+um `services/aluno.py` separado, ficou pequena o suficiente pra não precisar.
+Diferença proposital: sem parâmetro `instituicao_id` solto (o `TenantManager`
+já escopa automaticamente; expor esse parâmetro seria uma brecha).
+
 ### `server/api/models/prompt.py`, `paee.py`, `dispositivo.py` — DESCARTADOS
 Renomeados pra `.bak` (não apagados). Todo o conteúdo já foi reconstruído
 dentro de `server/api/models/base.py`. Não precisam de mineração — já foram
@@ -78,7 +112,7 @@ recurso foi reconstruído.
 Existe no projeto (vi só o nome no print da pasta), nunca cheguei a olhar o
 conteúdo. O `admin.py` novo foi escrito do zero, sem depender dele.
 
-## Arquivos JÁ portados por completo (não são mais "legado", já são o código atual)
+### Arquivos JÁ portados por completo (não são mais "legado", já são o código atual)
 - `password_reset.py` → `services/password_reset.py` (1 correção: `ativo`→`is_active`)
 - `planejamento_ia.py` → `services/planejamento_ia.py` (`_candidatos_bncc` reescrita)
 - `planejamento.py` (service) → `services/planejamento.py` (`resolver_habilidade_bncc` simplificada)

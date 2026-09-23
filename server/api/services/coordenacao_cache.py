@@ -28,6 +28,7 @@ Portado do legado com as seguintes mudanças de schema (não é só renomeação
 from __future__ import annotations
 
 import logging
+import re
 import unicodedata
 from collections import defaultdict
 from dataclasses import dataclass
@@ -43,7 +44,7 @@ from api.models import (
     Aluno, CoordenacaoCache, ObservacaoTranscricao, PeriodoAvaliativo,
     Pergunta, PlanejamentoHabilidade, PlanejamentoSemanal, Producao, ProducaoAluno,
     RegistroDesenho, RegistroEscrita, RegistroLeitura, RegistroObservacao,
-    Relatorio, UsuarioTurma,
+    Relatorio, Turma, UsuarioTurma,
 )
 from api.services.fases_producao import FASES_ESCRITA as ORDEM_ESCRITA
 
@@ -65,6 +66,32 @@ def sem_acento_min(s: str | None) -> str:
 
 def _norm_nome(s: str | None) -> str:
     return sem_acento_min(s)
+
+
+def _padronizar_faixa(faixa: str | None) -> str:
+    """Normaliza o rótulo de nível pra casar `Turma.faixa_etaria` com
+    `Pergunta.faixa_etaria`: "Nível 5-A" → "Nível 5", "1º ANO B" → "1º ANO".
+    Espelha `getStandardizedFaixaEtaria` do frontend (observationUtils).
+    """
+    if not faixa:
+        return ''
+    t = faixa.strip()
+    low = t.lower()
+    if 'bebês' in low or 'bebes' in low:
+        return 'Bebês'
+    if 'crianças bem pequenas' in low or 'criancas bem pequenas' in low:
+        return 'Crianças bem pequenas'
+    if 'crianças pequenas' in low or 'criancas pequenas' in low:
+        return 'Crianças pequenas'
+    if low in ('adaptação', 'adaptacao'):
+        return 'Adaptação'
+    m = re.search(r'N[íi]vel\s*(\d+)', t, re.IGNORECASE)
+    if m:
+        return f'Nível {m.group(1)}'
+    m = re.search(r'(\d+)\s*º?\s*ANO', t, re.IGNORECASE)
+    if m:
+        return f'{m.group(1)}º ANO'
+    return t
 
 
 def _perguntas_visiveis(escola_id):
@@ -197,20 +224,32 @@ def _carregar_aluno_turma(escola_id) -> tuple[dict[str, str | None], int]:
 def _carregar_faixas_das_turmas(escola_id) -> tuple[dict[str, set[str]], dict[str, int]]:
     """Base do denominador da cobertura BNCC por turma.
 
-    `Pergunta.faixa_etaria` é FK direta pra `Turma` — join de verdade, sem
-    fuzzy-match de texto (diferente do legado).
+    `Pergunta.faixa_etaria` é um rótulo de NÍVEL em texto (não FK) — casa com
+    `Turma.faixa_etaria` via `_padronizar_faixa`, o que permite turmas
+    paralelas (5º Ano A, 5º Ano B) compartilharem o mesmo conjunto de
+    perguntas do nível.
     """
-    perguntas_da_turma: dict[str, set[str]] = defaultdict(set)
-    for pid, turma_id in _perguntas_visiveis(escola_id).exclude(
-        faixa_etaria__isnull=True,
-    ).values_list('id', 'faixa_etaria_id'):
-        perguntas_da_turma[str(turma_id)].add(str(pid))
+    perguntas_por_faixa: dict[str, set[str]] = defaultdict(set)
+    for pid, faixa in _perguntas_visiveis(escola_id).exclude(
+        faixa_etaria='',
+    ).values_list('id', 'faixa_etaria'):
+        faixa_padrao = _padronizar_faixa(faixa)
+        if faixa_padrao:
+            perguntas_por_faixa[faixa_padrao].add(str(pid))
+
+    turmas = list(Turma.objects.filter(escola_id=escola_id).values('id', 'faixa_etaria'))
+    faixa_por_turma = {str(t['id']): _padronizar_faixa(t['faixa_etaria']) for t in turmas}
+
+    perguntas_da_turma: dict[str, set[str]] = {
+        turma_id: perguntas_por_faixa.get(faixa, set())
+        for turma_id, faixa in faixa_por_turma.items()
+    }
 
     alunos_por_turma: dict[str, int] = defaultdict(int)
     for (tid,) in Aluno.objects.filter(escola_id=escola_id).exclude(turma_id=None).values_list('turma_id'):
         alunos_por_turma[str(tid)] += 1
 
-    return dict(perguntas_da_turma), dict(alunos_por_turma)
+    return perguntas_da_turma, dict(alunos_por_turma)
 
 
 # ---------------------------------------------------------------------------

@@ -682,12 +682,11 @@ class Pergunta(models.Model):
     origem = models.CharField(max_length=20, choices=ORIGENS, default='bncc')
     ativa = models.BooleanField(default=True)
 
-    # Nome estranho mas é assim no schema: aponta pra Turma, não pra uma
-    # tabela de faixas etárias separada.
-    faixa_etaria = models.ForeignKey(
-        'Turma', on_delete=models.SET_NULL, related_name='perguntas',
-        null=True, blank=True,
-    )
+    # Texto, não FK: é um rótulo de NÍVEL ("Nível 5", "1º Ano"), compartilhado
+    # por turmas paralelas (5º Ano A, 5º Ano B) — uma FK pra Turma amarraria
+    # a pergunta a uma turma só. Casa com Turma.faixa_etaria via normalização
+    # de texto (ver services/coordenacao_cache._padronizar_faixa).
+    faixa_etaria = models.CharField(max_length=50, blank=True, default='')
     campo_experiencia = models.ForeignKey(
         'CampoPedagogico', on_delete=models.SET_NULL, related_name='perguntas',
         null=True, blank=True,
@@ -1258,6 +1257,9 @@ class DispositivoGravador(models.Model):
     )
     escola = models.ForeignKey('Escola', on_delete=models.CASCADE, related_name='dispositivos_gravador')
     instituicao = models.ForeignKey('Instituicao', on_delete=models.CASCADE, related_name='dispositivos_gravador')
+    turmas = models.ManyToManyField(
+        'Turma', through='DispositivoGravadorTurma', related_name='dispositivos_gravadores',
+    )
 
     criado_em = models.DateTimeField(auto_now_add=True)
     atualizado_em = models.DateTimeField(auto_now=True)
@@ -1313,11 +1315,23 @@ class CodigoPareamento(models.Model):
     )
     escola = models.ForeignKey('Escola', on_delete=models.CASCADE, related_name='codigos_pareamento')
     instituicao = models.ForeignKey('Instituicao', on_delete=models.CASCADE, related_name='codigos_pareamento')
+    turmas = models.ManyToManyField(
+        'Turma', through='CodigoPareamentoTurma', related_name='codigos_pareamento_relacionados',
+    )
 
     criado_em = models.DateTimeField(auto_now_add=True)
     atualizado_em = models.DateTimeField(auto_now=True)
 
     objects = TenantManager()
+
+    @property
+    def valido(self):
+        """Uso único e ainda dentro da validade — não foi consumido nem expirou."""
+        if self.usado_em is not None:
+            return False
+        if self.expira_em is not None and timezone.now() > self.expira_em:
+            return False
+        return True
 
     class Meta:
         db_table = 'codigos_pareamento'
@@ -1362,7 +1376,8 @@ class AudioDispositivo(models.Model):
         ('recebido', 'Recebido'),
         ('processando', 'Processando'),
         ('processado', 'Processado'),
-        ('erro', 'Erro'),
+        ('falhou', 'Falhou'),
+        ('comando', 'Comando de sala (sem relato)'),
     ]
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
@@ -1422,7 +1437,44 @@ class AudioDispositivo(models.Model):
     def __str__(self):
         return f"{self.dispositivo} - {self.status}"
 
-class PromptCategoria(models.Model):
+    @property
+    def feedback(self):
+        """
+        Resumo pro firmware decidir LED/bipe. Construído a partir de status/
+        turma_resultado/erro_codigo — não veio de nenhuma fonte legada que
+        tivéssemos (só sabíamos que a view consome `audio.feedback`), então
+        é uma implementação nova, não um port fiel. Ajustar se o
+        comportamento esperado pelo firmware for diferente.
+        """
+        if self.status in ('recebido', 'processando'):
+            return {'sinal': 'aguardando', 'mensagem': 'Processando o áudio...'}
+
+        if self.status == 'falhou':
+            return {
+                'sinal': 'erro',
+                'mensagem': f'Falha ao processar: {self.erro_processamento or self.erro_codigo or "erro desconhecido"}',
+            }
+
+        if self.status == 'comando':
+            return {
+                'sinal': 'ok',
+                'mensagem': f'Turma trocada para "{self.turma.nome}".' if self.turma_id else 'Comando de troca de turma recebido.',
+            }
+
+        # status == 'processado'
+        if self.turma_resultado == 'nao_autorizada':
+            return {
+                'sinal': 'atencao',
+                'mensagem': f'Turma "{self.turma_anunciada_texto}" não autorizada para este gravador.',
+            }
+        if self.turma_resultado == 'indefinida':
+            return {'sinal': 'atencao', 'mensagem': 'Não foi possível identificar a turma.'}
+        if self.nomes_nao_identificados:
+            return {
+                'sinal': 'atencao',
+                'mensagem': f'{len(self.nomes_nao_identificados)} nome(s) não reconhecido(s) na gravação.',
+            }
+        return {'sinal': 'ok', 'mensagem': 'Áudio processado com sucesso.'}
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     titulo = models.CharField(max_length=200)
     ativo = models.BooleanField(default=True)

@@ -40,9 +40,9 @@ def listar_perguntas(request):
                 Q(escola_id=user.escola_id) | Q(escola__isnull=True),
             )
 
-    faixa_etaria_id = request.query_params.get('faixa_etaria')
-    if faixa_etaria_id:
-        perguntas = perguntas.filter(faixa_etaria_id=faixa_etaria_id)
+    faixa_etaria = request.query_params.get('faixa_etaria')
+    if faixa_etaria:
+        perguntas = perguntas.filter(faixa_etaria=faixa_etaria)
 
     return Response(PerguntaSerializer(perguntas, many=True).data)
 

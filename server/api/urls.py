@@ -203,6 +203,13 @@ from .views.template_documento import (
     atualizar_contrato,
 )
 from .views.alfabetizacao_criancas import alfabetizacao_criancas
+from .views.coordenacao_cache import (
+    refresh_coordenacao_cache,
+    listar_cache_coordenacao,
+    listar_periodos_coordenacao,
+)
+from .views.indicadores_turma import indicadores_turma
+from .views.analytics import contagem_registros, participacao_docente
 
 urlpatterns = [
     path('health/', health, name='health'),
@@ -441,4 +448,10 @@ urlpatterns = [
 
     # Coordenação — drill-down de alfabetização
     path('coordenacao/alfabetizacao/alunos/', alfabetizacao_criancas, name='alfabetizacao_criancas'),
+    path('coordenacao/cache/', listar_cache_coordenacao, name='listar_cache_coordenacao'),
+    path('coordenacao/periodos/', listar_periodos_coordenacao, name='listar_periodos_coordenacao'),
+    path('internal/coordenacao/refresh/', refresh_coordenacao_cache, name='refresh_coordenacao_cache'),
+    path('coordenacao/indicadores-turma/', indicadores_turma, name='indicadores_turma'),
+    path('analytics/contagem-registros/', contagem_registros, name='contagem_registros'),
+    path('analytics/participacao-docente/', participacao_docente, name='participacao_docente'),
 ]
