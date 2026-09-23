@@ -19,8 +19,55 @@ def _get_float_env(var_name: str, default: float) -> float:
         return float(default)
 
 
+def _get_int_env(var_name: str, default: int) -> int:
+    try:
+        return int(os.getenv(var_name, default))
+    except (TypeError, ValueError):
+        return int(default)
+
+
 IA_REQUEST_TIMEOUT_SECONDS = _get_float_env("IA_REQUEST_TIMEOUT_SECONDS", 45)
 IA_AUDIO_TIMEOUT_SECONDS = _get_float_env("IA_AUDIO_TIMEOUT_SECONDS", IA_REQUEST_TIMEOUT_SECONDS)
+
+MAX_IMAGE_SIZE_BYTES = _get_int_env("MAX_IMAGE_UPLOAD_MB", 10) * 1024 * 1024
+MAX_AUDIO_SIZE_BYTES = _get_int_env("MAX_AUDIO_UPLOAD_MB", 50) * 1024 * 1024
+
+ALLOWED_IMAGE_MIME_TYPES = {
+    "image/jpeg", "image/png", "image/webp", "image/jpg", "image/heic", "image/heif",
+}
+ALLOWED_IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".heic", ".heif"}
+
+# Mapa extensão -> mime type canônico. Usado quando o navegador não envia um
+# Content-Type confiável (vazio ou "application/octet-stream") — comum em
+# arquivos HEIC/HEIF fora do Safari.
+CANONICAL_MIME_BY_EXTENSION = {
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".png": "image/png",
+    ".webp": "image/webp",
+    ".heic": "image/heic",
+    ".heif": "image/heif",
+}
+
+
+def resolve_mime_type(file_obj, allowed_types):
+    """Retorna um mime type confiável para persistir e mandar ao storage.
+
+    Prioriza o Content-Type do navegador quando já é um dos aceitos; caso
+    contrário, infere pela extensão do nome do arquivo.
+    """
+    content_type = (file_obj.content_type or "").lower()
+    if content_type in allowed_types:
+        return content_type
+    extension = os.path.splitext(file_obj.name)[1].lower()
+    return CANONICAL_MIME_BY_EXTENSION.get(extension, content_type or "application/octet-stream")
+
+
+ALLOWED_AUDIO_MIME_TYPES = {
+    "audio/wav", "audio/x-wav", "audio/mpeg", "audio/mp3",
+    "audio/webm", "audio/ogg", "audio/m4a",
+}
+ALLOWED_AUDIO_EXTENSIONS = {".wav", ".mp3", ".mpeg", ".webm", ".ogg", ".m4a"}
 
 THREAD_POOL = ThreadPoolExecutor(max_workers=4)
 

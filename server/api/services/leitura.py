@@ -20,6 +20,15 @@ fazia a confirmação falhar com "áudio expirou" quando o request caía em
 outro worker do Gunicorn. Órfãos em ``_pendentes/`` (professora fechou a
 aba, falha, etc.) devem ser limpos por uma lifecycle rule do bucket S3
 (sugestão: expirar o prefixo ``audio/leitura/_pendentes/`` em 1 dia).
+
+Mudanças de schema em relação ao legado:
+  - ``Crianca`` → ``Aluno``; ``crianca_id`` → ``aluno_id``.
+  - ``turma``/``escola``/``instituicao`` são obrigatórios em
+    ``RegistroLeitura`` no schema novo (o legado permitia turma nula). Se
+    o chamador não informar turma, usa a do próprio aluno — que é sempre
+    obrigatória em ``Aluno``, então sempre há uma turma disponível.
+    ``escola``/``instituicao`` vêm do aluno também (denormalizados).
+  - ``data_criacao``/``data_atualizacao`` → ``criado_em``/``atualizado_em``.
 """
 
 from __future__ import annotations
@@ -35,7 +44,7 @@ from typing import Optional
 
 from rest_framework import status as drf_status
 
-from api.models import Crianca, RegistroLeitura, Turma, Usuario
+from api.models import Aluno, RegistroLeitura, Turma, Usuario
 from api.services import naraonn_client
 from api.storage import (
     copy_within_storage,
@@ -43,7 +52,7 @@ from api.storage import (
     generate_presigned_url,
     upload_bytes_to_storage,
 )
-from api.views_legacy import (
+from api.ia_utils import (
     ALLOWED_AUDIO_EXTENSIONS,
     ALLOWED_AUDIO_MIME_TYPES,
     MAX_AUDIO_SIZE_BYTES,
@@ -53,9 +62,6 @@ from api.views_legacy import (
 logger = logging.getLogger(__name__)
 
 
-# Prefixo do S3 onde o .ogg fica entre o "analisar" e o "confirmar".
-# O underscore evita colisão com pastas de classe (`audio/leitura/<classe>/`),
-# cujos nomes vêm de `classe_safe` e nunca começam com underscore na prática.
 PENDENTES_PREFIX = "audio/leitura/_pendentes/"
 
 
@@ -67,18 +73,10 @@ class LeituraServiceError(Exception):
         self.http_status = http_status
 
 
-# ---------------------------------------------------------------------------
-# Conversão de áudio
-# ---------------------------------------------------------------------------
-
-_PEAK_TARGET_DBFS = -0.5  # margem de segurança para evitar clipping no Opus
+_PEAK_TARGET_DBFS = -0.5
 
 
 def _detectar_pico_db(arquivo_path: str) -> Optional[float]:
-    """Roda ``ffmpeg -af volumedetect`` e devolve ``max_volume`` em dBFS.
-
-    Retorna ``None`` se o ffmpeg falhar ou se a regex não casar.
-    """
     cmd = [
         "ffmpeg", "-hide_banner", "-nostats",
         "-i", arquivo_path,
@@ -101,34 +99,15 @@ def _detectar_pico_db(arquivo_path: str) -> Optional[float]:
 
 
 def _converter_para_ogg(arquivo_path: str) -> str:
-    """Converte o áudio para OGG/Opus 48 kHz mono ~18 kbit/s, modo VoIP, com
-    peak normalization e trim de bordas silenciosas.
-
-    Casado com a distribuição de áudios do WhatsApp (que é o conjunto de
-    treino do NaraNN): 48 kHz mono Opus VBR ~18 kbit/s, perfil ``voip``,
-    pico encostado em 0 dBFS (com -0.5 dB de margem) e bordas silenciosas
-    cortadas. Sem isso, o áudio do navegador chega no NaraNN com
-    ``mean_volume`` ~7 dB abaixo do treino e o classificador enviesa para
-    classes pré-silábicas.
-
-    Levanta ``LeituraServiceError`` se o ``ffmpeg`` falhar.
-    """
     base, _ = os.path.splitext(arquivo_path)
     arquivo_ogg = f"{base}_naraonn.ogg"
 
-    # 1) Peak normalization: detecta o pico e amplifica para ~-0.5 dBFS.
-    #    `volume` é gain estático, sem compressão dinâmica (loudnorm já
-    #    sabotou o sinal antes deformando a textura).
     pico_db = _detectar_pico_db(arquivo_path)
     if pico_db is not None and pico_db < _PEAK_TARGET_DBFS:
         gain_db = _PEAK_TARGET_DBFS - pico_db
     else:
         gain_db = 0.0
 
-    # 2) `silenceremove` corta bordas (antes da fala começar e depois dela
-    #    terminar). WhatsApp Voice é "tight" — sem o trim, o silêncio do
-    #    clique "Iniciar Gravação" → respiração → fala → "Parar Gravação"
-    #    infla silence% e hesitation_score.
     af_chain = (
         f"volume={gain_db:.2f}dB,"
         "silenceremove=start_periods=1:start_duration=0.2:start_threshold=-45dB,"
@@ -168,19 +147,12 @@ def _converter_para_ogg(arquivo_path: str) -> str:
     return arquivo_ogg
 
 
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
 def _gerar_hash(*partes: str) -> str:
     seed = "|".join(partes) + "|" + secrets.token_hex(8)
     return hashlib.sha256(seed.encode("utf-8")).hexdigest()[:32]
 
 
 def _descartar_audio_pendente(registro: RegistroLeitura) -> bool:
-    """Apaga o áudio temporário em ``_pendentes/`` (best-effort) e limpa
-    ``arquivo_path``. Retorna True se o campo foi alterado (o caller deve
-    incluir ``arquivo_path`` nos ``update_fields``)."""
     if registro.arquivo_path and registro.arquivo_path.startswith(PENDENTES_PREFIX):
         delete_from_storage(registro.arquivo_path)
         registro.arquivo_path = ''
@@ -193,13 +165,6 @@ def _normalizar_probabilidades(
     predicted_name: str,
     model_kind: str = '',
 ) -> dict:
-    """Converte ``per_class_probability`` (chaves int -> float) num dicionário
-    ``{nome_classe: prob}``. Como o NaraNN não devolve o nome de cada classe,
-    e só conhecemos o nome da predita, mantemos o mapa por id e adicionamos
-    o nome para a classe predominante. Quando o NaraNN informa qual modelo
-    gerou a predição (``model_kind``: ``hybrid_cnn`` | ``hybrid_cnn_partial_ft``
-    | ``mlp``), guardamos junto para fins de auditoria.
-    """
     if not raw and not predicted_name and not model_kind:
         return {}
     saida: dict = {}
@@ -217,13 +182,6 @@ def _normalizar_probabilidades(
 
 
 def _to_int_or_none(value) -> Optional[int]:
-    """Coage ``value`` para ``int``. Devolve ``None`` se não for numérico.
-
-    O NaraNN, no caminho ``hybrid_cnn``, devolve a string ``"hybrid_cnn"``
-    no campo ``feat_dim`` (não há ``feat_dim`` único nesse modelo — são
-    frames `(1024, 750)`). Sem este cast defensivo o ``.save()`` quebra com
-    ``ValueError: Field 'feat_dim' expected a number but got 'hybrid_cnn'``.
-    """
     if value is None:
         return None
     try:
@@ -232,16 +190,12 @@ def _to_int_or_none(value) -> Optional[int]:
         return None
 
 
-# ---------------------------------------------------------------------------
-# Operações públicas
-# ---------------------------------------------------------------------------
-
 def iniciar_analise(
     *,
     arquivo,
-    crianca: Crianca,
+    aluno: Aluno,
     turma: Optional[Turma],
-    professor: Optional[Usuario],
+    professor: Usuario,
 ) -> RegistroLeitura:
     """Recebe o ``UploadedFile`` da professora e dispara a análise no NaraNN."""
     erro = validate_uploaded_file(
@@ -251,6 +205,8 @@ def iniciar_analise(
     if erro:
         mensagem, http_status = erro
         raise LeituraServiceError(mensagem, http_status=http_status)
+
+    turma = turma or aluno.turma
 
     extensao_original = os.path.splitext(arquivo.name or "")[1].lower() or ".wav"
 
@@ -269,7 +225,7 @@ def iniciar_analise(
             raise LeituraServiceError("Áudio convertido ficou vazio. Tente gravar novamente.")
 
         try:
-            job_id = naraonn_client.submit_job(ogg_bytes, name_hint=f"leitura_{crianca.id}.ogg")
+            job_id = naraonn_client.submit_job(ogg_bytes, name_hint=f"leitura_{aluno.id}.ogg")
         except naraonn_client.NaraonnUnavailable as exc:
             logger.error("[LEITURA] NaraNN indisponível no submit: %s", exc)
             raise LeituraServiceError(
@@ -283,11 +239,9 @@ def iniciar_analise(
                 http_status=drf_status.HTTP_502_BAD_GATEWAY,
             ) from exc
 
-        arquivo_hash = _gerar_hash(str(crianca.id), arquivo.name or "audio")
+        arquivo_hash = _gerar_hash(str(aluno.id), arquivo.name or "audio")
         arquivo_nome = f"{arquivo_hash}.ogg"
 
-        # Sobe o .ogg para a área temporária do S3 — compartilhada entre os
-        # workers do Gunicorn, ao contrário do cache em memória usado antes.
         try:
             temp_key, _url = upload_bytes_to_storage(
                 f"{PENDENTES_PREFIX}{arquivo_nome}", ogg_bytes, content_type='audio/ogg',
@@ -301,9 +255,11 @@ def iniciar_analise(
             ) from exc
 
         registro = RegistroLeitura.objects.create(
-            crianca=crianca,
+            aluno=aluno,
             turma=turma,
             professor=professor,
+            escola_id=aluno.escola_id,
+            instituicao_id=aluno.instituicao_id,
             nara_job_id=job_id,
             status='pendente',
             arquivo_path=temp_key,
@@ -314,8 +270,8 @@ def iniciar_analise(
         )
 
         logger.info(
-            "[LEITURA] Análise iniciada: registro_id=%s job=%s crianca=%s temp=%s",
-            registro.id, job_id, crianca.id, temp_key,
+            "[LEITURA] Análise iniciada: registro_id=%s job=%s aluno=%s temp=%s",
+            registro.id, job_id, aluno.id, temp_key,
         )
         return registro
 
@@ -335,7 +291,7 @@ def consultar_status(registro: RegistroLeitura) -> RegistroLeitura:
 
     if not registro.nara_job_id:
         registro.status = 'falhou'
-        campos = ['status', 'data_atualizacao']
+        campos = ['status', 'atualizado_em']
         if _descartar_audio_pendente(registro):
             campos.append('arquivo_path')
         registro.save(update_fields=campos)
@@ -352,14 +308,14 @@ def consultar_status(registro: RegistroLeitura) -> RegistroLeitura:
     except naraonn_client.NaraonnError as exc:
         logger.error("[LEITURA] Resposta inválida do NaraNN para %s: %s", registro.nara_job_id, exc)
         registro.status = 'falhou'
-        campos = ['status', 'data_atualizacao']
+        campos = ['status', 'atualizado_em']
         if _descartar_audio_pendente(registro):
             campos.append('arquivo_path')
         registro.save(update_fields=campos)
         return registro
 
     job_status = job.get('status')
-    update_fields = ['data_atualizacao']
+    update_fields = ['atualizado_em']
 
     if job_status == 'done':
         predicted_name = job.get('predicted_class_name') or ''
@@ -416,13 +372,11 @@ def confirmar(
 
     try:
         if not temp_key.startswith(PENDENTES_PREFIX):
-            # Registro antigo (fluxo de cache em memória) ou path inconsistente.
             raise FileNotFoundError(temp_key)
         normalized_key = copy_within_storage(temp_key, s3_key, content_type='audio/ogg')
     except FileNotFoundError:
-        # Temporário expirou (lifecycle rule) ou nunca existiu.
         registro.status = 'falhou'
-        registro.save(update_fields=['status', 'data_atualizacao'])
+        registro.save(update_fields=['status', 'atualizado_em'])
         raise LeituraServiceError(
             "O áudio expirou antes da confirmação. Por favor, grave novamente.",
             http_status=drf_status.HTTP_410_GONE,
@@ -440,7 +394,7 @@ def confirmar(
     registro.status = 'confirmado'
     registro.save(update_fields=[
         'arquivo_path', 'classe_escolhida', 'anotacoes_professora',
-        'status', 'data_atualizacao',
+        'status', 'atualizado_em',
     ])
 
     delete_from_storage(temp_key)
@@ -462,7 +416,7 @@ def cancelar(registro: RegistroLeitura) -> RegistroLeitura:
         naraonn_client.delete_job(registro.nara_job_id)
 
     registro.status = 'cancelado'
-    campos = ['status', 'data_atualizacao']
+    campos = ['status', 'atualizado_em']
     if _descartar_audio_pendente(registro):
         campos.append('arquivo_path')
     registro.save(update_fields=campos)
@@ -470,13 +424,7 @@ def cancelar(registro: RegistroLeitura) -> RegistroLeitura:
 
 
 def excluir(registro: RegistroLeitura) -> None:
-    """Exclusão definitiva de um registro de leitura (qualquer status).
-
-    Usada pelo botão de exclusão do bloco "Análises de Leitura" do relatório —
-    diferente de ``cancelar``, que só aceita registros ainda não confirmados.
-    Limpa (best-effort) o job no NaraNN e o áudio no storage (temporário em
-    ``_pendentes/`` ou permanente, pós-confirmação) antes de apagar do banco.
-    """
+    """Exclusão definitiva de um registro de leitura (qualquer status)."""
     if registro.nara_job_id:
         try:
             naraonn_client.delete_job(registro.nara_job_id)
@@ -500,26 +448,22 @@ def excluir(registro: RegistroLeitura) -> None:
 
 def listar_confirmados(
     *,
-    crianca_id,
+    aluno_id,
     data_inicio=None,
     data_fim=None,
 ):
-    """Lista os registros confirmados de uma criança no período informado.
-
-    Devolve uma lista de dicionários prontos para serialização (incluindo a
-    URL pré-assinada do áudio em S3, válida por ``AWS_PRESIGNED_TTL_SECONDS``).
-    """
+    """Lista os registros confirmados de um aluno no período informado."""
     qs = RegistroLeitura.objects.filter(
-        crianca_id=crianca_id,
+        aluno_id=aluno_id,
         status='confirmado',
     )
     if data_inicio:
-        qs = qs.filter(data_criacao__date__gte=data_inicio)
+        qs = qs.filter(criado_em__date__gte=data_inicio)
     if data_fim:
-        qs = qs.filter(data_criacao__date__lte=data_fim)
+        qs = qs.filter(criado_em__date__lte=data_fim)
 
     saida = []
-    for registro in qs.order_by('-data_criacao'):
+    for registro in qs.order_by('-criado_em'):
         audio_url = generate_presigned_url(registro.arquivo_path) if registro.arquivo_path else None
         saida.append({
             'id': registro.id,
@@ -528,7 +472,7 @@ def listar_confirmados(
             'probabilidades': registro.probabilidades or {},
             'duracao_seg': registro.duracao_seg,
             'anotacoes_professora': registro.anotacoes_professora or '',
-            'data_criacao': registro.data_criacao.isoformat() if registro.data_criacao else None,
+            'criado_em': registro.criado_em.isoformat() if registro.criado_em else None,
             'audio_url': audio_url,
             'arquivo_path': registro.arquivo_path or None,
             'tipo_arquivo': registro.tipo_arquivo,

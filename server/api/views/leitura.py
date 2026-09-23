@@ -20,14 +20,14 @@ from rest_framework.decorators import api_view, permission_classes, throttle_cla
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
-from api.models import Crianca, RegistroLeitura, Turma
+from api.models import Aluno, RegistroLeitura, Turma
 from api.services import leitura as leitura_service
 from api.throttles import UploadRateThrottle
 
 logger = logging.getLogger(__name__)
 
 
-_PERFIS_PRIVILEGIADOS = {'admin', 'coordenador', 'especialista', 'professor_especialista'}
+_NIVEIS_PRIVILEGIADOS = {'admin', 'coordenador', 'especialista', 'professor_especialista', 'superadmin'}
 
 
 def _pode_ver(registro: RegistroLeitura, usuario) -> bool:
@@ -35,14 +35,14 @@ def _pode_ver(registro: RegistroLeitura, usuario) -> bool:
         return False
     if registro.professor_id == usuario.id:
         return True
-    return getattr(usuario, 'perfil', '') in _PERFIS_PRIVILEGIADOS
+    return usuario.is_superuser or getattr(usuario, 'nivel', '') in _NIVEIS_PRIVILEGIADOS
 
 
 def _serializar(registro: RegistroLeitura) -> dict:
     return {
         'id': registro.id,
         'status': registro.status,
-        'crianca_id': str(registro.crianca_id),
+        'aluno_id': str(registro.aluno_id),
         'turma_id': str(registro.turma_id) if registro.turma_id else None,
         'nara_job_id': registro.nara_job_id or None,
         'classe_predita': registro.classe_predita or None,
@@ -53,33 +53,32 @@ def _serializar(registro: RegistroLeitura) -> dict:
         'feat_dim': registro.feat_dim,
         'arquivo_path': registro.arquivo_path or None,
         'anotacoes_professora': registro.anotacoes_professora,
-        'data_criacao': registro.data_criacao.isoformat() if registro.data_criacao else None,
+        'criado_em': registro.criado_em.isoformat() if registro.criado_em else None,
     }
 
 
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
 def listar_registros_leitura(request):
-    """Lista registros confirmados de uma criança, opcionalmente filtrados por período.
+    """Lista registros confirmados de um aluno, opcionalmente filtrados por período.
 
-    Query params: ``crianca_id`` (obrigatório), ``data_inicio`` e ``data_fim`` (YYYY-MM-DD).
+    Query params: ``aluno_id`` (obrigatório), ``data_inicio`` e ``data_fim`` (YYYY-MM-DD).
     Permissão: dono dos registros, ``admin``, ``coordenador`` ou especialista.
     """
-    crianca_id = request.GET.get('crianca_id') or request.GET.get('criancaId')
-    if not crianca_id:
-        return Response({'error': "Parâmetro 'crianca_id' é obrigatório."}, status=status.HTTP_400_BAD_REQUEST)
+    aluno_id = request.GET.get('aluno_id')
+    if not aluno_id:
+        return Response({'error': "Parâmetro 'aluno_id' é obrigatório."}, status=status.HTTP_400_BAD_REQUEST)
 
     try:
-        Crianca.objects.get(id=crianca_id)
-    except (Crianca.DoesNotExist, ValueError):
-        return Response({'error': 'Criança não encontrada.'}, status=status.HTTP_404_NOT_FOUND)
+        Aluno.objects.get(id=aluno_id)
+    except (Aluno.DoesNotExist, ValueError):
+        return Response({'error': 'Aluno não encontrado.'}, status=status.HTTP_404_NOT_FOUND)
 
-    # Filtro de visibilidade: professor só vê os próprios; perfis privilegiados veem tudo.
-    perfil = getattr(request.user, 'perfil', '')
-    apenas_proprios = perfil not in _PERFIS_PRIVILEGIADOS
+    nivel = getattr(request.user, 'nivel', '')
+    apenas_proprios = not request.user.is_superuser and nivel not in _NIVEIS_PRIVILEGIADOS
 
     registros = leitura_service.listar_confirmados(
-        crianca_id=crianca_id,
+        aluno_id=aluno_id,
         data_inicio=request.GET.get('data_inicio') or None,
         data_fim=request.GET.get('data_fim') or None,
     )
@@ -87,7 +86,7 @@ def listar_registros_leitura(request):
     if apenas_proprios:
         ids_visiveis = set(
             RegistroLeitura.objects.filter(
-                crianca_id=crianca_id,
+                aluno_id=aluno_id,
                 professor_id=request.user.id,
             ).values_list('id', flat=True)
         )
@@ -100,22 +99,22 @@ def listar_registros_leitura(request):
 @permission_classes([IsAuthenticated])
 @throttle_classes([UploadRateThrottle])
 def iniciar_analise_leitura(request):
-    """Recebe ``audio`` + ``crianca_id`` (+ opcional ``turma_id``) e enfileira no NaraNN."""
+    """Recebe ``audio`` + ``aluno_id`` (+ opcional ``turma_id``) e enfileira no NaraNN."""
     arquivo = request.FILES.get('audio')
     if not arquivo:
         return Response({'error': "Campo 'audio' é obrigatório."}, status=status.HTTP_400_BAD_REQUEST)
 
-    crianca_id = request.POST.get('crianca_id') or request.POST.get('criancaId')
-    if not crianca_id:
-        return Response({'error': "Campo 'crianca_id' é obrigatório."}, status=status.HTTP_400_BAD_REQUEST)
+    aluno_id = request.POST.get('aluno_id')
+    if not aluno_id:
+        return Response({'error': "Campo 'aluno_id' é obrigatório."}, status=status.HTTP_400_BAD_REQUEST)
 
     try:
-        crianca = Crianca.objects.get(id=crianca_id)
-    except (Crianca.DoesNotExist, ValueError):
-        return Response({'error': 'Criança não encontrada.'}, status=status.HTTP_404_NOT_FOUND)
+        aluno = Aluno.objects.get(id=aluno_id)
+    except (Aluno.DoesNotExist, ValueError):
+        return Response({'error': 'Aluno não encontrado.'}, status=status.HTTP_404_NOT_FOUND)
 
     turma = None
-    turma_id = request.POST.get('turma_id') or request.POST.get('turmaId')
+    turma_id = request.POST.get('turma_id')
     if turma_id:
         try:
             turma = Turma.objects.get(id=turma_id)
@@ -125,7 +124,7 @@ def iniciar_analise_leitura(request):
     try:
         registro = leitura_service.iniciar_analise(
             arquivo=arquivo,
-            crianca=crianca,
+            aluno=aluno,
             turma=turma,
             professor=request.user,
         )
@@ -137,11 +136,11 @@ def iniciar_analise_leitura(request):
 
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
-def status_analise_leitura(request, registro_id: int):
+def status_analise_leitura(request, registro_id):
     """Atualiza o registro consultando o NaraNN e devolve o estado atual."""
     try:
         registro = RegistroLeitura.objects.get(id=registro_id)
-    except RegistroLeitura.DoesNotExist:
+    except (RegistroLeitura.DoesNotExist, ValueError):
         return Response({'error': 'Registro não encontrado.'}, status=status.HTTP_404_NOT_FOUND)
 
     if not _pode_ver(registro, request.user):
@@ -157,19 +156,19 @@ def status_analise_leitura(request, registro_id: int):
 
 @api_view(['POST'])
 @permission_classes([IsAuthenticated])
-def confirmar_analise_leitura(request, registro_id: int):
+def confirmar_analise_leitura(request, registro_id):
     """Recebe ``classe_escolhida`` (+ opcional ``anotacoes_professora``) e finaliza o registro."""
     try:
         registro = RegistroLeitura.objects.get(id=registro_id)
-    except RegistroLeitura.DoesNotExist:
+    except (RegistroLeitura.DoesNotExist, ValueError):
         return Response({'error': 'Registro não encontrado.'}, status=status.HTTP_404_NOT_FOUND)
 
     if not _pode_ver(registro, request.user):
         return Response({'error': 'Sem permissão para acessar este registro.'}, status=status.HTTP_403_FORBIDDEN)
 
     payload = request.data or {}
-    classe_escolhida = payload.get('classe_escolhida') or payload.get('classeEscolhida') or ''
-    anotacoes = payload.get('anotacoes_professora') or payload.get('anotacoesProfessora') or ''
+    classe_escolhida = payload.get('classe_escolhida') or ''
+    anotacoes = payload.get('anotacoes_professora') or ''
 
     try:
         registro = leitura_service.confirmar(
@@ -185,11 +184,11 @@ def confirmar_analise_leitura(request, registro_id: int):
 
 @api_view(['DELETE'])
 @permission_classes([IsAuthenticated])
-def cancelar_analise_leitura(request, registro_id: int):
+def cancelar_analise_leitura(request, registro_id):
     """Cancela um registro pendente."""
     try:
         registro = RegistroLeitura.objects.get(id=registro_id)
-    except RegistroLeitura.DoesNotExist:
+    except (RegistroLeitura.DoesNotExist, ValueError):
         return Response({'error': 'Registro não encontrado.'}, status=status.HTTP_404_NOT_FOUND)
 
     if not _pode_ver(registro, request.user):
@@ -205,17 +204,17 @@ def cancelar_analise_leitura(request, registro_id: int):
 
 @api_view(['DELETE'])
 @permission_classes([IsAuthenticated])
-def deletar_analise_leitura(request, registro_id: int):
+def deletar_analise_leitura(request, registro_id):
     """Exclui definitivamente um registro de leitura (qualquer status).
 
     Usado pelo botão de exclusão do bloco "Análises de Leitura" do relatório
     (`ReadingAnalysisBlock`), que lista registros CONFIRMADOS — os quais o
     `cancelar` rejeita. Autorização: mesma regra dos demais endpoints
-    (`_pode_ver`: dono do registro ou perfil privilegiado).
+    (`_pode_ver`: dono do registro ou nível privilegiado).
     """
     try:
         registro = RegistroLeitura.objects.get(id=registro_id)
-    except RegistroLeitura.DoesNotExist:
+    except (RegistroLeitura.DoesNotExist, ValueError):
         return Response({'error': 'Registro não encontrado.'}, status=status.HTTP_404_NOT_FOUND)
 
     if not _pode_ver(registro, request.user):

@@ -79,11 +79,14 @@ from .views.registro import (
     detalhe_registro_desenho,
     atualizar_registro_desenho,
     deletar_registro_desenho,
+)
+from .views.leitura import (
     listar_registros_leitura,
-    criar_registro_leitura,
-    detalhe_registro_leitura,
-    atualizar_registro_leitura,
-    deletar_registro_leitura,
+    iniciar_analise_leitura,
+    status_analise_leitura,
+    confirmar_analise_leitura,
+    cancelar_analise_leitura,
+    deletar_analise_leitura,
 )
 from .views.campo_pedagogico import (
     listar_campos_pedagogicos,
@@ -313,11 +316,12 @@ urlpatterns = [
     path('registros-desenho/<uuid:registro_id>/deletar/', deletar_registro_desenho, name='deletar_registro_desenho'),
 
     # Registros de Leitura
-    path('registros-leitura/', listar_registros_leitura, name='listar_registros_leitura'),
-    path('registros-leitura/criar/', criar_registro_leitura, name='criar_registro_leitura'),
-    path('registros-leitura/<uuid:registro_id>/', detalhe_registro_leitura, name='detalhe_registro_leitura'),
-    path('registros-leitura/<uuid:registro_id>/atualizar/', atualizar_registro_leitura, name='atualizar_registro_leitura'),
-    path('registros-leitura/<uuid:registro_id>/deletar/', deletar_registro_leitura, name='deletar_registro_leitura'),
+    path('leitura/', listar_registros_leitura, name='listar_registros_leitura'),
+    path('leitura/analisar/', iniciar_analise_leitura, name='iniciar_analise_leitura'),
+    path('leitura/<uuid:registro_id>/status/', status_analise_leitura, name='status_analise_leitura'),
+    path('leitura/<uuid:registro_id>/confirmar/', confirmar_analise_leitura, name='confirmar_analise_leitura'),
+    path('leitura/<uuid:registro_id>/deletar/', deletar_analise_leitura, name='deletar_analise_leitura'),
+    path('leitura/<uuid:registro_id>/', cancelar_analise_leitura, name='cancelar_analise_leitura'),
 
     # Campos Pedagógicos
     path('campos-pedagogicos/', listar_campos_pedagogicos, name='listar_campos_pedagogicos'),
