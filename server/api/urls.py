@@ -220,6 +220,22 @@ from .views.prompts import (
     atualizar_prompt_categoria,
     deletar_prompt_categoria,
 )
+from .views.analise_producao import (
+    upload_e_analise_escrita,
+    upload_e_analise_desenho,
+    atualizar_classificacao,
+    servir_arquivo,
+)
+from .views.audio import upload_audio
+# detalhe/atualizar/deletar de relatório vêm de views.avaliacao (acima);
+# daqui só as funcionalidades que não existem lá.
+from .views.relatorio import (
+    gerar_relatorio,
+    gerar_relatorio_por_crianca,
+    baixar_pdf_relatorio,
+    bulk_pdf_relatorios,
+    listar_relatorios_coordenacao,
+)
 
 urlpatterns = [
     path('health/', health, name='health'),
@@ -315,6 +331,15 @@ urlpatterns = [
     path('registros-desenho/<uuid:registro_id>/atualizar/', atualizar_registro_desenho, name='atualizar_registro_desenho'),
     path('registros-desenho/<uuid:registro_id>/deletar/', deletar_registro_desenho, name='deletar_registro_desenho'),
 
+    # Produções com análise por IA (escrita/desenho) e arquivo original
+    path('upload-escrita/', upload_e_analise_escrita, name='upload_e_analise_escrita'),
+    path('upload-desenho/', upload_e_analise_desenho, name='upload_e_analise_desenho'),
+    path('registros/classificacao/', atualizar_classificacao, name='atualizar_classificacao'),
+    path('arquivo/<str:arquivo_hash>/', servir_arquivo, name='servir_arquivo'),
+
+    # Áudio de observação (upload pela plataforma)
+    path('upload-audio/', upload_audio, name='upload_audio'),
+
     # Registros de Leitura
     path('leitura/', listar_registros_leitura, name='listar_registros_leitura'),
     path('leitura/analisar/', iniciar_analise_leitura, name='iniciar_analise_leitura'),
@@ -383,6 +408,13 @@ urlpatterns = [
     path('relatorio-templates/<uuid:template_id>/atualizar/', atualizar_relatorio_template, name='atualizar_relatorio_template'),
 
     # Relatórios
+    # Rotas com segmento fixo ('bulk-pdf', 'coordenacao') ficam antes das com
+    # <uuid:...> por clareza — o conversor uuid já não as capturaria.
+    path('relatorios/bulk-pdf/', bulk_pdf_relatorios, name='bulk_pdf_relatorios'),
+    path('relatorios/coordenacao/', listar_relatorios_coordenacao, name='listar_relatorios_coordenacao'),
+    path('relatorios/<uuid:relatorio_id>/pdf/download/', baixar_pdf_relatorio, name='baixar_pdf_relatorio'),
+    path('gerar-relatorio/', gerar_relatorio, name='gerar_relatorio'),
+    path('gerar-relatorio/<uuid:crianca_id>/', gerar_relatorio_por_crianca, name='gerar_relatorio_por_crianca'),
     path('relatorios/', listar_relatorios, name='listar_relatorios'),
     path('relatorios/criar/', criar_relatorio, name='criar_relatorio'),
     path('relatorios/<uuid:relatorio_id>/', detalhe_relatorio, name='detalhe_relatorio'),

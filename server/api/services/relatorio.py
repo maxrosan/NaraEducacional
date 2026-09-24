@@ -1,7 +1,6 @@
 """Serviços de domínio para geração de relatórios pedagógicos com IA."""
 
 import json
-import os
 import re
 import datetime
 import logging
@@ -10,6 +9,7 @@ from datetime import timedelta
 from collections import Counter
 from pathlib import Path
 
+from django.db.models import Q
 from django.utils import timezone
 from django.utils.dateparse import parse_date
 from django.forms.models import model_to_dict
@@ -17,23 +17,20 @@ from django.forms.models import model_to_dict
 from api.storage import get_foto_url
 
 from api.models import (
-    Crianca,
+    Aluno,
     Instituicao,
     ObservacaoTranscricao,
     PeriodoAvaliativo,
-    RegistroObservacao,
-    ProducaoCrianca,
-    ProducaoFoto,
-    ProducaoFotoCrianca,
+    Pergunta,
     PlanejamentoSemanal,
-    PerguntaBNCC,
-    RegistroEscrita,
+    ProducaoAluno,
     RegistroDesenho,
+    RegistroEscrita,
+    RegistroObservacao,
+    Relatorio,
     RelatorioTemplate,
-    Turma,
 )
 from api.openai_client import get_openai_client
-from api.models import Relatorio
 from api.storage import delete_from_s3, refresh_presigned_url
 
 from api.services.openai_usage import registrar_uso_openai
@@ -213,33 +210,24 @@ def _carregar_prompt(nome_arquivo: str) -> str:
     return (_PROMPTS_DIR / nome_arquivo).read_text(encoding="utf-8")
 
 
-def obter_periodo_avaliativo_corrente(instituicao_id):
+def obter_periodo_avaliativo_corrente(instituicao_id, escola_id=None):
     """
-    Retorna o período avaliativo corrente para a instituição.
-    Se nenhum período abrange a data atual, retorna o mais recente.
+    Retorna o período avaliativo corrente (o que abrange hoje) ou, na falta
+    dele, o mais recente. `PeriodoAvaliativo` pertence a uma ESCOLA: quando
+    `escola_id` é informado, só os períodos daquela escola são considerados —
+    escolas da mesma instituição podem ter calendários diferentes.
     """
     today = timezone.now().date()
+    base = PeriodoAvaliativo.objects.filter(instituicao_id=instituicao_id)
+    if escola_id:
+        base = base.filter(escola_id=escola_id)
 
-    # Tentar período ativo (hoje entre data_inicio e data_fim)
     periodo = (
-        PeriodoAvaliativo.objects.filter(
-            instituicao_id=instituicao_id,
-            data_inicio__lte=today,
-            data_fim__gte=today,
-        )
+        base.filter(data_inicio__lte=today, data_fim__gte=today)
         .order_by('-data_inicio')
         .first()
     )
-
-    if not periodo:
-        # Fallback: período mais recente da instituição
-        periodo = (
-            PeriodoAvaliativo.objects.filter(instituicao_id=instituicao_id)
-            .order_by('-data_inicio')
-            .first()
-        )
-
-    return periodo
+    return periodo or base.order_by('-data_inicio').first()
 
 
 def _strip_code_fences(text):
@@ -306,7 +294,10 @@ def parse_timestamp_safely(timestamp_value):
 
 def buscar_dados_estudante_para_relatorio(crianca_id, periodo):
     """
-    Buscar dados do estudante no Postgres para geração do relatório.
+    Buscar dados do aluno no Postgres para geração do relatório.
+
+    O aluno é lido pelo `TenantManager`: fora do escopo do usuário, nada é
+    retornado (e nenhum dado vinculado a ele é consultado).
     """
     dados = {
         'observacoes': [],
@@ -316,61 +307,60 @@ def buscar_dados_estudante_para_relatorio(crianca_id, periodo):
     }
 
     try:
-        crianca = Crianca.objects.filter(id=crianca_id).first()
-        if crianca:
-            dados['info_crianca'] = model_to_dict(crianca)
+        aluno = Aluno.objects.select_related('turma').filter(id=crianca_id).first()
+        if not aluno:
+            logger.warning("Aluno não encontrado (ou fora do escopo) para relatório.", extra={"crianca_id": str(crianca_id)})
+            return dados
 
-            # Resolver turma_nome a partir de turma_id
-            if crianca.turma_id:
-                turma = Turma.objects.filter(id=crianca.turma_id).first()
-                if turma:
-                    dados['info_crianca']['turma_nome'] = turma.nome
+        info = model_to_dict(aluno)
+        # model_to_dict devolve FKs pelo nome do campo ('turma'); o resto do
+        # serviço lê as chaves *_id — expõe as duas formas.
+        info.update({
+            'id': str(aluno.id),
+            'turma_id': aluno.turma_id,
+            'escola_id': aluno.escola_id,
+            'instituicao_id': aluno.instituicao_id,
+            'turma_nome': aluno.turma.nome if aluno.turma_id else '',
+        })
+        if aluno.data_nascimento:
+            today = datetime.date.today()
+            born = aluno.data_nascimento
+            age_years = today.year - born.year - ((today.month, today.day) < (born.month, born.day))
+            info['idade'] = f"{age_years} anos"
+        dados['info_crianca'] = info
 
-            # Calcular idade a partir de data_nascimento
-            if crianca.data_nascimento:
-                today = datetime.date.today()
-                born = crianca.data_nascimento
-                age_years = today.year - born.year - ((today.month, today.day) < (born.month, born.day))
-                dados['info_crianca']['idade'] = f"{age_years} anos"
-
-        observacoes = (
-            RegistroObservacao.objects.filter(crianca_id=crianca_id)
+        dados['observacoes'] = list(
+            RegistroObservacao.objects.filter(aluno_id=aluno.id)
             .order_by('-data_observacao')[:20]
+            .values()
         )
-        dados['observacoes'] = list(observacoes.values())
 
-        # Buscar fotos do portfólio via tabela N-to-N (ProducaoFotoCrianca → ProducaoFoto)
-        vinculos = ProducaoFotoCrianca.objects.filter(crianca_id=str(crianca_id))
-
-        # Mapear producao_foto_id → legenda do vínculo para uso na montagem do portfólio
-        legenda_por_foto = {str(v.producao_foto_id): v.legenda for v in vinculos}
-
-        foto_ids = vinculos.values_list('producao_foto_id', flat=True)
-        fotos_qs = ProducaoFoto.objects.filter(id__in=foto_ids)
-
-        # Filtrar por período se disponível
-        data_inicio = parse_date(periodo.get('startDate') or periodo.get('start_date', '')) if periodo else None
-        data_fim = parse_date(periodo.get('endDate') or periodo.get('end_date', '')) if periodo else None
+        # Portfólio: vínculos ProducaoAluno → Producao (N-para-N).
+        vinculos = (
+            ProducaoAluno.objects.filter(aluno_id=aluno.id)
+            .select_related('producao', 'producao__projeto')
+        )
+        data_inicio = parse_date(periodo.get('startDate') or periodo.get('start_date') or '') if periodo else None
+        data_fim = parse_date(periodo.get('endDate') or periodo.get('end_date') or '') if periodo else None
         if data_inicio:
-            fotos_qs = fotos_qs.filter(data_registro__gte=data_inicio)
+            vinculos = vinculos.filter(producao__data_registro__gte=data_inicio)
         if data_fim:
-            fotos_qs = fotos_qs.filter(data_registro__lte=data_fim)
+            vinculos = vinculos.filter(producao__data_registro__lte=data_fim)
 
-        fotos_qs = fotos_qs.order_by('-data_registro')[:15]
-        dados['producoes'] = [
-            {
-                'id': f.id,
-                'arquivo_url': refresh_presigned_url(f.arquivo_url),
-                'arquivo_nome': f.arquivo_nome,
-                'tipo_midia': f.tipo_midia,
-                'data_registro': str(f.data_registro) if f.data_registro else '',
-                'tags': f.tags if hasattr(f, 'tags') else '',
-                'titulo': f.projeto or f.arquivo_nome,
-                # Legenda preenchida pelo professor/coordenador no vínculo criança ↔ foto
-                'legenda': legenda_por_foto.get(str(f.id), '') or '',
-            }
-            for f in fotos_qs
-        ]
+        dados['producoes'] = []
+        for v in vinculos.order_by('-producao__data_registro')[:15]:
+            p = v.producao
+            dados['producoes'].append({
+                'id': p.id,
+                'arquivo_url': refresh_presigned_url(p.arquivo_url),
+                'arquivo_nome': p.arquivo_nome,
+                'tipo_midia': p.tipo,
+                'data_registro': str(p.data_registro) if p.data_registro else '',
+                'tags': p.tags or [],
+                'titulo': p.titulo or (p.projeto.nome if p.projeto_id else '') or p.arquivo_nome,
+                # Legenda preenchida pelo professor/coordenador no vínculo aluno ↔ produção
+                'legenda': v.legenda or '',
+            })
 
         logger.info(
             "Dados coletados do Postgres para relatório.",
@@ -386,10 +376,13 @@ def buscar_dados_estudante_para_relatorio(crianca_id, periodo):
     return dados
 
 
-def buscar_relatos_individuais_crianca(nome_crianca, periodo):
+def buscar_relatos_individuais_crianca(nome_crianca, periodo, aluno_id=None):
     """
-    Buscar relatos individuais da criança na tabela ObservacaoTranscricao.
-    Busca por nome (aluno_nome) pois muitos registros têm crianca_id=None.
+    Buscar relatos individuais do aluno na tabela ObservacaoTranscricao.
+
+    Vínculo principal: FK `aluno`. Transcrições em que a IA não conseguiu
+    confirmar a criança ficam com `aluno=None` e só o nome cru em `aluno_nome`
+    — essas entram por nome exato, para não perder relatos antigos.
     """
     try:
         if periodo.get('type') == 'bimestre':
@@ -406,17 +399,21 @@ def buscar_relatos_individuais_crianca(nome_crianca, periodo):
         "nome_crianca": nome_crianca, "data_inicio": str(data_inicio), "data_fim": str(data_fim),
     })
 
+    vinculo = Q(aluno__isnull=True, aluno_nome__iexact=nome_crianca)
+    if aluno_id:
+        vinculo |= Q(aluno_id=aluno_id)
+
     observacoes = ObservacaoTranscricao.objects.filter(
-        aluno_nome__iexact=nome_crianca,
+        vinculo,
         data_observacao__gte=data_inicio,
         data_observacao__lte=data_fim,
-    ).order_by('data_observacao')
+    ).select_related('professor').order_by('data_observacao')
 
     relatos_encontrados = [
         {
             'data': obs.data_observacao.isoformat() if obs.data_observacao else None,
             'observacao': obs.observacao_texto,
-            'professora': obs.professora_nome,
+            'professora': obs.professor.nome if obs.professor_id else '',
             'turma_id': str(obs.turma_id) if obs.turma_id else None,
             'metadados': obs.metadados_ia or {},
         }
@@ -452,7 +449,7 @@ def _formatar_secao_bncc_html(perguntas_bncc, respostas_sim_por_pergunta):
             badge_label = "⚪ Não observado"
             continue # Não processe pergunta sem resposta
 
-        codigo = pergunta.habilidade_bncc or ""
+        codigo = pergunta.habilidade_bncc.codigo if pergunta.habilidade_bncc_id else ""
         texto = pergunta.pergunta or ""
         linhas.append(
             f'<tr><td><strong>{codigo}</strong> — {texto}</td>'
@@ -542,13 +539,13 @@ def _gerar_secao_atividades(info_crianca, periodo, nome_crianca, usuario=None, c
                     semana_str = f"Semana de {planejamento.semana_inicio.strftime('%d/%m')} a {planejamento.semana_fim.strftime('%d/%m')}"
                     o_que_vivemos_juntos += f"📅 {semana_str}\n"
 
-                    dias = planejamento.dias.all().order_by('data')
+                    dias = planejamento.planejamentos_diarios.all().order_by('data')
                     for dia in dias:
                         if dia.atividades_propostas:
                             dia_nome = dia.dia_semana.title().replace('_', '-')
                             o_que_vivemos_juntos += f"• {dia_nome}: {dia.atividades_propostas}\n"
 
-                        habilidades_dia = dia.habilidades.all()
+                        habilidades_dia = dia.planejamentos_habilidades.select_related('habilidade_bncc')
                         if habilidades_dia:
                             codigos_bncc = [h.habilidade_bncc.codigo for h in habilidades_dia]
                             o_que_vivemos_juntos += f"  (Habilidades BNCC: {', '.join(codigos_bncc)})\n"
@@ -627,7 +624,9 @@ def _gerar_secao_atividades(info_crianca, periodo, nome_crianca, usuario=None, c
 
 def _gerar_secao_relatos(nome_crianca, periodo, info_crianca, usuario=None, cliente_id=None):
     """Seção 2: Relatos individuais — busca observações e gera narrativa via IA."""
-    relatos_individuais = buscar_relatos_individuais_crianca(nome_crianca, periodo)
+    relatos_individuais = buscar_relatos_individuais_crianca(
+        nome_crianca, periodo, aluno_id=info_crianca.get('id'),
+    )
     print(f"[RELATOS] Encontrados {len(relatos_individuais)} relatos individuais para {nome_crianca}")
 
     if not relatos_individuais:
@@ -710,7 +709,7 @@ _SCHEMA_PRODUCOES = {
 }
 
 
-def _gerar_secao_producoes(nome_crianca, periodo=None, usuario=None, cliente_id=None):
+def _gerar_secao_producoes(nome_crianca, aluno_id, periodo=None, usuario=None, cliente_id=None):
     """Seção 3: Produções — busca registros de escrita/desenho e gera narrativa via IA.
 
     Uma única chamada à OpenAI (categoria "Relatórios - Produções" preservada),
@@ -723,21 +722,23 @@ def _gerar_secao_producoes(nome_crianca, periodo=None, usuario=None, cliente_id=
         não há produções (aciona a página única no layout antigo).
       - ``texto_conclusao``: insumo textual para a seção de conclusão.
     """
-    registros_escrita = RegistroEscrita.objects.filter(nome_aluno__icontains=nome_crianca)
-    registros_desenho = RegistroDesenho.objects.filter(nome_aluno__icontains=nome_crianca)
+    # Por FK: o antigo `nome_aluno__icontains` misturava crianças de nomes
+    # parecidos ("Ana" casava com "Mariana").
+    registros_escrita = RegistroEscrita.objects.filter(aluno_id=aluno_id)
+    registros_desenho = RegistroDesenho.objects.filter(aluno_id=aluno_id)
 
     # Restringe ao período do relatório (quando disponível).
     if periodo:
         data_inicio, data_fim = _calcular_datas_periodo(periodo)
         registros_escrita = registros_escrita.filter(
-            data_criacao__date__gte=data_inicio, data_criacao__date__lte=data_fim
+            criado_em__date__gte=data_inicio, criado_em__date__lte=data_fim
         )
         registros_desenho = registros_desenho.filter(
-            data_criacao__date__gte=data_inicio, data_criacao__date__lte=data_fim
+            criado_em__date__gte=data_inicio, criado_em__date__lte=data_fim
         )
 
-    registros_escrita = list(registros_escrita.order_by('-data_criacao'))
-    registros_desenho = list(registros_desenho.order_by('-data_criacao'))
+    registros_escrita = list(registros_escrita.order_by('-criado_em'))
+    registros_desenho = list(registros_desenho.order_by('-criado_em'))
     print(f"[PRODUÇÕES] {len(registros_escrita)} escritas e {len(registros_desenho)} desenhos no período para {nome_crianca}")
 
     resultado = {
@@ -759,13 +760,13 @@ def _gerar_secao_producoes(nome_crianca, periodo=None, usuario=None, cliente_id=
     # ── Insumo textual para a IA: classificações + análises detalhadas ──
     partes_texto = ["ANÁLISES DE PRODUÇÕES\n"]
     for i, registro in enumerate(registros_escrita, 1):
-        data_fmt = registro.data_criacao.strftime('%d/%m/%Y')
+        data_fmt = registro.criado_em.strftime('%d/%m/%Y')
         partes_texto.append(
             f"\nESCRITA {i} ({data_fmt}) — etapa: {registro.etapa_ia or 'não informada'}\n"
             f"{registro.analise_detalhada or ''}"
         )
     for i, registro in enumerate(registros_desenho, 1):
-        data_fmt = registro.data_criacao.strftime('%d/%m/%Y')
+        data_fmt = registro.criado_em.strftime('%d/%m/%Y')
         partes_texto.append(
             f"\nDESENHO {i} ({data_fmt}) — fase: {registro.fase_desenho or 'não informada'}\n"
             f"{registro.analise_detalhada or ''}"
@@ -839,7 +840,7 @@ def _gerar_secao_producoes(nome_crianca, periodo=None, usuario=None, cliente_id=
     return resultado
 
 
-def _gerar_secao_bncc(crianca_id, periodo):
+def _gerar_secao_bncc(crianca_id, periodo, escola_id=None):
     """Seção 4: BNCC — agrega observações e formata HTML com bolinhas coloridas."""
     secao_texto = ""
     perguntas_bncc = []
@@ -866,10 +867,17 @@ def _gerar_secao_bncc(crianca_id, periodo):
             extra={"crianca_id": str(crianca_id), "data_inicio": str(data_inicio), "data_fim": str(data_fim)},
         )
 
-        perguntas_bncc = list(PerguntaBNCC.objects.all())
+        # `todos` (sem tenant) + filtro manual: perguntas oficiais (escola nula)
+        # OU customizadas pela escola do aluno — o TenantManager esconderia
+        # as oficiais de quem tem escopo de escola.
+        perguntas_bncc = list(
+            Pergunta.todos.filter(ativa=True)
+            .filter(Q(escola__isnull=True) | Q(escola_id=escola_id))
+            .select_related('habilidade_bncc')
+        )
 
         registros_queryset = RegistroObservacao.objects.filter(
-            crianca_id=crianca_id,
+            aluno_id=crianca_id,
             data_observacao__gte=data_inicio,
             data_observacao__lte=data_fim,
         )
@@ -891,7 +899,8 @@ def _gerar_secao_bncc(crianca_id, periodo):
                 else:
                     status_resposta = f"{respostas_sim} vezes"
 
-                secao_texto += f"({pergunta.habilidade_bncc or ''}) {pergunta.pergunta or ''}: {status_resposta}\n"
+                codigo = pergunta.habilidade_bncc.codigo if pergunta.habilidade_bncc_id else ''
+                secao_texto += f"({codigo}) {pergunta.pergunta or ''}: {status_resposta}\n"
 
             logger.info(
                 "Perguntas BNCC agregadas no relatório.",
@@ -1029,7 +1038,13 @@ def gerar_relatorio_com_ia(nome_crianca, dados_estudante, periodo, crianca_id, n
     """
     # Resolve instituição do usuário autenticado (usada tanto para os prompts
     # customizados — cliente_id — quanto para o template de relatório ativo).
-    instituicao_id = str(usuario.instituicao_id) if usuario and getattr(usuario, 'instituicao_id', None) else None
+    # A instituição vem do ALUNO (não do usuário): perfis globais (superadmin,
+    # suporte) não têm instituição, e mesmo assim o relatório precisa usar o
+    # template e os prompts da instituição da criança.
+    info_crianca = dados_estudante.get('info_crianca', {})
+    inst_aluno = info_crianca.get('instituicao_id')
+    inst_usuario = getattr(usuario, 'instituicao_id', None) if usuario else None
+    instituicao_id = str(inst_aluno or inst_usuario) if (inst_aluno or inst_usuario) else None
     cliente_id = instituicao_id
 
     template_ativo = None
@@ -1073,7 +1088,6 @@ def gerar_relatorio_com_ia(nome_crianca, dados_estudante, periodo, crianca_id, n
 
     num_observacoes = len(dados_estudante.get('observacoes', []))
     num_producoes = len(dados_estudante.get('producoes', []))
-    info_crianca = dados_estudante.get('info_crianca', {})
     turma_nome = info_crianca.get('turma_nome', 'Não informado')
     idade = info_crianca.get('idade', '')
 
@@ -1083,8 +1097,8 @@ def gerar_relatorio_com_ia(nome_crianca, dados_estudante, periodo, crianca_id, n
     # ocultar uma seção não deve empobrecer a análise das outras.
     analise_completa = _gerar_secao_atividades(info_crianca, periodo, nome_crianca, usuario=usuario, cliente_id=cliente_id)
     secao_relatos = _gerar_secao_relatos(nome_crianca, periodo, info_crianca, usuario=usuario, cliente_id=cliente_id)
-    producoes = _gerar_secao_producoes(nome_crianca, periodo=periodo, usuario=usuario, cliente_id=cliente_id)
-    secao_registros_observacao, secao_bncc = _gerar_secao_bncc(crianca_id, periodo)
+    producoes = _gerar_secao_producoes(nome_crianca, crianca_id, periodo=periodo, usuario=usuario, cliente_id=cliente_id)
+    secao_registros_observacao, secao_bncc = _gerar_secao_bncc(crianca_id, periodo, escola_id=info_crianca.get('escola_id'))
     secao_conclusao = _gerar_secao_conclusao(
         nome_crianca, secao_relatos, producoes['texto_conclusao'], secao_registros_observacao,
         analise_completa, turma_nome, nome_professora, idade or 'Não informada', usuario=usuario, cliente_id=cliente_id,
@@ -1151,7 +1165,7 @@ def gerar_relatorio_com_ia(nome_crianca, dados_estudante, periodo, crianca_id, n
         página A4) e o texto da análise abaixo, em largura total."""
         img_html = ''
         if registro is not None:
-            data_fmt = registro.data_criacao.strftime('%d/%m/%Y')
+            data_fmt = registro.criado_em.strftime('%d/%m/%Y')
             img_html = (
                 '<div class="producao-quadro-img">'
                 f'<img src="/api/arquivo/{registro.arquivo_hash}/" alt="{rotulo}" />'
@@ -1217,10 +1231,10 @@ def gerar_relatorio_com_ia(nome_crianca, dados_estudante, periodo, crianca_id, n
 
     # foto_crianca_html: só os modelos 'memorias'/'natureza' exibem foto real
     # na capa (RelatorioTemplate.suporta_foto()), e só quando o template
-    # ativo tem usa_foto_crianca=True.
+    # ativo tem usa_foto_aluno=True.
     foto_crianca_html = ''
-    if template_ativo and template_ativo.usa_foto_crianca and modelo == 'memorias':
-        crianca_obj = Crianca.objects.filter(id=crianca_id).first()
+    if template_ativo and template_ativo.usa_foto_aluno and modelo == 'memorias':
+        crianca_obj = Aluno.objects.filter(id=crianca_id).first()
         if crianca_obj:
             foto_url_atual = get_foto_url(crianca_obj)
             if foto_url_atual:
@@ -1277,45 +1291,6 @@ def gerar_relatorio_com_ia(nome_crianca, dados_estudante, periodo, crianca_id, n
             'modeloCapa': modelo,
         },
     }
-
-def montar_prompt_para_ia(nome_crianca, dados_estudante, periodo):
-    """
-    Montar prompt estruturado para envio à IA.
-    TODO: Usar esta função quando implementar IA real.
-    """
-    observacoes = dados_estudante.get('observacoes', [])
-    producoes = dados_estudante.get('producoes', [])
-    info_crianca = dados_estudante.get('info_crianca', {})
-
-    prompt = f"""
-    Você é um assistente pedagógico especializado em educação infantil. Gere um relatório individual detalhado e profissional.
-
-    INFORMAÇÕES DO ESTUDANTE:
-    - Nome: {nome_crianca}
-    - Idade: {info_crianca.get('idade', 'Não informado')}
-    - Turma: {info_crianca.get('turma_nome', 'Não informado')}
-    - Período: {periodo}
-
-    OBSERVAÇÕES COLETADAS ({len(observacoes)}):
-    {chr(10).join([f"- {obs.get('resposta', '')}" for obs in observacoes[:10]])}
-
-    PRODUÇÕES REGISTRADAS ({len(producoes)}):
-    {chr(10).join([f"- {prod.get('descricao', '')}" for prod in producoes[:5]])}
-
-    INSTRUÇÕES:
-    1. Elabore um relatório pedagógico profissional
-    2. Use linguagem técnica adequada para educação infantil
-    3. Baseie-se nas observações e produções fornecidas
-    4. Estruture em seções: Desenvolvimento Cognitivo, Socioemocional, Motor, Linguagem
-    5. Inclua considerações pedagógicas e próximos passos
-    6. Mantenha tom profissional e construtivo
-    7. Máximo de 500 palavras
-
-    RELATÓRIO:
-    """
-
-    return prompt
-
 
 def deletar_relatorio(relatorio_id):
     """Deleta um relatório e seu PDF associado no S3."""

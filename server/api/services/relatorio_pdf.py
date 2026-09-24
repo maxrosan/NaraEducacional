@@ -22,7 +22,7 @@ import httpx
 from PIL import Image, ImageOps
 from django.utils import timezone
 
-from api.models import Crianca, Relatorio, RegistroDesenho, RegistroEscrita
+from api.models import Relatorio, RegistroDesenho, RegistroEscrita
 from api.services.pdf_renderer import render_html_to_pdf
 from api.storage import (
     delete_from_s3,
@@ -588,9 +588,9 @@ def _slugify(value: str) -> str:
 def build_filename(relatorio: Relatorio) -> str:
     """Nome de arquivo com sufixo aleatório para evitar colisões em downloads."""
     nome = "Estudante"
-    crianca = Crianca.objects.filter(id=relatorio.id_crianca).only("nome_completo").first()
-    if crianca and crianca.nome_completo:
-        nome = crianca.nome_completo
+    aluno = getattr(relatorio, "aluno", None)
+    if aluno and aluno.nome_completo:
+        nome = aluno.nome_completo
     periodo = _slugify(relatorio.periodo or "periodo")[:40]
     estudante = _slugify(nome)[:60]
     suffix = secrets.token_hex(4)

@@ -55,8 +55,26 @@ if SENTRY_DSN and not _IS_RUNNING_TESTS:
 # Quick-start development settings - unsuitable for production
 # See https://docs.djangoproject.com/en/5.2/howto/deployment/checklist/
 
+# SECURITY WARNING: don't run with debug turned on in production!
+DEBUG = os.getenv('DJANGO_DEBUG', 'false').lower() == 'true'
+
 # SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = os.getenv('DJANGO_SECRET_KEY', 'django-insecure-kcfth(u$19@ub1bz0de$(-knd-yp0xjj=2o8oold9fb!t+-&wn)')
+# Esta chave também assina os JWTs (SIMPLE_JWT usa SECRET_KEY como SIGNING_KEY):
+# quem a conhece consegue forjar um token de qualquer usuário, inclusive superadmin.
+# - Fora de DEBUG: obrigatória e com 50+ caracteres, senão o Django não sobe.
+# - Em DEBUG: se ausente, usa uma chave de desenvolvimento (nunca em produção).
+SECRET_KEY = os.getenv('DJANGO_SECRET_KEY', '')
+if not SECRET_KEY:
+    if not DEBUG:
+        from django.core.exceptions import ImproperlyConfigured
+        raise ImproperlyConfigured('DJANGO_SECRET_KEY não definida no ambiente.')
+    SECRET_KEY = 'django-insecure-somente-desenvolvimento-local-nao-usar-em-producao'
+elif len(SECRET_KEY) < 50 and not DEBUG:
+    from django.core.exceptions import ImproperlyConfigured
+    raise ImproperlyConfigured(
+        'DJANGO_SECRET_KEY muito curta (mínimo 50 caracteres). Gere uma com: '
+        'python3 -c "import secrets; print(secrets.token_urlsafe(50))"'
+    )
 
 # Token compartilhado com o scheduler externo (Celery beat/worker) usado para
 # autenticar chamadas a endpoints internos em /api/internal/*.
@@ -74,8 +92,6 @@ NARA_INSTITUICAO_ID = os.getenv('NARA_INSTITUICAO_ID', '')
 # em vez de regenerar o cache dentro do request. Vazio = botão desabilitado.
 CELERY_BROKER_URL = os.getenv('CELERY_BROKER_URL', '')
 
-# SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = os.getenv('DJANGO_DEBUG', 'false').lower() == 'true'
 def _split_env_list(value: str) -> list[str]:
     return [item.strip() for item in value.split(',') if item.strip()]
 
@@ -271,7 +287,11 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 # Django REST Framework configuration
 REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': [
-        'rest_framework_simplejwt.authentication.JWTAuthentication',
+        # JWTAuthentication + definição do escopo de tenant (api/authentication.py).
+        # NÃO trocar pela classe padrão do SimpleJWT: o TenantMiddleware roda antes
+        # da autenticação do DRF e não enxerga o usuário do JWT — sem esta classe o
+        # TenantManager não filtra nada e todo usuário vê dados de todos os tenants.
+        'api.authentication.TenantJWTAuthentication',
         'rest_framework.authentication.SessionAuthentication',
     ],
     'DEFAULT_PERMISSION_CLASSES': [
@@ -304,13 +324,6 @@ SIMPLE_JWT = {
     'USER_ID_FIELD': 'id',
     'USER_ID_CLAIM': 'user_id',
 }
-
-# Multi-tenant: hoje cada escola roda numa instância dedicada (ver
-# docs/PLANO_MULTI_TENANT.md), e o `instituicao_id` dos usuários pode divergir
-# entre si nos dados legados. Enquanto isso, as checagens de "mesma instituição"
-# ficam DESLIGADAS — ligá-las agora produziria falsos "de outra instituição".
-# Quando o plano multi-tenant for executado, defina MULTI_TENANT_STRICT=true.
-MULTI_TENANT_STRICT = os.getenv('MULTI_TENANT_STRICT', 'false').lower() == 'true'
 
 # CORS settings
 CORS_ALLOWED_ORIGINS = [
@@ -360,11 +373,20 @@ CORS_PREFLIGHT_MAX_AGE = 86400  # 24 horas
 
 # Configurações de charset (removido locale problemático)
 DEFAULT_CHARSET = 'utf-8'
-FILE_CHARSET = 'utf-8'
 
-MAILTRAP_API_TOKEN = "a340ec3c2ae0ab6f22f44f3df3435cce"
+# Segredo: vem do ambiente, nunca do código.
+MAILTRAP_API_TOKEN = os.getenv('MAILTRAP_API_TOKEN', '')
 EMAIL_BACKEND = "anymail.backends.mailtrap.EmailBackend"
-DEFAULT_FROM_EMAIL = "hello@demomailtrap.co"
+# Lido do ambiente com o MESMO fallback que api/services/password_reset.py
+# usava antes (os.getenv direto), para não trocar o remetente em produção.
+DEFAULT_FROM_EMAIL = os.getenv('DEFAULT_FROM_EMAIL', 'hello@edunuvem.com')
+
+# Base do link de redefinição de senha enviado por e-mail.
+FRONTEND_URL = os.getenv('FRONTEND_URL', 'http://localhost:5173').rstrip('/')
+
+# Validade do link de redefinição de senha (segundos). Sem isto o Django usa
+# 3 dias, enquanto o e-mail prometia 1 hora. O texto do e-mail é derivado daqui.
+PASSWORD_RESET_TIMEOUT = int(os.getenv('PASSWORD_RESET_TIMEOUT_SECONDS', '3600'))
 
 ANYMAIL = {
   "MAILTRAP_API_TOKEN": MAILTRAP_API_TOKEN,

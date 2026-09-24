@@ -68,6 +68,12 @@ def gerar_relatorio(request):
                 {'error': 'ID da criança é obrigatório'},
                 status=status.HTTP_400_BAD_REQUEST,
             )
+        # TenantManager: aluno fora do escopo do usuário = inexistente.
+        if not Aluno.objects.filter(id=crianca_id).exists():
+            return Response(
+                {'error': 'Criança não encontrada'},
+                status=status.HTTP_404_NOT_FOUND,
+            )
 
         dados_estudante = buscar_dados_estudante_para_relatorio(crianca_id, periodo)
         nome_professora = getattr(request.user, 'nome', '') or 'Professora'
@@ -120,7 +126,7 @@ def gerar_relatorio_por_crianca(request, crianca_id):
                     status=status.HTTP_404_NOT_FOUND,
                 )
         else:
-            periodo_obj = obter_periodo_avaliativo_corrente(crianca.instituicao_id)
+            periodo_obj = obter_periodo_avaliativo_corrente(crianca.instituicao_id, crianca.escola_id)
             if not periodo_obj:
                 return Response(
                     {'error': 'Nenhum período avaliativo encontrado para esta instituição'},
