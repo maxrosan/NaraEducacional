@@ -8,231 +8,224 @@ import os
 import httpx
 from PIL import Image, ImageOps
 
-from django.http import Http404, HttpResponse
+from django.http import FileResponse, Http404, HttpResponse
 from django.shortcuts import redirect
+from rest_framework import status
 from rest_framework.decorators import api_view, permission_classes, throttle_classes
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
-from rest_framework import status
 
-from datetime import date
-
-from api.models import Crianca, RegistroEscrita, RegistroDesenho
-from api.throttles import UploadRateThrottle
+from api.models import Aluno, RegistroDesenho, RegistroEscrita, Turma
 from api.storage import generate_presigned_url
+from api.throttles import UploadRateThrottle
 from api.views_legacy import (
-    validate_uploaded_file,
+    ALLOWED_IMAGE_EXTENSIONS,
+    ALLOWED_IMAGE_MIME_TYPES,
+    MAX_IMAGE_SIZE_BYTES,
     check_rate_limit,
     gerar_nome_arquivo_seguro,
-    ALLOWED_IMAGE_MIME_TYPES,
-    ALLOWED_IMAGE_EXTENSIONS,
-    MAX_IMAGE_SIZE_BYTES,
+    validate_uploaded_file,
 )
 from api.services.analise_producao import (
-    upload_para_s3,
-    analisar_escrita,
     analisar_desenho,
+    analisar_escrita,
     atualizar_classificacao_registro,
-    salvar_registro_escrita,
+    idade_do_aluno,
     salvar_registro_desenho,
+    salvar_registro_escrita,
+    upload_para_s3,
 )
-from api.services.fases_producao import FASES_ESCRITA, FASES_DESENHO, NAO_CLASSIFICAVEL
+from api.services.fases_producao import FASES_DESENHO, FASES_ESCRITA, NAO_CLASSIFICAVEL
 
 logger = logging.getLogger(__name__)
 
+
+# ---------------------------------------------------------------------------
+# Helpers do upload
+# ---------------------------------------------------------------------------
 
 def _get_cliente_id(request):
     """Extrai cliente_id (instituicao_id) do usuário autenticado."""
     return str(request.user.instituicao_id) if getattr(request.user, 'instituicao_id', None) else None
 
 
+def _erro(mensagem: str, status_code: int, **extra) -> Response:
+    return Response({'error': mensagem}, status=status_code, **extra)
+
+
+def _preparar_upload(request, tipo: str):
+    """Validações comuns a escrita e desenho.
+
+    Retorna ``(contexto, None)`` em caso de sucesso ou ``(None, Response)`` com o erro.
+    ``contexto`` traz: arquivo, file_bytes, aluno, turma, arquivo_nome, file_hash, arquivo_path.
+    """
+    if 'arquivo' not in request.FILES:
+        return None, _erro('Nenhum arquivo foi enviado', status.HTTP_400_BAD_REQUEST)
+
+    allowed, retry_after = check_rate_limit(request, f"upload_{tipo}")
+    if not allowed:
+        return None, _erro(
+            'Limite de requisições de upload excedido. Tente novamente em alguns segundos.',
+            status.HTTP_429_TOO_MANY_REQUESTS,
+            headers={'Retry-After': str(retry_after)},
+        )
+
+    arquivo = request.FILES['arquivo']
+    validation_error = validate_uploaded_file(
+        arquivo, ALLOWED_IMAGE_MIME_TYPES, ALLOWED_IMAGE_EXTENSIONS,
+        MAX_IMAGE_SIZE_BYTES, f"imagem de {tipo}",
+    )
+    if validation_error:
+        mensagem, status_code = validation_error
+        return None, _erro(mensagem, status_code)
+
+    aluno_id = request.POST.get('alunoId')
+    if not aluno_id:
+        return None, _erro("Campo 'alunoId' é obrigatório.", status.HTTP_400_BAD_REQUEST)
+    try:
+        aluno = Aluno.objects.select_related('turma').get(id=aluno_id)
+    except (Aluno.DoesNotExist, ValueError, Exception.__class__):
+        return None, _erro('Aluno não encontrado.', status.HTTP_404_NOT_FOUND)
+
+    # Turma: a enviada pelo front (se pertencer à escola do aluno) ou a atual do aluno.
+    turma = aluno.turma
+    turma_id = request.POST.get('turmaId')
+    if turma_id and str(turma_id) != str(aluno.turma_id):
+        try:
+            turma = Turma.objects.get(id=turma_id, escola_id=aluno.escola_id)
+        except (Turma.DoesNotExist, ValueError):
+            return None, _erro('Turma não encontrada para este aluno.', status.HTTP_404_NOT_FOUND)
+
+    arquivo_nome, file_hash = gerar_nome_arquivo_seguro(aluno.nome_completo, arquivo.name)
+    file_bytes = arquivo.read()
+    arquivo_path = upload_para_s3(file_bytes, tipo, arquivo_nome, arquivo.content_type)
+
+    return {
+        'arquivo': arquivo,
+        'file_bytes': file_bytes,
+        'aluno': aluno,
+        'turma': turma,
+        'arquivo_nome': arquivo_nome,
+        'file_hash': file_hash,
+        'arquivo_path': arquivo_path,
+    }, None
+
+
+def _resposta_base(ctx: dict) -> dict:
+    """Campos de resposta comuns (formato mantido para o frontend)."""
+    arquivo = ctx['arquivo']
+    return {
+        'success': True,
+        'arquivo_salvo': ctx['arquivo_path'],
+        'arquivo_nome': ctx['arquivo_nome'],
+        'arquivo_hash': ctx['file_hash'],
+        'arquivo_original': arquivo.name,
+        'arquivo_url': ctx['arquivo_path'],
+        'alunoId': str(ctx['aluno'].id),
+        'nomeAluno': ctx['aluno'].nome_completo,
+        'turmaId': str(ctx['turma'].id),
+    }
+
+
+# ---------------------------------------------------------------------------
+# Endpoints de upload + análise
+# ---------------------------------------------------------------------------
+
 @api_view(['POST'])
 @permission_classes([IsAuthenticated])
 @throttle_classes([UploadRateThrottle])
 def upload_e_analise_escrita(request):
-    """Endpoint para upload de arquivo e análise de escrita. Requer autenticação."""
+    """Upload + análise de escrita. Body (multipart): arquivo, alunoId, turmaId (opcional)."""
     try:
-        if 'arquivo' not in request.FILES:
-            return Response({'error': 'Nenhum arquivo foi enviado'}, status=status.HTTP_400_BAD_REQUEST)
+        ctx, erro = _preparar_upload(request, "escrita")
+        if erro:
+            return erro
 
-        allowed, retry_after = check_rate_limit(request, "upload_escrita")
-        if not allowed:
-            return Response(
-                {'error': 'Limite de requisições de upload excedido. Tente novamente em alguns segundos.'},
-                status=status.HTTP_429_TOO_MANY_REQUESTS,
-                headers={'Retry-After': str(retry_after)},
-            )
-
-        arquivo = request.FILES['arquivo']
-        nome_aluno = request.POST.get('nomeAluno', '')
-        serie_aluno = request.POST.get('serieAluno', '')
-        turma_id = request.POST.get('turmaId', '')
-
-        validation_error = validate_uploaded_file(
-            arquivo, ALLOWED_IMAGE_MIME_TYPES, ALLOWED_IMAGE_EXTENSIONS,
-            MAX_IMAGE_SIZE_BYTES, "imagem de escrita",
-        )
-        if validation_error:
-            mensagem, status_code = validation_error
-            return Response({'error': mensagem}, status=status_code)
-
-        if not nome_aluno or not serie_aluno:
-            return Response({'error': 'Nome do aluno e série são obrigatórios'}, status=status.HTTP_400_BAD_REQUEST)
-
-        arquivo_nome, file_hash = gerar_nome_arquivo_seguro(nome_aluno, arquivo.name)
-        file_bytes = arquivo.read()
-        imagem_base64 = base64.b64encode(file_bytes).decode("utf-8")
-
-        arquivo_path = upload_para_s3(file_bytes, "escrita", arquivo_nome, arquivo.content_type)
-
-        idade_str = "Não informada"
-        crianca = Crianca.objects.filter(nome_completo__icontains=nome_aluno).first()
-        if crianca and crianca.data_nascimento:
-            hoje = date.today()
-            anos = hoje.year - crianca.data_nascimento.year - (
-                (hoje.month, hoje.day) < (crianca.data_nascimento.month, crianca.data_nascimento.day)
-            )
-            idade_str = f"{anos} anos"
+        aluno, arquivo, file_bytes = ctx['aluno'], ctx['arquivo'], ctx['file_bytes']
 
         analise_completa, etapa_detectada = analisar_escrita(
-            nome_aluno,
-            imagem_base64,
-            idade=idade_str,
+            aluno.nome_completo,
+            base64.b64encode(file_bytes).decode("utf-8"),
+            idade=idade_do_aluno(aluno),
             usuario=request.user,
             cliente_id=_get_cliente_id(request),
         )
+        descricao = f"ANÁLISE TÉCNICA:\n{analise_completa}"
 
         salvar_registro_escrita(
-            nome_aluno=nome_aluno,
-            turma_id=turma_id,
-            serie_aluno=serie_aluno,
-            arquivo_nome=arquivo_nome,
-            file_hash=file_hash,
-            arquivo_path=arquivo_path,
+            aluno=aluno,
+            turma=ctx['turma'],
+            professor=request.user,
+            arquivo_nome=ctx['arquivo_nome'],
+            file_hash=ctx['file_hash'],
+            arquivo_path=ctx['arquivo_path'],
             arquivo_original=arquivo.name,
             tamanho_arquivo=len(file_bytes),
             tipo_arquivo=arquivo.content_type or 'image/unknown',
             etapa_ia=etapa_detectada,
-            analise_detalhada=f"ANÁLISE TÉCNICA:\n{analise_completa}",
+            analise_detalhada=descricao,
         )
 
         return Response({
-            'success': True,
-            'arquivo_salvo': arquivo_path,
-            'arquivo_nome': arquivo_nome,
-            'arquivo_hash': file_hash,
-            'arquivo_original': arquivo.name,
-            'arquivo_url': arquivo_path,
-            'nomeAluno': nome_aluno,
-            'serieAluno': serie_aluno,
+            **_resposta_base(ctx),
             'nomeArquivo': arquivo.name,
-            'turmaId': turma_id,
             'analise': {
-                'descricao': f"ANÁLISE TÉCNICA:\n{analise_completa}",
+                'descricao': descricao,
                 'fase_escrita': etapa_detectada,
                 'fases_validas': FASES_ESCRITA + [NAO_CLASSIFICAVEL],
                 'arquivo_processado': True,
-                'arquivo_id': file_hash,
+                'arquivo_id': ctx['file_hash'],
                 'tamanho_arquivo': len(file_bytes),
                 'tipo_arquivo': arquivo.content_type,
             },
         })
 
-    except Exception as e:
+    except Exception:
         logger.exception("Erro no upload/análise de escrita")
-        return Response(
-            {'error': 'Erro interno no servidor', 'details': str(e)},
-            status=status.HTTP_500_INTERNAL_SERVER_ERROR,
-        )
+        return _erro('Erro interno no servidor', status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
 @api_view(['POST'])
 @permission_classes([IsAuthenticated])
 @throttle_classes([UploadRateThrottle])
 def upload_e_analise_desenho(request):
-    """Endpoint para upload de arquivo e análise de desenho. Requer autenticação."""
+    """Upload + análise de desenho. Body (multipart): arquivo, alunoId, turmaId, atividade, contexto."""
     try:
-        if 'arquivo' not in request.FILES:
-            return Response({'error': 'Nenhum arquivo foi enviado'}, status=status.HTTP_400_BAD_REQUEST)
+        ctx, erro = _preparar_upload(request, "desenho")
+        if erro:
+            return erro
 
-        allowed, retry_after = check_rate_limit(request, "upload_desenho")
-        if not allowed:
-            return Response(
-                {'error': 'Limite de requisições de upload excedido. Tente novamente em alguns segundos.'},
-                status=status.HTTP_429_TOO_MANY_REQUESTS,
-                headers={'Retry-After': str(retry_after)},
-            )
-
-        arquivo = request.FILES['arquivo']
-        nome_aluno = request.POST.get('nomeAluno', '')
-        serie_aluno = request.POST.get('serieAluno', '')
-        turma_id = request.POST.get('turmaId', '')
-        atividade = request.POST.get('atividade', 'Desenho Livre')
+        aluno, arquivo, file_bytes = ctx['aluno'], ctx['arquivo'], ctx['file_bytes']
+        atividade = request.POST.get('atividade') or 'Desenho Livre'
         contexto = request.POST.get('contexto', '')
-        professora = request.POST.get('professora', 'Sistema')
-
-        validation_error = validate_uploaded_file(
-            arquivo, ALLOWED_IMAGE_MIME_TYPES, ALLOWED_IMAGE_EXTENSIONS,
-            MAX_IMAGE_SIZE_BYTES, "imagem de desenho",
-        )
-        if validation_error:
-            mensagem, status_code = validation_error
-            return Response({'error': mensagem}, status=status_code)
-
-        if not nome_aluno or not serie_aluno:
-            return Response({'error': 'Nome do aluno e série são obrigatórios'}, status=status.HTTP_400_BAD_REQUEST)
-
-        arquivo_nome, file_hash = gerar_nome_arquivo_seguro(nome_aluno, arquivo.name)
-        file_bytes = arquivo.read()
-        imagem_base64 = base64.b64encode(file_bytes).decode("utf-8")
-
-        arquivo_path = upload_para_s3(file_bytes, "desenho", arquivo_nome, arquivo.content_type)
-
-        idade_str = "Não informada"
-        crianca = Crianca.objects.filter(nome_completo__icontains=nome_aluno).first()
-        if crianca and crianca.data_nascimento:
-            hoje = date.today()
-            anos = hoje.year - crianca.data_nascimento.year - (
-                (hoje.month, hoje.day) < (crianca.data_nascimento.month, crianca.data_nascimento.day)
-            )
-            idade_str = f"{anos} anos"
 
         analise_completa, fase_desenho, elementos_detectados = analisar_desenho(
-            nome_aluno,
-            imagem_base64,
-            idade=idade_str,
+            aluno.nome_completo,
+            base64.b64encode(file_bytes).decode("utf-8"),
+            idade=idade_do_aluno(aluno),
             usuario=request.user,
             cliente_id=_get_cliente_id(request),
         )
 
         salvar_registro_desenho(
-            nome_aluno=nome_aluno,
-            turma_id=turma_id,
-            serie_aluno=serie_aluno,
+            aluno=aluno,
+            turma=ctx['turma'],
+            professor=request.user,
             atividade=atividade,
             contexto=contexto,
-            arquivo_nome=arquivo_nome,
-            file_hash=file_hash,
-            arquivo_path=arquivo_path,
+            arquivo_nome=ctx['arquivo_nome'],
+            file_hash=ctx['file_hash'],
+            arquivo_path=ctx['arquivo_path'],
             arquivo_original=arquivo.name,
             tamanho_arquivo=len(file_bytes),
             tipo_arquivo=arquivo.content_type or 'image/unknown',
             fase_desenho=fase_desenho,
             elementos_detectados=elementos_detectados,
             analise_detalhada=analise_completa,
-            professora=professora,
         )
 
         return Response({
-            'success': True,
-            'arquivo_salvo': arquivo_path,
-            'arquivo_nome': arquivo_nome,
-            'arquivo_hash': file_hash,
-            'arquivo_original': arquivo.name,
-            'arquivo_url': arquivo_path,
-            'nomeAluno': nome_aluno,
-            'serieAluno': serie_aluno,
-            'turmaId': turma_id,
+            **_resposta_base(ctx),
             'atividade': atividade,
             'contexto': contexto,
             'analise': {
@@ -242,19 +235,20 @@ def upload_e_analise_desenho(request):
                 'elementos': elementos_detectados,
                 'desenvolvimento': fase_desenho,
                 'arquivo_processado': True,
-                'arquivo_id': file_hash,
+                'arquivo_id': ctx['file_hash'],
                 'tamanho_arquivo': len(file_bytes),
                 'tipo_arquivo': arquivo.content_type,
             },
         })
 
-    except Exception as e:
+    except Exception:
         logger.exception("Erro no upload/análise de desenho")
-        return Response(
-            {'error': 'Erro interno no servidor', 'details': str(e)},
-            status=status.HTTP_500_INTERNAL_SERVER_ERROR,
-        )
+        return _erro('Erro interno no servidor', status.HTTP_500_INTERNAL_SERVER_ERROR)
 
+
+# ---------------------------------------------------------------------------
+# Revisão da classificação
+# ---------------------------------------------------------------------------
 
 @api_view(['POST'])
 @permission_classes([IsAuthenticated])
@@ -269,25 +263,22 @@ def atualizar_classificacao(request):
     classificacao = (request.data.get('classificacao') or '').strip()
 
     if not tipo or not arquivo_hash or not classificacao:
-        return Response(
-            {'error': 'tipo, arquivo_hash e classificacao são obrigatórios'},
-            status=status.HTTP_400_BAD_REQUEST,
-        )
+        return _erro('tipo, arquivo_hash e classificacao são obrigatórios', status.HTTP_400_BAD_REQUEST)
 
     try:
         registro = atualizar_classificacao_registro(
             tipo=tipo,
             arquivo_hash=arquivo_hash,
             classificacao=classificacao,
-            professora=getattr(request.user, 'email', None) or None,
+            revisado_por=getattr(request.user, 'email', None) or None,
         )
     except ValueError as e:
-        return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+        return _erro(str(e), status.HTTP_400_BAD_REQUEST)
     except (RegistroEscrita.DoesNotExist, RegistroDesenho.DoesNotExist):
-        return Response({'error': 'Registro não encontrado'}, status=status.HTTP_404_NOT_FOUND)
+        return _erro('Registro não encontrado', status.HTTP_404_NOT_FOUND)
     except Exception:
         logger.exception("Erro ao atualizar classificação")
-        return Response({'error': 'Erro interno no servidor'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        return _erro('Erro interno no servidor', status.HTTP_500_INTERNAL_SERVER_ERROR)
 
     return Response({
         'success': True,
@@ -297,17 +288,43 @@ def atualizar_classificacao(request):
     })
 
 
-def _bytes_do_registro(registro, tipo):
-    """Bytes do arquivo do registro (disco local ou S3). None se falhar."""
+# ---------------------------------------------------------------------------
+# Servir arquivo
+# ---------------------------------------------------------------------------
+
+def _buscar_registro_por_hash(arquivo_hash: str):
+    """Retorna (registro, tipo) procurando em escrita e depois desenho; Http404 se não achar."""
+    registro = RegistroEscrita.objects.filter(arquivo_hash=arquivo_hash).first()
+    if registro:
+        return registro, 'escrita'
+    registro = RegistroDesenho.objects.filter(arquivo_hash=arquivo_hash).first()
+    if registro:
+        return registro, 'desenho'
+    raise Http404("Registro não encontrado")
+
+
+def _caminho_local(registro) -> str | None:
+    """Caminho em disco se o arquivo existir localmente (fallback do upload), senão None."""
     path = registro.arquivo_path or ''
+    return path if path and os.path.exists(path) else None
+
+
+def _s3_key(registro, tipo: str) -> str:
+    """Key no S3. Registros de fallback local (``uploads/...``) usam ``<tipo>/<arquivo_nome>``."""
+    path = registro.arquivo_path or ''
+    if not path or path.startswith('uploads/') or os.path.isabs(path):
+        return f"{tipo}/{registro.arquivo_nome}"
+    return path
+
+
+def _bytes_do_registro(registro, tipo: str) -> bytes | None:
+    """Bytes do arquivo do registro (disco local ou S3). None se falhar."""
     try:
-        if path and (os.path.isabs(path) or os.path.exists(path)):
-            with open(path, 'rb') as f:
+        local = _caminho_local(registro)
+        if local:
+            with open(local, 'rb') as f:
                 return f.read()
-        s3_key = path
-        if not s3_key or s3_key.startswith('uploads/'):
-            s3_key = f"{tipo}/{registro.arquivo_nome}"
-        url = generate_presigned_url(s3_key)
+        url = generate_presigned_url(_s3_key(registro, tipo))
         if not url:
             return None
         resposta = httpx.get(url, timeout=15.0, follow_redirects=True)
@@ -318,7 +335,7 @@ def _bytes_do_registro(registro, tipo):
     return None
 
 
-def _aplicar_rotacao(content: bytes, graus: int):
+def _aplicar_rotacao(content: bytes, graus: int) -> bytes | None:
     """Gira a imagem em `graus` (positivo = anti-horário/esquerda, convenção do
     Pillow) APÓS normalizar o EXIF. Retorna JPEG ou None se falhar."""
     try:
@@ -345,56 +362,37 @@ def servir_arquivo(request, arquivo_hash):
     quadro de "Análise de Produções" do relatório para fotos paisagem — regra:
     girar 90° à esquerda na exibição; o arquivo salvo não é alterado).
     """
-    try:
-        registro = None
-        tipo = None
-        try:
-            registro = RegistroEscrita.objects.get(arquivo_hash=arquivo_hash)
-            tipo = 'escrita'
-        except RegistroEscrita.DoesNotExist:
-            try:
-                registro = RegistroDesenho.objects.get(arquivo_hash=arquivo_hash)
-                tipo = 'desenho'
-            except RegistroDesenho.DoesNotExist:
-                raise Http404("Registro não encontrado")
+    registro, tipo = _buscar_registro_por_hash(arquivo_hash)
 
+    try:
         rot = request.GET.get('rot', '')
         if rot in ('90', '180', '270'):
             conteudo = _bytes_do_registro(registro, tipo)
-            if conteudo:
-                girada = _aplicar_rotacao(conteudo, int(rot))
-                if girada is not None:
-                    resposta = HttpResponse(girada, content_type='image/jpeg')
-                    resposta['Cache-Control'] = 'private, max-age=3600'
-                    resposta['X-Content-Type-Options'] = 'nosniff'
-                    return resposta
+            girada = _aplicar_rotacao(conteudo, int(rot)) if conteudo else None
+            if girada is not None:
+                resposta = HttpResponse(girada, content_type='image/jpeg')
+                resposta['Cache-Control'] = 'private, max-age=3600'
+                resposta['X-Content-Type-Options'] = 'nosniff'
+                return resposta
             # Falhou a rotação: cai no fluxo normal (imagem original).
 
-        arquivo_path = registro.arquivo_path
+        local = _caminho_local(registro)
+        if local:
+            response = FileResponse(
+                open(local, 'rb'),
+                content_type=registro.tipo_arquivo or 'application/octet-stream',
+            )
+            response['Content-Disposition'] = f'inline; filename="{registro.arquivo_nome}"'
+            response['X-Content-Type-Options'] = 'nosniff'
+            return response
 
-        if not os.path.isabs(arquivo_path) and not os.path.exists(arquivo_path):
-            s3_key = arquivo_path
-            if arquivo_path.startswith('uploads/'):
-                s3_key = f"{tipo}/{registro.arquivo_nome}"
-
-            url = generate_presigned_url(s3_key)
-            if url:
-                return redirect(url)
-            raise Http404("Arquivo não encontrado no S3")
-
-        from django.http import FileResponse
-        response = FileResponse(
-            open(arquivo_path, 'rb'),
-            content_type=registro.tipo_arquivo or 'application/octet-stream',
-        )
-        response['Content-Disposition'] = f'inline; filename="{registro.arquivo_nome}"'
-        response['X-Content-Type-Options'] = 'nosniff'
-        return response
+        url = generate_presigned_url(_s3_key(registro, tipo))
+        if url:
+            return redirect(url)
+        raise Http404("Arquivo não encontrado no S3")
 
     except Http404:
         raise
-    except Exception as e:
-        return Response(
-            {'error': 'Erro ao servir arquivo', 'details': str(e)},
-            status=status.HTTP_500_INTERNAL_SERVER_ERROR,
-        )
+    except Exception:
+        logger.exception("Erro ao servir arquivo %s", arquivo_hash)
+        return _erro('Erro ao servir arquivo', status.HTTP_500_INTERNAL_SERVER_ERROR)
