@@ -12,7 +12,7 @@ from .models import (
     RegistroEscrita, RegistroDesenho, RegistroLeitura,
     CampoPedagogico, HabilidadeBNCC, Pergunta, PerguntaEspecialista,
     RegistroObservacao, ObservacaoTranscricao,
-    PlanejamentoSemanal, PlanejamentoDiario, PlanejamentoHabilidade,
+    PlanejamentoSemanal,
     PeriodoAvaliativo, RelatorioTemplate, Relatorio,
     Notificacao, MetaPAEE, SessaoEspecialista, SessaoPAEEMeta, TarefaPAEE,
     Ticket, RespostaTicket, AnexoTicket, LogAuditoria, PermissaoUsuario,
@@ -377,31 +377,6 @@ class PlanejamentoSemanalSerializer(serializers.ModelSerializer):
         read_only_fields = [
             'id', 'turma', 'professor', 'escola', 'instituicao', 'criado_em', 'atualizado_em',
         ]
-
-
-class PlanejamentoDiarioSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = PlanejamentoDiario
-        fields = [
-            'id', 'dia_semana', 'data', 'atividades_propostas', 'prompt_ia',
-            'arquivo_nome_original', 'arquivo_content_type',
-            'planejamento_semanal', 'escola', 'instituicao', 'criado_em', 'atualizado_em',
-        ]
-        read_only_fields = [
-            'id', 'planejamento_semanal', 'escola', 'instituicao', 'criado_em', 'atualizado_em',
-        ]
-
-
-class PlanejamentoHabilidadeSerializer(serializers.ModelSerializer):
-    habilidade_codigo = serializers.CharField(source='habilidade_bncc.codigo', read_only=True)
-
-    class Meta:
-        model = PlanejamentoHabilidade
-        fields = [
-            'id', 'observacao_habilidade', 'habilidade_bncc', 'habilidade_codigo',
-            'planejamento_diario', 'criado_em', 'atualizado_em',
-        ]
-        read_only_fields = ['id', 'planejamento_diario', 'criado_em', 'atualizado_em']
 
 
 class PeriodoAvaliativoSerializer(serializers.ModelSerializer):

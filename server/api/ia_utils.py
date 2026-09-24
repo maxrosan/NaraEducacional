@@ -2,8 +2,13 @@
 Utilitários genéricos usados pelos endpoints que envolvem IA e upload de
 arquivo (planejamento, análise de produção, leitura, etc.).
 
-Extraído do antigo views_legacy.py — são funções puras, sem dependência de
-nenhum model específico, então não precisam de adaptação pro schema novo.
+Fonte única destas funções: a cópia antiga em views_legacy.py foi removida.
+Esta versão corrige a legada em três pontos — não reintroduzir aquelas:
+  * run_with_timeout propaga o ContextVar do tenant para a thread (sem isso
+    as queries feitas dentro dela saíam sem filtro de escola/instituição);
+  * gerar_nome_arquivo_seguro não põe o nome da criança na chave do storage
+    (LGPD) e usa `secrets`, não md5 de dados previsíveis;
+  * check_rate_limit conta por usuário, não por IP compartilhado da escola.
 """
 
 import contextvars

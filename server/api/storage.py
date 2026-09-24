@@ -1,13 +1,18 @@
+import logging
 import os
 from typing import Optional, Tuple
 
 import boto3
 from botocore.exceptions import BotoCoreError, ClientError
 
-from PIL import Image
-import io
+# Efeito colateral GLOBAL, intencional: ensina o Pillow a abrir HEIC/HEIF
+# (fotos de iPhone) no processo inteiro. relatorio_pdf.py e a rotação de
+# imagens em views/analise_producao.py dependem disto e não registram por conta
+# própria. Não remover sem mover o registro para ApiConfig.ready().
 import pillow_heif
 pillow_heif.register_heif_opener()
+
+logger = logging.getLogger(__name__)
 
 def is_s3_configured() -> bool:
     """
@@ -53,7 +58,7 @@ def generate_presigned_url(key: str, expires_in_seconds: int = 3600) -> Optional
             ExpiresIn=expires_in_seconds,
         )
     except (BotoCoreError, ClientError) as error:
-        print(f"[S3] Falha ao gerar URL pré-assinada: {error}")
+        logger.warning("[S3] Falha ao gerar URL pré-assinada: %s", error)
         return None
 
 
@@ -140,7 +145,7 @@ def upload_bytes_to_storage(
             raise RuntimeError("Falha ao gerar URL pré-assinada após upload.")
         return normalized_key, url
     except (BotoCoreError, ClientError) as error:
-        print(f"[S3] Falha ao fazer upload para S3: {error}")
+        logger.error("[S3] Falha ao fazer upload: %s", error)
         raise RuntimeError(f"Erro ao enviar arquivo para o servidor: {error}") from error
 
 def get_logo_url(instituicao) -> Optional[str]:
@@ -238,10 +243,10 @@ def copy_within_storage(
         code = (error.response.get("Error") or {}).get("Code", "")
         if code in ("NoSuchKey", "404"):
             raise FileNotFoundError(src_key) from error
-        print(f"[S3] Falha ao copiar {src_key} -> {dst_key}: {error}")
+        logger.error("[S3] Falha ao copiar %s -> %s: %s", src_key, dst_key, error)
         raise RuntimeError(f"Erro ao copiar arquivo no servidor: {error}") from error
     except BotoCoreError as error:
-        print(f"[S3] Falha ao copiar {src_key} -> {dst_key}: {error}")
+        logger.error("[S3] Falha ao copiar %s -> %s: %s", src_key, dst_key, error)
         raise RuntimeError(f"Erro ao copiar arquivo no servidor: {error}") from error
 
 
@@ -308,38 +313,12 @@ def delete_from_s3(key: str) -> bool:
     try:
         client = _get_s3_client()
         client.delete_object(Bucket=bucket, Key=key.lstrip("/"))
-        print(f"[S3] Objeto deletado: {key}")
+        logger.info("[S3] Objeto deletado: %s", key)
         return True
     except (BotoCoreError, ClientError) as error:
-        print(f"[S3] Falha ao deletar do S3: {error}")
+        logger.error("[S3] Falha ao deletar: %s", error)
         return False
     
-def compress_image(content: bytes, max_dimension: int = 800, quality: int = 80) -> Tuple[bytes, str]:
-    """
-    Redimensiona e comprime uma imagem antes do upload.
-
-    Retorna (bytes_comprimidos, content_type). Sempre converte para JPEG
-    (menor tamanho que PNG para fotos), removendo transparência se houver.
-    """
-    image = Image.open(io.BytesIO(content))
-
-    # Remove transparência (RGBA/P) convertendo para RGB com fundo branco,
-    # já que JPEG não suporta canal alpha.
-    if image.mode in ('RGBA', 'P', 'LA'):
-        background = Image.new('RGB', image.size, (255, 255, 255))
-        image = image.convert('RGBA')
-        background.paste(image, mask=image.split()[-1])
-        image = background
-    elif image.mode != 'RGB':
-        image = image.convert('RGB')
-
-    # Redimensiona mantendo proporção, só se for maior que o limite.
-    image.thumbnail((max_dimension, max_dimension), Image.LANCZOS)
-
-    buffer = io.BytesIO()
-    image.save(buffer, format='JPEG', quality=quality, optimize=True)
-    return buffer.getvalue(), 'image/jpeg'
-
 def get_foto_url(aluno) -> Optional[str]:
     """
     Devolve uma URL válida para a foto da criança, regenerando a presigned

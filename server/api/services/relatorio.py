@@ -4,7 +4,6 @@ import json
 import re
 import datetime
 import logging
-import traceback
 from datetime import timedelta
 from collections import Counter
 from pathlib import Path
@@ -14,10 +13,13 @@ from django.utils import timezone
 from django.utils.dateparse import parse_date
 from django.forms.models import model_to_dict
 
-from api.storage import get_foto_url
+from django.utils.html import escape
+
+from api.storage import get_foto_url, get_logo_url
 
 from api.models import (
     Aluno,
+    Escola,
     Instituicao,
     ObservacaoTranscricao,
     PeriodoAvaliativo,
@@ -31,7 +33,7 @@ from api.models import (
     RelatorioTemplate,
 )
 from api.openai_client import get_openai_client
-from api.storage import delete_from_s3, refresh_presigned_url
+from api.storage import delete_from_storage, refresh_presigned_url
 
 from api.services.openai_usage import registrar_uso_openai
 from api.services.prompt_resolver import resolver_prompt
@@ -141,7 +143,7 @@ def _gerar_com_guarda_idioma(
     if not _contem_script_estranho(texto):
         return texto
 
-    print(f"{log_prefix} Vazamento de idioma detectado na resposta; tentando novamente com reforço de instrução.")
+    logger.warning("%s Vazamento de idioma detectado; tentando novamente com reforço de instrução.", log_prefix)
     mensagens_reforcadas = [dict(m) for m in messages]
     mensagens_reforcadas[0] = {
         **mensagens_reforcadas[0],
@@ -156,7 +158,7 @@ def _gerar_com_guarda_idioma(
     if not _contem_script_estranho(texto_retry):
         return texto_retry
 
-    print(f"{log_prefix} Vazamento de idioma persistiu após nova tentativa; removendo caracteres estranhos como última rede de segurança.")
+    logger.warning("%s Vazamento de idioma persistiu; removendo caracteres estranhos.", log_prefix)
     return _remover_script_estranho(texto_retry)
 
 def _normalizar_elementos(template):
@@ -518,21 +520,22 @@ def _gerar_secao_atividades(info_crianca, periodo, nome_crianca, usuario=None, c
 
     try:
         turma_id = info_crianca.get('turma_id')
-        print(f"[PLANEJAMENTOS] Turma ID da criança: {turma_id}")
+        logger.debug("[PLANEJAMENTOS] turma_id=%s", turma_id)
 
         if turma_id:
             inicio_periodo, fim_periodo = _calcular_datas_periodo(periodo)
-            print(f"[PLANEJAMENTOS] Período de busca: {inicio_periodo} a {fim_periodo}")
+            logger.debug("[PLANEJAMENTOS] período de busca: %s a %s", inicio_periodo, fim_periodo)
 
             planejamentos = PlanejamentoSemanal.objects.filter(
                 turma_id=turma_id,
                 semana_inicio__gte=inicio_periodo,
                 semana_inicio__lte=fim_periodo,
             ).order_by('semana_inicio')
+            planejamentos = list(planejamentos)
 
-            print(f"[PLANEJAMENTOS] Encontrados {planejamentos.count()} planejamentos")
+            logger.debug("[PLANEJAMENTOS] encontrados %d planejamentos", len(planejamentos))
 
-            if planejamentos.exists():
+            if planejamentos:
                 o_que_vivemos_juntos += "ATIVIDADES E EXPERIÊNCIAS DESENVOLVIDAS:\n\n"
 
                 for planejamento in planejamentos:
@@ -553,24 +556,23 @@ def _gerar_secao_atividades(info_crianca, periodo, nome_crianca, usuario=None, c
                     o_que_vivemos_juntos += "\n"
                     tem_atividade = True
 
-                print(f"[RELATÓRIO] Adicionados {planejamentos.count()} planejamentos semanais ao relatório")
+                logger.debug("[RELATÓRIO] %d planejamentos semanais adicionados", len(planejamentos))
             else:
-                print("[PLANEJAMENTOS] Nenhum planejamento encontrado - usando texto padrão")
+                logger.debug("[PLANEJAMENTOS] nenhum planejamento no período; usando texto padrão")
                 o_que_vivemos_juntos = "Neste período, desenvolvemos diversas atividades pedagógicas focadas no desenvolvimento integral da criança.\n\n"
         else:
-            print("[PLANEJAMENTOS] Turma ID não encontrada - usando texto padrão")
+            logger.debug("[PLANEJAMENTOS] aluno sem turma; usando texto padrão")
             o_que_vivemos_juntos = "Atividades desenvolvidas conforme planejamento pedagógico da turma.\n\n"
 
-    except Exception as e:
-        print(f"[ERRO] Erro ao buscar planejamentos para o relatório: {str(e)}")
-        traceback.print_exc()
+    except Exception:
+        logger.exception("Erro ao buscar planejamentos para o relatório.")
         o_que_vivemos_juntos = "Diversas experiências de aprendizagem foram vivenciadas durante este período.\n\n"
 
     if not tem_atividade:
         return f"<p>{o_que_vivemos_juntos}</p>" if o_que_vivemos_juntos else ""
 
     try:
-        print(f"[OPENAI] Enviando prompt para análise de {nome_crianca}")
+        logger.debug("[OPENAI] enviando prompt da seção de atividades")
         turma_nome = info_crianca.get('turma_nome', 'Não informado')
         idade = info_crianca.get('idade', 'Não informada')
 
@@ -612,13 +614,13 @@ def _gerar_secao_atividades(info_crianca, periodo, nome_crianca, usuario=None, c
         if not texto:
             raise ValueError("Resposta JSON sem campo 'texto'.")
 
-        print(f"[OPENAI] Narrativa validada com {len(texto)} caracteres.")
+        logger.debug("[OPENAI] narrativa validada (%d caracteres)", len(texto))
         return texto
     except RuntimeError as openai_config_error:
-        print(f"[OPENAI ERROR] Configuração ausente: {openai_config_error}")
+        logger.error("[OPENAI] configuração ausente: %s", openai_config_error)
         return "<p>A geração automática de narrativa está temporariamente indisponível.</p>"
-    except Exception as openai_error:
-        print(f"[OPENAI ERROR] Falhou ao interpretar: {openai_error}")
+    except Exception:
+        logger.exception("[OPENAI] falha ao gerar a seção de atividades.")
         return f"<p>{o_que_vivemos_juntos}</p>" if o_que_vivemos_juntos else "<p>Diversas experiências de aprendizagem foram vivenciadas durante este período.</p>"
 
 
@@ -627,7 +629,7 @@ def _gerar_secao_relatos(nome_crianca, periodo, info_crianca, usuario=None, clie
     relatos_individuais = buscar_relatos_individuais_crianca(
         nome_crianca, periodo, aluno_id=info_crianca.get('id'),
     )
-    print(f"[RELATOS] Encontrados {len(relatos_individuais)} relatos individuais para {nome_crianca}")
+    logger.debug("[RELATOS] %d relatos individuais encontrados", len(relatos_individuais))
 
     if not relatos_individuais:
         return "<p>Sem relatos para o período.</p>"
@@ -637,7 +639,7 @@ def _gerar_secao_relatos(nome_crianca, periodo, info_crianca, usuario=None, clie
         data_formatada = parse_timestamp_safely(relato.get('data', ''))
         observacoes_texto += f"{i}. {data_formatada} - {relato.get('observacao', '')}\n\n"
 
-    print(f"[RELATÓRIO] Adicionados {len(relatos_individuais)} relatos individuais ao conteúdo")
+    logger.debug("[RELATÓRIO] %d relatos individuais adicionados", len(relatos_individuais))
 
     turma_nome = info_crianca.get('turma_nome', 'Não informado')
     idade = info_crianca.get('idade', 'Não informada')
@@ -671,12 +673,12 @@ def _gerar_secao_relatos(nome_crianca, periodo, info_crianca, usuario=None, clie
         )
 
         secao_relatos = _strip_code_fences(raw_content)
-        print(f"[OPENAI-RELATOS] Análise recebida com {len(secao_relatos)} caracteres -> " + secao_relatos)
+        logger.debug("[OPENAI-RELATOS] análise recebida (%d caracteres)", len(secao_relatos))
     except RuntimeError as openai_config_error:
-        print(f"[OPENAI-RELATOS] Configuração ausente: {openai_config_error}")
+        logger.error("[OPENAI-RELATOS] configuração ausente: %s", openai_config_error)
         secao_relatos = "<p>A análise automática dos relatos está indisponível.</p>"
-    except Exception as openai_error:
-        print(f"[OPENAI-RELATOS] Erro na chamada da OpenAI: {openai_error}")
+    except Exception:
+        logger.exception("[OPENAI-RELATOS] falha na chamada da OpenAI.")
         secao_relatos = "<p>Não foi possível gerar o relato individual automaticamente neste momento.</p>"
 
     return secao_relatos
@@ -739,7 +741,7 @@ def _gerar_secao_producoes(nome_crianca, aluno_id, periodo=None, usuario=None, c
 
     registros_escrita = list(registros_escrita.order_by('-criado_em'))
     registros_desenho = list(registros_desenho.order_by('-criado_em'))
-    print(f"[PRODUÇÕES] {len(registros_escrita)} escritas e {len(registros_desenho)} desenhos no período para {nome_crianca}")
+    logger.debug("[PRODUÇÕES] %d escritas e %d desenhos no período", len(registros_escrita), len(registros_desenho))
 
     resultado = {
         'escrita': {'texto': None, 'registro_img': None},
@@ -749,7 +751,7 @@ def _gerar_secao_producoes(nome_crianca, aluno_id, periodo=None, usuario=None, c
     }
 
     if not registros_escrita and not registros_desenho:
-        print(f"[PRODUÇÕES] Nenhuma produção encontrada para {nome_crianca}")
+        logger.debug("[PRODUÇÕES] nenhuma produção no período")
         resultado['fallback_texto'] = "<p>Sem produções registradas para o período.</p>"
         resultado['texto_conclusao'] = resultado['fallback_texto']
         return resultado
@@ -800,7 +802,7 @@ def _gerar_secao_producoes(nome_crianca, aluno_id, periodo=None, usuario=None, c
         )
 
         bruto = _strip_code_fences(raw_content)
-        print(f"[OPENAI-PRODUCOES] Análise recebida com {len(bruto)} caracteres -> " + bruto)
+        logger.debug("[OPENAI-PRODUCOES] análise recebida (%d caracteres)", len(bruto))
         try:
             dados = json.loads(bruto)
             resultado['escrita']['texto'] = (dados.get('analise_escrita') or '').strip() or None
@@ -809,13 +811,13 @@ def _gerar_secao_producoes(nome_crianca, aluno_id, periodo=None, usuario=None, c
                 raise ValueError("JSON sem nenhuma análise preenchida")
         except (ValueError, TypeError) as parse_error:
             # Degradação graciosa: blob único na página antiga.
-            print(f"[PRODUÇÕES] Resposta fora do schema ({parse_error}); usando fallback de página única.")
+            logger.warning("[PRODUÇÕES] resposta fora do schema (%s); usando fallback de página única.", parse_error)
             resultado['fallback_texto'] = bruto
     except RuntimeError as openai_config_error:
-        print(f"[OPENAI ERROR] Configuração ausente para produções: {openai_config_error}")
+        logger.error("[OPENAI] configuração ausente para produções: %s", openai_config_error)
         resultado['fallback_texto'] = "<p>Não foi possível gerar a análise das produções.</p>"
-    except Exception as openai_error:
-        print(f"[OPENAI ERROR] Falhou em analisar as produções: {openai_error}")
+    except Exception:
+        logger.exception("[OPENAI] falha ao analisar as produções.")
         resultado['fallback_texto'] = "<p>Não foi possível gerar a análise das produções.</p>"
 
     # ── Quadros: produção mais recente com imagem de cada modalidade
@@ -998,17 +1000,72 @@ def _gerar_secao_conclusao(
         )
 
         secao_conclusao = _strip_code_fences(raw_content)
-        print(f"[OPENAI-CONCLUSAO] Análise recebida com {len(secao_conclusao)} caracteres -> " + secao_conclusao)
+        logger.debug("[OPENAI-CONCLUSAO] análise recebida (%d caracteres)", len(secao_conclusao))
         # Remove assinatura/despedida que a IA ainda possa ter emitido...
         secao_conclusao = _ASSINATURA_IA_RE.sub("", secao_conclusao).rstrip()
         # ...e anexa o bloco fixo, estilizado pelo CSS do relatório.
         return secao_conclusao + _montar_assinatura_html(nome_professora)
     except RuntimeError as openai_config_error:
-        print(f"[OPENAI ERROR] Configuração ausente para conclusão: {openai_config_error}")
+        logger.error("[OPENAI] configuração ausente para conclusão: %s", openai_config_error)
         return "<p>Não foi possível gerar a conclusão.</p>" + _montar_assinatura_html(nome_professora)
-    except Exception as openai_error:
-        print(f"[OPENAI ERROR] Falhou em gerar a conclusão: {openai_error}")
+    except Exception:
+        logger.exception("[OPENAI] falha ao gerar a conclusão.")
         return ""
+
+
+def _dados_cabecalho(info_crianca) -> dict:
+    """Dados do cabeçalho/capa do relatório: nome, CNPJ, contato e logo.
+
+    Texto vem da ESCOLA do aluno (a unidade), com fallback campo a campo para a
+    INSTITUIÇÃO (a mantenedora) quando a escola não tem o dado preenchido.
+    O logo só existe na instituição e passa por `get_logo_url`, que renova a
+    URL pré-assinada do S3 — `logo_url` salvo no banco expira em ~1h.
+
+    Tudo sai escapado: estes valores entram em HTML que o Chromium do
+    report_generator renderiza.
+    """
+    vazio = {'escola_nome': '', 'escola_cnpj': '', 'escola_contato': '', 'logo_escola_html': ''}
+
+    escola = None
+    if info_crianca.get('escola_id'):
+        escola = (
+            Escola.objects.select_related('instituicao')
+            .filter(id=info_crianca['escola_id'])
+            .first()
+        )
+    inst = escola.instituicao if escola else None
+    if inst is None and info_crianca.get('instituicao_id'):
+        inst = Instituicao.objects.filter(id=info_crianca['instituicao_id']).first()
+    if escola is None and inst is None:
+        return vazio
+
+    def campo(nome):
+        valor = getattr(escola, nome, '') if escola else ''
+        return valor or (getattr(inst, nome, '') if inst else '') or ''
+
+    nome = campo('nome')
+    cnpj = campo('cnpj')
+    cidade, estado = campo('cidade'), campo('estado')
+
+    partes_contato = []
+    if campo('endereco'):
+        partes_contato.append(escape(campo('endereco')))
+    if cidade:
+        partes_contato.append(escape(f'{cidade} — {estado}' if estado else cidade))
+    if campo('telefone'):
+        partes_contato.append(f"Tel: {escape(campo('telefone'))}")
+
+    logo_html = ''
+    logo_url = get_logo_url(inst) if inst else None
+    if logo_url:
+        logo_html = f'<img src="{escape(logo_url)}" alt="{escape(nome)}">'
+
+    return {
+        'escola_nome': escape(nome),
+        'escola_cnpj': f'CNPJ: {escape(cnpj)}' if cnpj else '',
+        'escola_contato': ' | '.join(partes_contato),
+        'logo_escola_html': logo_html,
+    }
 
 
 def gerar_relatorio_com_ia(nome_crianca, dados_estudante, periodo, crianca_id, nome_professora='Professora', usuario=None):
@@ -1047,12 +1104,25 @@ def gerar_relatorio_com_ia(nome_crianca, dados_estudante, periodo, crianca_id, n
     instituicao_id = str(inst_aluno or inst_usuario) if (inst_aluno or inst_usuario) else None
     cliente_id = instituicao_id
 
+    # RelatorioTemplate pertence a uma ESCOLA (unique escola+modelo). Filtrar só
+    # por instituição devolvia o template ativo de qualquer escola da rede —
+    # para um admin, o aluno da escola B podia sair com a capa da escola A.
     template_ativo = None
-    if instituicao_id:
-        template_ativo = RelatorioTemplate.objects.filter(
-            instituicao_id=instituicao_id,
-            ativo=True,
-        ).first()
+    escola_id_aluno = info_crianca.get('escola_id')
+    if escola_id_aluno:
+        template_ativo = (
+            RelatorioTemplate.objects
+            .filter(escola_id=escola_id_aluno, ativo=True)
+            .order_by('-atualizado_em')
+            .first()
+        )
+    elif instituicao_id:
+        template_ativo = (
+            RelatorioTemplate.objects
+            .filter(instituicao_id=instituicao_id, ativo=True)
+            .order_by('-atualizado_em')
+            .first()
+        )
     items_sumario = _normalizar_items_sumario(template_ativo)
     elementos = _normalizar_elementos(template_ativo)
 
@@ -1106,30 +1176,11 @@ def gerar_relatorio_com_ia(nome_crianca, dados_estudante, periodo, crianca_id, n
     secao_portfolio = _formatar_secao_portfolio_html(dados_estudante.get('producoes', []))
     data_geracao = timezone.now().strftime('%d/%m/%Y')
 
-    # Dados da instituição para o cabeçalho do relatório — CNPJ e
-    # contato (endereço/cidade/telefone) separados, pra cada um poder
-    # ser ligado/desligado independentemente pelo template.
-    escola_nome = ''
-    escola_cnpj = ''
-    escola_contato = ''
-    logo_escola_html = ''
-    inst_id_crianca = info_crianca.get('instituicao_id')
-    if inst_id_crianca:
-        inst = Instituicao.objects.filter(id=inst_id_crianca).first()
-        if inst:
-            escola_nome = inst.nome or ''
-            if inst.cnpj:
-                escola_cnpj = f'CNPJ: {inst.cnpj}'
-            partes_contato = []
-            if inst.endereco:
-                partes_contato.append(inst.endereco)
-            if inst.cidade:
-                partes_contato.append(f'{inst.cidade} — {inst.estado}' if inst.estado else inst.cidade)
-            if inst.telefone:
-                partes_contato.append(f'Tel: {inst.telefone}')
-            escola_contato = ' | '.join(partes_contato)
-            if inst.logo_url:
-                logo_escola_html = f'<img src="{inst.logo_url}" alt="{inst.nome}">'
+    cabecalho = _dados_cabecalho(info_crianca)
+    escola_nome = cabecalho['escola_nome']
+    escola_cnpj = cabecalho['escola_cnpj']
+    escola_contato = cabecalho['escola_contato']
+    logo_escola_html = cabecalho['logo_escola_html']
 
     # ── Páginas montadas aqui, e não no template, para que páginas ocultadas
     # pelo coordenador (items_sumario) simplesmente não existam no relatório. ──
@@ -1299,7 +1350,7 @@ def deletar_relatorio(relatorio_id):
         return {'success': False, 'error': 'Relatório não encontrado'}
 
     if relatorio.pdf_storage_key:
-        delete_from_s3(relatorio.pdf_storage_key)
+        delete_from_storage(relatorio.pdf_storage_key)
 
     relatorio.delete()
     logger.info("Relatório deletado.", extra={"relatorio_id": str(relatorio_id)})

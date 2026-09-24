@@ -17,21 +17,18 @@ import json
 import logging
 import os
 import re
-import time
 from datetime import date
 from pathlib import Path
-from typing import Any, Optional
+from typing import Optional
 from uuid import uuid4
 
-from django.db.models import Q
-
 from api.models import HabilidadeBNCC
+from api.ia_utils import _get_int_env
 from api.openai_client import get_openai_client
 from api.storage import (
     delete_from_s3,
     generate_presigned_url,
     is_s3_configured,
-    refresh_presigned_url,
     upload_bytes_to_storage,
 )
 from api.services.prompt_resolver import resolver_prompt
@@ -74,11 +71,10 @@ ALLOWED_PLANEJAMENTO_MIME_TYPES = {
 ALLOWED_PLANEJAMENTO_EXTENSIONS = {".pdf", ".doc", ".docx"}
 
 
-def _get_int_env(var_name: str, default: int) -> int:
-    try:
-        return int(os.getenv(var_name, default))
-    except (TypeError, ValueError):
-        return int(default)
+def _dir_upload_local() -> Path:
+    """Pasta do fallback local (sem S3). Upload, URL e remoção usam a MESMA —
+    antes a remoção ignorava PLANEJAMENTO_UPLOAD_DIR e apagava em "uploads/"."""
+    return Path(os.getenv("PLANEJAMENTO_UPLOAD_DIR", "uploads"))
 
 
 MAX_PLANEJAMENTO_SIZE_BYTES = (
@@ -256,7 +252,7 @@ def salvar_arquivo_planejamento(
         )
     else:
         storage_key = key
-        base_dir = Path(os.getenv("PLANEJAMENTO_UPLOAD_DIR", "uploads"))
+        base_dir = _dir_upload_local()
         destino = base_dir / key
         destino.parent.mkdir(parents=True, exist_ok=True)
         with destino.open("wb") as fh:
@@ -278,7 +274,7 @@ def regenerar_url_arquivo(storage_key: Optional[str]) -> Optional[str]:
     if not storage_key:
         return None
     if not is_s3_configured():
-        return f"/{Path('uploads') / storage_key}".replace("\\", "/")
+        return f"/{(_dir_upload_local() / storage_key).as_posix()}"
     return generate_presigned_url(storage_key)
 
 
@@ -289,7 +285,7 @@ def remover_arquivo_planejamento(storage_key: Optional[str]) -> None:
         delete_from_s3(storage_key)
         return
     try:
-        caminho = Path("uploads") / storage_key
+        caminho = _dir_upload_local() / storage_key
         if caminho.exists():
             caminho.unlink()
     except Exception as exc:

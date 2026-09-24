@@ -121,7 +121,9 @@ INSTALLED_APPS = [
 ]
 
 MIDDLEWARE = [
-    'api.middleware.PlanejamentoCorsMiddleware',  # Middleware customizado para planejamento
+    # CORS inteiramente pelo django-cors-headers (CORS_ALLOWED_ORIGINS abaixo).
+    # Havia um PlanejamentoCorsMiddleware antes deste que refletia QUALQUER
+    # Origin com Allow-Credentials nas rotas de planejamento, atropelando a lista.
     'corsheaders.middleware.CorsMiddleware',
     'django.middleware.security.SecurityMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
@@ -337,14 +339,14 @@ CORS_ALLOWED_ORIGINS = [
     "https://nara.edunuvem.com",
     "http://naraback.edunuvem.com",
     "https://naraback.edunuvem.com",
-    "http://localhost:5178",      # Adicione esta linha
-    "http://127.0.0.1:5178",      # Adicione esta linha
+    "http://localhost:5178",
+    "http://127.0.0.1:5178",
 ]
 extra_cors_allowed_origins = _split_env_list(os.getenv("DJANGO_CORS_ALLOWED_ORIGINS", ""))
 if extra_cors_allowed_origins:
     CORS_ALLOWED_ORIGINS = list(dict.fromkeys(CORS_ALLOWED_ORIGINS + extra_cors_allowed_origins))
 
-CORS_ALLOW_ALL_ORIGINS = False  # Para desenvolvimento
+CORS_ALLOW_ALL_ORIGINS = False  # Nunca True: com credenciais, liberaria a API para qualquer site.
 CORS_ALLOW_CREDENTIALS = True
 
 CORS_ALLOW_HEADERS = [
