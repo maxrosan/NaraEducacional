@@ -8,7 +8,7 @@ from datetime import date
 from api.models import RegistroEscrita, RegistroDesenho
 from api.openai_client import get_openai_client
 from api.storage import upload_bytes_to_storage
-from api.views_legacy import run_with_timeout, IA_REQUEST_TIMEOUT_SECONDS
+from api.ia_utils import run_with_timeout, IA_REQUEST_TIMEOUT_SECONDS
 
 from api.services.fases_producao import (
     FASES_ESCRITA,

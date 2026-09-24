@@ -6,9 +6,14 @@ Extraído do antigo views_legacy.py — são funções puras, sem dependência d
 nenhum model específico, então não precisam de adaptação pro schema novo.
 """
 
+import contextvars
 import os
+import re
+import secrets
+import time
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
 
+from django.core.cache import cache
 from rest_framework import status
 
 
@@ -31,6 +36,9 @@ IA_AUDIO_TIMEOUT_SECONDS = _get_float_env("IA_AUDIO_TIMEOUT_SECONDS", IA_REQUEST
 
 MAX_IMAGE_SIZE_BYTES = _get_int_env("MAX_IMAGE_UPLOAD_MB", 10) * 1024 * 1024
 MAX_AUDIO_SIZE_BYTES = _get_int_env("MAX_AUDIO_UPLOAD_MB", 50) * 1024 * 1024
+
+UPLOAD_RATE_LIMIT = _get_int_env("UPLOAD_RATE_LIMIT_PER_MINUTE", 10)
+UPLOAD_RATE_WINDOW_SECONDS = _get_int_env("UPLOAD_RATE_LIMIT_WINDOW_SECONDS", 60)
 
 ALLOWED_IMAGE_MIME_TYPES = {
     "image/jpeg", "image/png", "image/webp", "image/jpg", "image/heic", "image/heif",
@@ -73,8 +81,14 @@ THREAD_POOL = ThreadPoolExecutor(max_workers=4)
 
 
 def run_with_timeout(func, timeout_seconds, *args, **kwargs):
-    """Executa uma função em thread pool com timeout."""
-    future = THREAD_POOL.submit(func, *args, **kwargs)
+    """Executa uma função em thread pool com timeout.
+
+    A função roda numa CÓPIA do contexto atual: ContextVars (em especial o
+    escopo de tenant de `api.tenancy`) não são herdados por threads do pool, e
+    qualquer query feita lá dentro sairia sem filtro de tenant.
+    """
+    ctx = contextvars.copy_context()
+    future = THREAD_POOL.submit(ctx.run, func, *args, **kwargs)
     try:
         return future.result(timeout=timeout_seconds)
     except FuturesTimeoutError:
@@ -104,3 +118,48 @@ def validate_uploaded_file(file_obj, allowed_types, allowed_extensions, max_size
         )
 
     return None
+
+def check_rate_limit(request, prefix: str):
+    """Rate limiting por usuário (ou IP, se anônimo), com janela fixa.
+
+    Retorna ``(permitido, retry_after_segundos)``.
+    """
+    user = getattr(request, "user", None)
+    if user is not None and getattr(user, "is_authenticated", False):
+        identidade = f"u:{user.pk}"
+    else:
+        identidade = f"ip:{request.META.get('REMOTE_ADDR', 'unknown')}"
+    key = f"rl:{prefix}:{identidade}"
+    now = time.time()
+
+    stored = cache.get(key)
+    if stored and now <= stored[1]:
+        count, expires_at = stored
+    else:
+        count, expires_at = 0, now + UPLOAD_RATE_WINDOW_SECONDS
+
+    count += 1
+    cache.set(key, (count, expires_at), timeout=max(int(expires_at - now), 1))
+
+    if count > UPLOAD_RATE_LIMIT:
+        return False, max(int(expires_at - now), 1)
+    return True, None
+
+
+def gerar_nome_arquivo_seguro(nome_aluno, arquivo_original):
+    """Gera ``(nome_do_arquivo, hash)`` para armazenar uma produção.
+
+    O nome NÃO leva o nome da criança (dado pessoal de menor em chave de
+    storage/URL); ``nome_aluno`` é mantido na assinatura por compatibilidade.
+    O hash vem de ``secrets`` — é usado como ``arquivo_hash`` (único) e aparece
+    em URL pública, então não pode ser previsível.
+    """
+    del nome_aluno  # intencionalmente não usado (LGPD)
+    file_hash = secrets.token_hex(8)  # 16 caracteres
+
+    extensao = os.path.splitext(arquivo_original or "")[1].lower()
+    if extensao not in ALLOWED_IMAGE_EXTENSIONS:
+        extensao = ".jpg"
+    extensao = re.sub(r"[^a-z.]", "", extensao)
+
+    return f"{file_hash}_{int(time.time())}{extensao}", file_hash

@@ -1,37 +1,28 @@
 from django.http import HttpResponse
 from django.utils.deprecation import MiddlewareMixin
 
-from .tenancy import set_current_tenant, clear_current_tenant
+from .tenancy import clear_current_tenant, resolver_escopo, set_current_tenant
 
 
 class TenantMiddleware:
+    """Define o escopo para requisições autenticadas por SESSÃO (ex.: Django admin)
+    e SEMPRE limpa o escopo ao fim da requisição.
+
+    Requisições da API com JWT recebem o escopo em
+    `api.authentication.TenantJWTAuthentication`, porque aqui o usuário do JWT
+    ainda não foi identificado.
+    """
+
     def __init__(self, get_response):
         self.get_response = get_response
 
     def __call__(self, request):
-        set_current_tenant(self._resolve_tenant(request))
+        set_current_tenant(resolver_escopo(getattr(request, "user", None)))
         try:
             response = self.get_response(request)
         finally:
             clear_current_tenant()
         return response
-
-    def _resolve_tenant(self, request):
-        user = getattr(request, "user", None)
-        if user is None or not user.is_authenticated:
-            return None
-
-        if user.is_superuser or user.nivel in ('superadmin', 'vendedor', 'suporte'):
-            return None
-
-        if user.nivel == 'admin':
-            if user.instituicao_id is None:
-                return None
-            return ('instituicao', user.instituicao_id)
-
-        if user.escola_id is None:
-            return None
-        return ('escola', user.escola_id)
 
 
 class PlanejamentoCorsMiddleware(MiddlewareMixin):

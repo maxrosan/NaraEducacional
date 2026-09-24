@@ -13,7 +13,7 @@ from rest_framework.response import Response
 from rest_framework import status
 
 from api.throttles import UploadRateThrottle
-from api.views_legacy import (
+from api.ia_utils import (
     validate_uploaded_file,
     ALLOWED_AUDIO_MIME_TYPES,
     ALLOWED_AUDIO_EXTENSIONS,

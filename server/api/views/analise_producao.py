@@ -8,6 +8,7 @@ import os
 import httpx
 from PIL import Image, ImageOps
 
+from django.core.exceptions import ValidationError
 from django.http import FileResponse, Http404, HttpResponse
 from django.shortcuts import redirect
 from rest_framework import status
@@ -18,7 +19,7 @@ from rest_framework.response import Response
 from api.models import Aluno, RegistroDesenho, RegistroEscrita, Turma
 from api.storage import generate_presigned_url
 from api.throttles import UploadRateThrottle
-from api.views_legacy import (
+from api.ia_utils import (
     ALLOWED_IMAGE_EXTENSIONS,
     ALLOWED_IMAGE_MIME_TYPES,
     MAX_IMAGE_SIZE_BYTES,
@@ -84,7 +85,7 @@ def _preparar_upload(request, tipo: str):
         return None, _erro("Campo 'alunoId' é obrigatório.", status.HTTP_400_BAD_REQUEST)
     try:
         aluno = Aluno.objects.select_related('turma').get(id=aluno_id)
-    except (Aluno.DoesNotExist, ValueError, Exception.__class__):
+    except (Aluno.DoesNotExist, ValueError, ValidationError):  # UUID malformado -> ValidationError
         return None, _erro('Aluno não encontrado.', status.HTTP_404_NOT_FOUND)
 
     # Turma: a enviada pelo front (se pertencer à escola do aluno) ou a atual do aluno.
@@ -93,7 +94,7 @@ def _preparar_upload(request, tipo: str):
     if turma_id and str(turma_id) != str(aluno.turma_id):
         try:
             turma = Turma.objects.get(id=turma_id, escola_id=aluno.escola_id)
-        except (Turma.DoesNotExist, ValueError):
+        except (Turma.DoesNotExist, ValueError, ValidationError):
             return None, _erro('Turma não encontrada para este aluno.', status.HTTP_404_NOT_FOUND)
 
     arquivo_nome, file_hash = gerar_nome_arquivo_seguro(aluno.nome_completo, arquivo.name)

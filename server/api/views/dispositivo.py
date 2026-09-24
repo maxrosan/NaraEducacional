@@ -267,7 +267,13 @@ def atualizar_dispositivo(request, dispositivo_id):
                 {'error': 'Professora de outra instituição.', 'codigo': 'outra_instituicao'},
                 status=status.HTTP_403_FORBIDDEN,
             )
+        if not professora.escola_id:
+            return Response(
+                {'error': 'A professora precisa estar vinculada a uma escola.', 'codigo': 'sem_escola'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
         dispositivo.professor = professora
+        dispositivo.escola_id = professora.escola_id
 
     novas_turmas = None
     if 'turma_ids' in request.data:
@@ -281,15 +287,13 @@ def atualizar_dispositivo(request, dispositivo_id):
                 status=status.HTTP_404_NOT_FOUND,
             )
         for turma in novas_turmas:
-            if dispositivo_service.instituicoes_divergem(
-                turma.instituicao_id, dispositivo.instituicao_id,
-            ):
+            if str(turma.escola_id) != str(dispositivo.escola_id):
                 return Response(
-                    {'error': 'Turma de outra instituição.', 'codigo': 'outra_instituicao'},
+                    {'error': 'Turma de outra escola.', 'codigo': 'outra_escola'},
                     status=status.HTTP_403_FORBIDDEN,
                 )
 
-    dispositivo.save(update_fields=['nome', 'professor', 'atualizado_em'])
+    dispositivo.save(update_fields=['nome', 'professor', 'escola', 'atualizado_em'])
     if novas_turmas is not None:
         dispositivo.turmas.set(novas_turmas)
         # Turma ativa fora do novo escopo deixa de valer.
