@@ -14,7 +14,7 @@ from rest_framework import status
 from django.http import HttpResponse, StreamingHttpResponse
 from django.utils import timezone
 
-from api.models import Crianca, PeriodoAvaliativo, Relatorio, Turma
+from api.models import Aluno, PeriodoAvaliativo, Relatorio
 from api.services.pdf_renderer import (
     RendererBusy,
     RendererError,
@@ -103,7 +103,7 @@ def gerar_relatorio_por_crianca(request, crianca_id):
     Aceita periodo_id no body; se ausente, usa o período corrente da instituição.
     """
     try:
-        crianca = Crianca.objects.filter(id=crianca_id).first()
+        crianca = Aluno.objects.filter(id=crianca_id).first()
         if not crianca:
             return Response(
                 {'error': 'Criança não encontrada'},
@@ -518,7 +518,7 @@ def listar_relatorios_coordenacao(request):
     """Lista PAGINADA de relatórios para a coordenação (lazy loading).
 
     Faz a paginação no servidor (limit/offset), a ordenação (por padrão
-    `-data_criacao`) e os filtros (`instituicao_id`, `turma_id`, `status`
+    `-criado_em`) e os filtros (`instituicao_id`, `turma_id`, `status`
     fin/pend) — para escolas com milhares de relatórios não trafegarem a lista
     inteira. Nunca carrega `conteudo`: o flag `finalizado` vem de
     LENGTH(SUBSTRING(conteudo,1,51)) > 50 (mesmo critério das demais listas).
@@ -538,7 +538,8 @@ def listar_relatorios_coordenacao(request):
     instituicao_id = request.GET.get('instituicao_id')
     turma_id = request.GET.get('turma_id')
     status_f = (request.GET.get('status') or 'all').lower()
-    ordering = request.GET.get('ordering') or '-data_criacao'
+    # `data_criacao` é o nome antigo, aceito por compatibilidade com o frontend.
+    ordering = (request.GET.get('ordering') or '-criado_em').replace('data_criacao', 'criado_em')
 
     try:
         limit = max(1, min(int(request.GET.get('limit', 25)), 100))
@@ -576,16 +577,13 @@ def listar_relatorios_coordenacao(request):
 
     if recorte:
         qs = qs.filter(
-            data_criacao__date__gte=recorte.data_inicio,
-            data_criacao__date__lte=recorte.data_fim,
+            criado_em__date__gte=recorte.data_inicio,
+            criado_em__date__lte=recorte.data_fim,
         )
 
-    # Filtro por turma: relatórios das crianças daquela turma.
+    # Filtro por turma: relatórios dos alunos daquela turma.
     if turma_id:
-        crianca_ids_turma = list(
-            Crianca.objects.filter(turma_id=turma_id).values_list('id', flat=True)
-        )
-        qs = qs.filter(id_crianca__in=crianca_ids_turma)
+        qs = qs.filter(aluno__turma_id=turma_id)
 
     # Filtro por status (finalizado = conteúdo com mais de 50 chars).
     if status_f in ('fin', 'finalizado', 'finalizados'):
@@ -595,47 +593,42 @@ def listar_relatorios_coordenacao(request):
 
     # Ordenação restrita a campos seguros (evita FieldError de aliases).
     campo = ordering.lstrip('-')
-    if campo not in ('data_criacao', 'periodo'):
-        ordering = '-data_criacao'
-    qs = qs.order_by(ordering, '-data_criacao')
+    if campo not in ('criado_em', 'periodo'):
+        ordering = '-criado_em'
+    qs = qs.order_by(ordering, '-criado_em')
 
     total = qs.count()
-    pagina = list(qs[offset:offset + limit])
+    pagina = list(qs.select_related('revisado_por')[offset:offset + limit])
 
-    # Enriquecimento só da página corrente (nomes de criança e turma).
-    crianca_ids = [r.id_crianca for r in pagina]
-    criancas = {
-        str(c.id): c
-        for c in Crianca.objects.filter(id__in=crianca_ids).only(
-            'id', 'nome_completo', 'turma_id'
-        )
-    }
-    turma_ids = {str(c.turma_id) for c in criancas.values() if c.turma_id}
-    turmas = {
-        str(t.id): t.nome
-        for t in Turma.objects.filter(id__in=list(turma_ids)).only('id', 'nome')
+    # Enriquecimento só da página corrente (nomes de aluno e turma).
+    alunos = {
+        str(a.id): a
+        for a in Aluno.objects.filter(id__in=[r.aluno_id for r in pagina])
+        .select_related('turma').only('id', 'nome_completo', 'turma_id', 'turma__nome')
     }
 
     results = []
     for r in pagina:
-        c = criancas.get(str(r.id_crianca))
-        turma_id_c = str(c.turma_id) if (c and c.turma_id) else None
+        a = alunos.get(str(r.aluno_id))
+        turma = a.turma if (a and a.turma_id) else None
         results.append({
             'id': str(r.id),
-            'id_crianca': str(r.id_crianca),
-            'crianca_nome': c.nome_completo if c else None,
-            'turma_id': turma_id_c,
-            'turma_nome': turmas.get(turma_id_c) if turma_id_c else None,
+            # Chaves antigas mantidas para o frontend (id_crianca/crianca_nome/data_criacao).
+            'id_crianca': str(r.aluno_id),
+            'crianca_nome': a.nome_completo if a else None,
+            'turma_id': str(turma.id) if turma else None,
+            'turma_nome': turma.nome if turma else None,
             'periodo': r.periodo,
-            'data_criacao': r.data_criacao.isoformat() if r.data_criacao else None,
+            'data_criacao': r.criado_em.isoformat() if r.criado_em else None,
             'finalizado': (r.conteudo_length or 0) > 50,
-            'revisado_por': str(r.revisado_por) if r.revisado_por else None,
+            'revisado_por': str(r.revisado_por) if r.revisado_por_id else None,
         })
 
     return Response({'count': total, 'results': results}, status=status.HTTP_200_OK)
 
 
 @api_view(['GET'])
+@permission_classes([IsAuthenticated])
 def detalhe_relatorio(request, relatorio_id):
     """Retorna detalhes de um relatório específico.
 

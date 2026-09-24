@@ -1,12 +1,12 @@
-"""Endpoints de RegistroEscrita, RegistroDesenho e RegistroLeitura."""
+"""Endpoints de RegistroEscrita e RegistroDesenho (RegistroLeitura fica em views/leitura.py)."""
 
 from rest_framework import status
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
-from api.models import RegistroEscrita, RegistroDesenho, RegistroLeitura, Aluno, UsuarioTurma
-from api.serializers import RegistroEscritaSerializer, RegistroDesenhoSerializer, RegistroLeituraSerializer
+from api.models import RegistroEscrita, RegistroDesenho, Aluno, UsuarioTurma
+from api.serializers import RegistroEscritaSerializer, RegistroDesenhoSerializer
 
 
 def _is_superadmin(user):

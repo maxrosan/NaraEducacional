@@ -1475,6 +1475,9 @@ class AudioDispositivo(models.Model):
                 'mensagem': f'{len(self.nomes_nao_identificados)} nome(s) não reconhecido(s) na gravação.',
             }
         return {'sinal': 'ok', 'mensagem': 'Áudio processado com sucesso.'}
+
+
+class PromptCategoria(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     titulo = models.CharField(max_length=200)
     ativo = models.BooleanField(default=True)

@@ -30,7 +30,6 @@ from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.throttling import AnonRateThrottle
 
-from django.conf import settings
 from django.db.models import Count
 
 from api.models import AudioDispositivo, DispositivoGravador, Turma, Usuario
@@ -47,11 +46,11 @@ class PareamentoRateThrottle(AnonRateThrottle):
     scope = 'pareamento'
 
 
-PERFIS_GESTAO = {'admin', 'coordenador'}
+NIVEIS_GESTAO = {'admin', 'coordenador', 'superadmin'}
 
 
 def _e_gestor(usuario) -> bool:
-    return getattr(usuario, 'perfil', '') in PERFIS_GESTAO
+    return bool(getattr(usuario, 'is_superuser', False)) or getattr(usuario, 'nivel', '') in NIVEIS_GESTAO
 
 
 def _serializar_dispositivo(d: DispositivoGravador, total_audios=None) -> dict:
@@ -59,16 +58,16 @@ def _serializar_dispositivo(d: DispositivoGravador, total_audios=None) -> dict:
         'id': str(d.id),
         'device_id': d.device_id,
         'nome': d.nome,
-        'professora_id': str(d.professora_id) if d.professora_id else None,
-        'professora_nome': getattr(d.professora, 'nome', ''),
+        'professora_id': str(d.professor_id) if d.professor_id else None,
+        'professora_nome': getattr(d.professor, 'nome', ''),
         'turmas': [
             {'id': str(t.id), 'nome': t.nome} for t in d.turmas.all()
         ],
         'turma_ativa_id': str(d.turma_ativa_id) if d.turma_ativa_id else None,
         'turma_ativa_nome': getattr(d.turma_ativa, 'nome', ''),
         'ativo': d.ativo,
-        'last_seen': d.last_seen.isoformat() if d.last_seen else None,
-        'data_criacao': d.data_criacao.isoformat() if d.data_criacao else None,
+        'last_seen': d.visto_ultimo.isoformat() if d.visto_ultimo else None,
+        'data_criacao': d.criado_em.isoformat() if d.criado_em else None,
     }
     if total_audios is not None:
         dados['total_audios'] = total_audios
@@ -94,7 +93,7 @@ def _serializar_audio(a: AudioDispositivo) -> dict:
         'nomes_nao_identificados': a.nomes_nao_identificados or [],
         'total_observacoes': a.total_observacoes,
         'erro_codigo': a.erro_codigo,
-        'data_recebimento': a.data_recebimento.isoformat(),
+        'data_recebimento': a.data_recebimento.isoformat() if a.data_recebimento else None,
         'data_processamento': (
             a.data_processamento.isoformat() if a.data_processamento else None
         ),
@@ -174,8 +173,8 @@ def gerar_codigo_pareamento(request):
             'expira_em': codigo.expira_em.isoformat(),
             'validade_minutos': dispositivo_service.CODIGO_VALIDADE_MINUTOS,
             'turmas': [{'id': str(t.id), 'nome': t.nome} for t in codigo.turmas.all()],
-            'professora_id': str(codigo.professora_id),
-            'professora_nome': getattr(codigo.professora, 'nome', ''),
+            'professora_id': str(codigo.professor_id),
+            'professora_nome': getattr(codigo.professor, 'nome', ''),
         },
         status=status.HTTP_201_CREATED,
     )
@@ -191,15 +190,15 @@ def listar_dispositivos(request):
       contagem de áudios recebidos (diagnóstico "o gravador está funcionando?").
     """
     qs = DispositivoGravador.objects.select_related(
-        'professora', 'turma_ativa',
+        'professor', 'turma_ativa',
     ).prefetch_related('turmas')
     if _e_gestor(request.user):
-        # Single-tenant hoje: o banco é da escola, então listar tudo é correto.
-        # Com MULTI_TENANT_STRICT, passa a filtrar pela instituição do gestor.
-        if getattr(settings, 'MULTI_TENANT_STRICT', False):
+        # Filtro explícito além do TenantManager: gestor vê só a própria
+        # instituição (superadmin sem instituição vê todos).
+        if request.user.instituicao_id:
             qs = qs.filter(instituicao_id=request.user.instituicao_id)
     else:
-        qs = qs.filter(professora=request.user)
+        qs = qs.filter(professor=request.user)
 
     qs = qs.annotate(_total_audios=Count('audios'))
     return Response({
@@ -213,7 +212,7 @@ def _dispositivo_editavel(request, dispositivo_id):
     """Retorna `(dispositivo, resposta_de_erro)` aplicando a regra de permissão."""
     dispositivo = (
         DispositivoGravador.objects
-        .select_related('professora', 'turma_ativa')
+        .select_related('professor', 'turma_ativa')
         .prefetch_related('turmas')
         .filter(id=dispositivo_id)
         .first()
@@ -230,7 +229,7 @@ def _dispositivo_editavel(request, dispositivo_id):
                 {'error': 'Dispositivo de outra instituição.'},
                 status=status.HTTP_403_FORBIDDEN,
             )
-    elif dispositivo.professora_id != request.user.id:
+    elif dispositivo.professor_id != request.user.id:
         return None, Response(
             {'error': 'Sem permissão para gerenciar este dispositivo.'},
             status=status.HTTP_403_FORBIDDEN,
@@ -268,7 +267,7 @@ def atualizar_dispositivo(request, dispositivo_id):
                 {'error': 'Professora de outra instituição.', 'codigo': 'outra_instituicao'},
                 status=status.HTTP_403_FORBIDDEN,
             )
-        dispositivo.professora = professora
+        dispositivo.professor = professora
 
     novas_turmas = None
     if 'turma_ids' in request.data:
@@ -290,7 +289,7 @@ def atualizar_dispositivo(request, dispositivo_id):
                     status=status.HTTP_403_FORBIDDEN,
                 )
 
-    dispositivo.save(update_fields=['nome', 'professora', 'data_atualizacao'])
+    dispositivo.save(update_fields=['nome', 'professor', 'atualizado_em'])
     if novas_turmas is not None:
         dispositivo.turmas.set(novas_turmas)
         # Turma ativa fora do novo escopo deixa de valer.
@@ -298,12 +297,12 @@ def atualizar_dispositivo(request, dispositivo_id):
             t.id != dispositivo.turma_ativa_id for t in novas_turmas
         ):
             dispositivo.turma_ativa = None
-            dispositivo.save(update_fields=['turma_ativa', 'data_atualizacao'])
+            dispositivo.save(update_fields=['turma_ativa', 'atualizado_em'])
 
     dispositivo.refresh_from_db()
     logger.info(
         "[DISPOSITIVO] %s atualizado por %s (professora=%s turmas=%s)",
-        dispositivo.device_id, request.user.id, dispositivo.professora_id,
+        dispositivo.device_id, request.user.id, dispositivo.professor_id,
         list(dispositivo.turmas.values_list('id', flat=True)),
     )
     return Response({'success': True, 'dispositivo': _serializar_dispositivo(dispositivo)})
@@ -336,7 +335,7 @@ def reativar_dispositivo(request, dispositivo_id):
 
     dispositivo.ativo = True
     dispositivo.revogado_em = None
-    dispositivo.save(update_fields=['ativo', 'revogado_em', 'data_atualizacao'])
+    dispositivo.save(update_fields=['ativo', 'revogado_em', 'atualizado_em'])
     return Response({'success': True, 'dispositivo': _serializar_dispositivo(dispositivo)})
 
 

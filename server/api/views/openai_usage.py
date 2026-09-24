@@ -5,6 +5,10 @@ from django.core.cache import cache
 from django.http import JsonResponse
 from django.db.models import Count, Max, Sum
 from django.db.models.functions import TruncDay
+from rest_framework.decorators import api_view, permission_classes
+from rest_framework.permissions import IsAuthenticated
+
+from api.models import OpenAIUsage
 
 logger = logging.getLogger(__name__)
 
@@ -14,15 +18,28 @@ _SUMMARY_CACHE_TTL = 300
 
 # ─── Autenticação ─────────────────────────────────────────────────────────────
 
+def _is_superadmin(user) -> bool:
+    return bool(user.is_superuser) or getattr(user, "nivel", "") == "superadmin"
+
+
 def _admin_required(request) -> JsonResponse | None:
-    if not request.user.is_authenticated:
-        return JsonResponse({"error": "Autenticação necessária."}, status=401)
-    if getattr(request.user, "perfil", None) != "admin":
-        return JsonResponse({"error": "Acesso restrito a administradores."}, status=403)
-    return None
+    """Só admin (da própria instituição) e superadmin (todas) veem o consumo."""
+    if _is_superadmin(request.user) or getattr(request.user, "nivel", "") == "admin":
+        return None
+    return JsonResponse({"error": "Acesso restrito a administradores."}, status=403)
 
 
-# ─── Helpers ──────────────────────────────────────────────────────────────────
+def _escopo(request, qs):
+    """Filtro explícito por instituição, além do TenantManager.
+
+    Retorna (queryset, id_do_escopo) — o id entra na chave do cache para que o
+    resumo de uma instituição nunca seja servido para outra.
+    """
+    if _is_superadmin(request.user):
+        return qs, "todas"
+    inst = request.user.instituicao_id
+    return qs.filter(instituicao_id=inst), str(inst)
+
 
 def _aplicar_filtros(qs, model_filter, usuario_filter, data_inicio, data_fim):
     if model_filter:
@@ -30,9 +47,9 @@ def _aplicar_filtros(qs, model_filter, usuario_filter, data_inicio, data_fim):
     if usuario_filter:
         qs = qs.filter(usuario_id=usuario_filter)
     if data_inicio:
-        qs = qs.filter(created_at__date__gte=data_inicio)
+        qs = qs.filter(criado_em__date__gte=data_inicio)
     if data_fim:
-        qs = qs.filter(created_at__date__lte=data_fim)
+        qs = qs.filter(criado_em__date__lte=data_fim)
     return qs
 
 
@@ -45,6 +62,8 @@ def _cache_key(prefix: str, **filtros) -> str:
 
 # ─── Endpoint 1: Summary (com cache) ─────────────────────────────────────────
 
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
 def openai_usage_summary(request):
     """
     GET /api/admin/openai-usage/summary/
@@ -57,9 +76,6 @@ def openai_usage_summary(request):
         data_inicio  — YYYY-MM-DD
         data_fim     — YYYY-MM-DD
     """
-    if request.method != "GET":
-        return JsonResponse({"error": "Método não permitido."}, status=405)
-
     erro = _admin_required(request)
     if erro:
         return erro
@@ -68,8 +84,10 @@ def openai_usage_summary(request):
     data_inicio  = request.GET.get("data_inicio", "").strip() or None
     data_fim     = request.GET.get("data_fim", "").strip() or None
 
+    base_qs, escopo = _escopo(request, OpenAIUsage.objects.all())
     key = _cache_key(
         "openai_summary",
+        escopo=escopo,
         model=model_filter or "",
         di=data_inicio or "",
         df=data_fim or "",
@@ -81,10 +99,7 @@ def openai_usage_summary(request):
         return JsonResponse(cached)
 
     try:
-        from api.models import OpenAIUsage
-
-        qs = OpenAIUsage.objects.all()
-        qs = _aplicar_filtros(qs, model_filter, None, data_inicio, data_fim)
+        qs = _aplicar_filtros(base_qs, model_filter, None, data_inicio, data_fim)
 
         # ── Totais globais ────────────────────────────────────────────────
         totais = qs.aggregate(
@@ -93,12 +108,12 @@ def openai_usage_summary(request):
             total_image_tokens=Sum("image_tokens"),
             total_cost=Sum("total_cost"),
             total_registros=Count("id"),
-            ultimo_uso=Max("created_at"),
+            ultimo_uso=Max("criado_em"),
         )
 
         # ── Série temporal (por dia) ──────────────────────────────────────
         por_dia = list(
-            qs.annotate(dia=TruncDay("created_at"))
+            qs.annotate(dia=TruncDay("criado_em"))
               .values("dia")
               .annotate(
                   custo=Sum("total_cost"),
@@ -131,7 +146,7 @@ def openai_usage_summary(request):
 
         # ── Modelos disponíveis (para o filtro do frontend) ───────────────
         modelos_disponiveis = list(
-            OpenAIUsage.objects
+            base_qs
               .exclude(model__isnull=True)
               .values_list("model", flat=True)
               .distinct()
@@ -190,6 +205,8 @@ def openai_usage_summary(request):
 
 # ─── Endpoint 2: Registros paginados (sem cache) ──────────────────────────────
 
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
 def listar_openai_usage(request):
     """
     GET /api/admin/openai-usage/
@@ -204,16 +221,11 @@ def listar_openai_usage(request):
         page         — página atual (default 1)
         page_size    — itens por página (default 10, máx 100)
     """
-    if request.method != "GET":
-        return JsonResponse({"error": "Método não permitido."}, status=405)
-
     erro = _admin_required(request)
     if erro:
         return erro
 
     try:
-        from api.models import OpenAIUsage
-
         model_filter   = request.GET.get("model", "").strip() or None
         usuario_filter = request.GET.get("usuario_id", "").strip() or None
         data_inicio    = request.GET.get("data_inicio", "").strip() or None
@@ -225,7 +237,7 @@ def listar_openai_usage(request):
         except (ValueError, TypeError):
             page, page_size = 1, 10
 
-        qs = OpenAIUsage.objects.select_related("usuario").all()
+        qs, _ = _escopo(request, OpenAIUsage.objects.select_related("usuario"))
         qs = _aplicar_filtros(qs, model_filter, usuario_filter, data_inicio, data_fim)
 
         total_registros = qs.count()
@@ -242,7 +254,7 @@ def listar_openai_usage(request):
                 "input_cost":    str(r.input_cost),
                 "output_cost":   str(r.output_cost),
                 "total_cost":    str(r.total_cost),
-                "created_at":    r.created_at.isoformat(),
+                "created_at":    r.criado_em.isoformat(),  # chave mantida para o frontend
                 "usuario": {
                     "id":   str(r.usuario.id) if r.usuario else None,
                     "nome": getattr(r.usuario, "nome", str(r.usuario)) if r.usuario else "Sistema",

@@ -173,11 +173,10 @@ class HabilidadeBNCCAdmin(admin.ModelAdmin):
 
 @admin.register(Pergunta)
 class PerguntaAdmin(admin.ModelAdmin):
-    list_display = ['__str__', 'origem', 'escola', 'ativa']
-    list_filter = ['origem', 'ativa']
-    search_fields = ['pergunta']
-    autocomplete_fields = ['faixa_etaria', 'campo_experiencia', 'habilidade_bncc', 'escola', 'instituicao']
-
+    list_display = ['__str__', 'origem', 'faixa_etaria', 'escola', 'ativa']
+    list_filter = ['origem', 'ativa', 'faixa_etaria']
+    search_fields = ['pergunta', 'faixa_etaria']
+    autocomplete_fields = ['campo_experiencia', 'habilidade_bncc', 'escola', 'instituicao']
 
 @admin.register(PerguntaEspecialista)
 class PerguntaEspecialistaAdmin(admin.ModelAdmin):
