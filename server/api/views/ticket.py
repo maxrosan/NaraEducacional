@@ -7,12 +7,9 @@ from rest_framework.response import Response
 
 from api.models import Ticket, RespostaTicket
 from api.serializers import TicketSerializer, RespostaTicketSerializer, AnexoTicketSerializer
+from api.tenancy import is_superadmin as _is_superadmin
 
 PROTOCOLO_PREFIXO = 'NARA'
-
-
-def _is_superadmin(user):
-    return user.is_superuser or user.nivel == 'superadmin'
 
 
 def _e_suporte(user):

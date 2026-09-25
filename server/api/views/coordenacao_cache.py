@@ -8,11 +8,11 @@ Endpoints do painel da coordenação.
   nada no caminho normal do produto depende disso, ver docstring de
   `atualizar_cache_coordenacao` no service)
 
-Diferença de escopo em relação ao legado: lá era 1 instituição por backend
-(`NARA_INSTITUICAO_ID` do .env). Aqui o painel é sempre de UMA escola
-(`gerar_payload_coordenacao` é escola-scoped), então a resolução de qual
-escola vira `_resolver_escola_id` — mesmo helper usado em
-`views/alfabetizacao_criancas.py`.
+O painel é sempre de UMA escola (`gerar_payload_coordenacao` é escola-scoped).
+Qual escola: `escopo.resolver_escola_painel`. Qual intervalo:
+`recorte_da_requisicao` (abaixo) — os dois também são usados por
+`views/alfabetizacao_criancas.py` e `views/indicadores_turma.py`, para que
+todas as telas da coordenação sigam o mesmo contrato.
 """
 
 from __future__ import annotations
@@ -29,7 +29,7 @@ from rest_framework.decorators import api_view, authentication_classes, permissi
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 
-from api.models import Escola, PeriodoAvaliativo
+from api.models import PeriodoAvaliativo
 from api.services.coordenacao_cache import (
     JANELA_DIAS,
     MAX_DIAS_RECORTE,
@@ -38,48 +38,55 @@ from api.services.coordenacao_cache import (
     gerar_payload_coordenacao,
     resolver_recorte,
 )
+from api.escopo import resolver_escola_painel
 
 logger = logging.getLogger(__name__)
 
 
-def _is_superadmin(user):
-    return user.is_superuser or user.nivel == 'superadmin'
-
-
-def _resolver_escola_id(request):
-    """Mesma regra de `views/alfabetizacao_criancas.py`: coordenador usa
-    sempre a própria escola; admin/superadmin precisam de ?escola_id=
-    explícito (podem gerenciar mais de uma)."""
-    user = request.user
-    if user.nivel == 'coordenador':
-        return user.escola_id, None
-
-    escola_id = request.GET.get('escola_id')
-    if not escola_id:
-        return None, Response(
-            {'error': 'Parâmetro escola_id é obrigatório para este nível.'},
-            status=status.HTTP_400_BAD_REQUEST,
-        )
-
-    if _is_superadmin(user):
-        return escola_id, None
-
-    if user.nivel == 'admin':
-        pertence = Escola.objects.filter(id=escola_id, instituicao_id=user.instituicao_id).exists()
-        if not pertence:
-            return None, Response(
-                {'error': 'Escola não pertence à sua instituição.'}, status=status.HTTP_403_FORBIDDEN,
-            )
-        return escola_id, None
-
-    return None, Response({'error': 'Sem permissão.'}, status=status.HTTP_403_FORBIDDEN)
-
+# ---------------------------------------------------------------------------
+# Recorte (compartilhado pelas telas da coordenação)
+# ---------------------------------------------------------------------------
 
 def _parse_data(valor: str | None) -> date | None:
-    if not valor:
-        return None
-    return date.fromisoformat(valor)
+    """`YYYY-MM-DD` → date. Levanta ValueError em formato inválido."""
+    return date.fromisoformat(valor) if valor else None
 
+
+def recorte_da_requisicao(request, escola_id, periodo_id=None):
+    """Retorna `(recorte, erro)`. Precedência: data_inicio+data_fim >
+    periodo_id > período vigente hoje.
+
+    `recorte` pode ser None legitimamente (escola sem período vigente).
+    `periodo_id` explícito sobrescreve o da query string (usado pelo
+    `indicadores_turma`, que ainda aceita o parâmetro legado `periodo`).
+    """
+    try:
+        data_inicio = _parse_data(request.GET.get('data_inicio'))
+        data_fim = _parse_data(request.GET.get('data_fim'))
+    except ValueError:
+        return None, Response(
+            {'error': 'Datas inválidas (use YYYY-MM-DD).'}, status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    if periodo_id is None:
+        periodo_id = request.GET.get('periodo_id') or None
+
+    try:
+        recorte = resolver_recorte(
+            escola_id, periodo_id=periodo_id, data_inicio=data_inicio, data_fim=data_fim,
+        )
+    except RecorteInvalido as exc:
+        return None, Response({'error': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+    except (PeriodoAvaliativo.DoesNotExist, ValidationError, ValueError):
+        return None, Response(
+            {'error': 'Período avaliativo não encontrado.'}, status=status.HTTP_404_NOT_FOUND,
+        )
+    return recorte, None
+
+
+# ---------------------------------------------------------------------------
+# Refresh interno (compatibilidade com o scheduler externo)
+# ---------------------------------------------------------------------------
 
 def _check_internal_token(request) -> bool:
     expected = getattr(settings, 'NARA_INTERNAL_TOKEN', None)
@@ -112,7 +119,10 @@ def refresh_coordenacao_cache(request):
     except ValueError:
         return Response({'error': 'data_referencia inválida (use YYYY-MM-DD).'}, status=status.HTTP_400_BAD_REQUEST)
 
-    janela_dias = int(body.get('janela_dias') or JANELA_DIAS)
+    try:
+        janela_dias = int(body.get('janela_dias') or JANELA_DIAS)
+    except (TypeError, ValueError):
+        return Response({'error': 'janela_dias deve ser um número inteiro.'}, status=status.HTTP_400_BAD_REQUEST)
 
     try:
         obj = atualizar_cache_coordenacao(escola_id=escola_id, data_referencia=data_referencia, janela_dias=janela_dias)
@@ -131,6 +141,10 @@ def refresh_coordenacao_cache(request):
     )
 
 
+# ---------------------------------------------------------------------------
+# Painel
+# ---------------------------------------------------------------------------
+
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
 def listar_cache_coordenacao(request):
@@ -139,23 +153,13 @@ def listar_cache_coordenacao(request):
     Query params: data_inicio + data_fim (têm precedência sobre periodo_id,
     limitado a MAX_DIAS_RECORTE dias), periodo_id (default: o vigente hoje).
     """
-    escola_id, erro = _resolver_escola_id(request)
+    escola_id, erro = resolver_escola_painel(request)
     if erro:
         return erro
 
-    periodo_id = request.GET.get('periodo_id') or None
-    try:
-        data_inicio = _parse_data(request.GET.get('data_inicio'))
-        data_fim = _parse_data(request.GET.get('data_fim'))
-    except ValueError:
-        return Response({'error': 'Datas inválidas (use YYYY-MM-DD).'}, status=status.HTTP_400_BAD_REQUEST)
-
-    try:
-        recorte = resolver_recorte(escola_id, periodo_id=periodo_id, data_inicio=data_inicio, data_fim=data_fim)
-    except RecorteInvalido as exc:
-        return Response({'error': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
-    except (PeriodoAvaliativo.DoesNotExist, ValidationError, ValueError):
-        return Response({'error': 'Período avaliativo não encontrado.'}, status=status.HTTP_404_NOT_FOUND)
+    recorte, erro = recorte_da_requisicao(request, escola_id)
+    if erro:
+        return erro
 
     agora = timezone.now()
     try:
@@ -163,7 +167,7 @@ def listar_cache_coordenacao(request):
     except Exception:
         logger.exception(
             'Falha ao gerar agregados da coordenação.',
-            extra={'escola_id': str(escola_id), 'periodo_id': periodo_id},
+            extra={'escola_id': str(escola_id), 'periodo_id': recorte.periodo_id if recorte else None},
         )
         return Response({'error': 'Erro ao calcular os indicadores.'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
@@ -184,7 +188,7 @@ def listar_cache_coordenacao(request):
 @permission_classes([IsAuthenticated])
 def listar_periodos_coordenacao(request):
     """Períodos avaliativos da escola pro seletor da coordenação."""
-    escola_id, erro = _resolver_escola_id(request)
+    escola_id, erro = resolver_escola_painel(request)
     if erro:
         return erro
 

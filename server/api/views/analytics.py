@@ -5,13 +5,10 @@ from rest_framework import status
 from datetime import date, timedelta
 
 from api.services.analytics import contar_registros_instituicao, get_participacao_docente
+from api.tenancy import is_superadmin as _is_superadmin
 import logging
 
 logger = logging.getLogger(__name__)
-
-
-def _is_superadmin(user):
-    return user.is_superuser or user.nivel == 'superadmin'
 
 
 def _pode_ver_instituicao(user, instituicao_id):

@@ -22,35 +22,30 @@ Mudanças de schema em relação ao legado:
     nome (`_norm_nome`/`nome_aluno`), simplificando bastante.
   - `data_criacao` → `criado_em`; `PerguntaBNCC.created_at` → `Pergunta.criado_em`.
   - Escopo por `escola_id`, resolvido a partir da própria turma pedida.
+
+Permissão (`escopo.pode_ver_escola`) e recorte
+(`views.coordenacao_cache.recorte_da_requisicao`) seguem o contrato comum das
+telas da coordenação.
 """
 
 from __future__ import annotations
 
 from collections import OrderedDict, defaultdict
 
+from django.core.exceptions import ValidationError
 from django.db.models import Count
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework import status
 
-from api.models import Aluno, Escola, PeriodoAvaliativo, Pergunta, RegistroDesenho, RegistroEscrita, RegistroLeitura, RegistroObservacao, Turma
+from api.models import Aluno, PeriodoAvaliativo, Pergunta, RegistroDesenho, RegistroEscrita, RegistroLeitura, RegistroObservacao, Turma
+from api.services.coordenacao_cache import _padronizar_faixa
+from api.escopo import pode_ver_escola
 from api.services.fases_producao import fase_desenho_canonica
-from api.services.coordenacao_cache import RecorteInvalido, _padronizar_faixa, resolver_recorte
+from api.views.coordenacao_cache import recorte_da_requisicao
 
 NIVEL_MAX = 3
-
-
-def _is_superadmin(user):
-    return user.is_superuser or user.nivel == 'superadmin'
-
-
-def _pode_ver_escola(user, escola_id):
-    if _is_superadmin(user):
-        return True
-    if user.nivel == 'admin':
-        return Escola.objects.filter(id=escola_id, instituicao_id=user.instituicao_id).exists()
-    return str(user.escola_id) == str(escola_id)
 
 
 def _producoes_por_aluno(turma_id, alunos, recorte):
@@ -109,28 +104,19 @@ def indicadores_turma(request):
     if not turma_id:
         return Response({'error': 'turma_id é obrigatório'}, status=status.HTTP_400_BAD_REQUEST)
 
-    turma = Turma.objects.filter(id=turma_id).first()
+    try:
+        turma = Turma.objects.select_related('escola').filter(id=turma_id).first()
+    except (ValidationError, ValueError):  # turma_id malformado
+        turma = None
     if not turma:
         return Response({'error': 'turma não encontrada'}, status=status.HTTP_404_NOT_FOUND)
 
-    if not _pode_ver_escola(request.user, turma.escola_id):
+    if not pode_ver_escola(request.user, turma.escola):
         return Response({'error': 'Sem permissão.'}, status=status.HTTP_403_FORBIDDEN)
 
-    def _data(valor):
-        from datetime import date
-        return date.fromisoformat(valor) if valor else None
-
-    try:
-        recorte = resolver_recorte(
-            turma.escola_id,
-            periodo_id=periodo_id,
-            data_inicio=_data(request.GET.get('data_inicio')),
-            data_fim=_data(request.GET.get('data_fim')),
-        )
-    except (RecorteInvalido, ValueError) as exc:
-        return Response({'error': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
-    except Exception:
-        return Response({'error': 'Período avaliativo não encontrado.'}, status=status.HTTP_404_NOT_FOUND)
+    recorte, erro = recorte_da_requisicao(request, turma.escola_id, periodo_id=periodo_id)
+    if erro:
+        return erro
 
     faixa = _padronizar_faixa(turma.faixa_etaria)
 

@@ -376,11 +376,9 @@ CORS_PREFLIGHT_MAX_AGE = 86400  # 24 horas
 # Configurações de charset (removido locale problemático)
 DEFAULT_CHARSET = 'utf-8'
 
-# Segredo: vem do ambiente, nunca do código.
+# E-mail: enviado direto pela API HTTP do Mailtrap em api/services/password_reset.py
+# (o EMAIL_BACKEND do Anymail foi removido: nenhum código usava send_mail).
 MAILTRAP_API_TOKEN = os.getenv('MAILTRAP_API_TOKEN', '')
-EMAIL_BACKEND = "anymail.backends.mailtrap.EmailBackend"
-# Lido do ambiente com o MESMO fallback que api/services/password_reset.py
-# usava antes (os.getenv direto), para não trocar o remetente em produção.
 DEFAULT_FROM_EMAIL = os.getenv('DEFAULT_FROM_EMAIL', 'hello@edunuvem.com')
 
 # Base do link de redefinição de senha enviado por e-mail.
@@ -389,10 +387,6 @@ FRONTEND_URL = os.getenv('FRONTEND_URL', 'http://localhost:5173').rstrip('/')
 # Validade do link de redefinição de senha (segundos). Sem isto o Django usa
 # 3 dias, enquanto o e-mail prometia 1 hora. O texto do e-mail é derivado daqui.
 PASSWORD_RESET_TIMEOUT = int(os.getenv('PASSWORD_RESET_TIMEOUT_SECONDS', '3600'))
-
-ANYMAIL = {
-  "MAILTRAP_API_TOKEN": MAILTRAP_API_TOKEN,
-}
 
 # Logging
 LOGGING = {

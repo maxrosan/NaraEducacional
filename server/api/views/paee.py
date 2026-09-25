@@ -9,12 +9,9 @@ from api.models import MetaPAEE, SessaoEspecialista, SessaoPAEEMeta, TarefaPAEE,
 from api.serializers import (
     MetaPAEESerializer, SessaoEspecialistaSerializer, SessaoPAEEMetaSerializer, TarefaPAEESerializer,
 )
+from api.tenancy import is_superadmin as _is_superadmin
 
 NIVEIS_ESPECIALISTA = ('especialista', 'professor_especialista')
-
-
-def _is_superadmin(user):
-    return user.is_superuser or user.nivel == 'superadmin'
 
 
 def _pode_gerenciar_geral(user):

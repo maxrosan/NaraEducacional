@@ -5,8 +5,10 @@ from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
-from api.models import Usuario, Escola
+from api.escopo import validar_vinculos_usuario
+from api.models import Usuario
 from api.serializers import UsuarioSerializer, UsuarioWriteSerializer
+from api.tenancy import is_superadmin as _is_superadmin
 
 # Papéis internos do NARA — sem vínculo com instituição/escola.
 # Nem admin nem coordenador podem atribuir/criar usuários com esses níveis.
@@ -16,10 +18,6 @@ NIVEIS_SISTEMA = {'superadmin', 'vendedor', 'suporte'}
 NIVEIS_QUE_COORDENADOR_CRIA = {
     'professor_infantil', 'professor_fundamental', 'professor_especialista', 'especialista',
 }
-
-
-def _is_superadmin(user):
-    return user.is_superuser or user.nivel == 'superadmin'
 
 
 def _pode_gerenciar(user):
@@ -71,11 +69,6 @@ def criar_usuario(request):
                 {'error': f'Admin não pode criar usuários de nível "{nivel_alvo}".'},
                 status=status.HTTP_403_FORBIDDEN,
             )
-        data['instituicao'] = user.instituicao_id
-        escola_id = data.get('escola')
-        if escola_id and not Escola.objects.filter(id=escola_id, instituicao_id=user.instituicao_id).exists():
-            return Response({'error': 'Escola informada não pertence à sua instituição.'},
-                             status=status.HTTP_400_BAD_REQUEST)
 
     elif user.nivel == 'coordenador':
         if user.escola_id is None:
@@ -85,8 +78,12 @@ def criar_usuario(request):
                 {'error': f'Coordenador só pode criar: {", ".join(sorted(NIVEIS_QUE_COORDENADOR_CRIA))}.'},
                 status=status.HTTP_403_FORBIDDEN,
             )
-        data['instituicao'] = user.instituicao_id
-        data['escola'] = user.escola_id
+
+    # Mesma regra da edição: escola/instituição/especialista dentro do escopo
+    # de quem cria, e escola sempre consistente com a instituição.
+    erro = validar_vinculos_usuario(user, data)
+    if erro:
+        return erro
 
     serializer = UsuarioWriteSerializer(data=data)
     serializer.is_valid(raise_exception=True)
@@ -148,6 +145,12 @@ def atualizar_usuario(request, usuario_id):
     elif not _is_superadmin(user) and user.nivel == 'coordenador' and novo_nivel and novo_nivel not in NIVEIS_QUE_COORDENADOR_CRIA:
         return Response({'error': f'Coordenador só pode atribuir: {", ".join(sorted(NIVEIS_QUE_COORDENADOR_CRIA))}.'},
                          status=status.HTTP_403_FORBIDDEN)
+
+    # Antes só a auto-edição era travada: um admin podia mover OUTRO usuário
+    # para outra rede (inclusive como admin, com senha nova).
+    erro = validar_vinculos_usuario(user, data, alvo=alvo)
+    if erro:
+        return erro
 
     partial = request.method == 'PATCH'
     serializer = UsuarioWriteSerializer(alvo, data=data, partial=partial)

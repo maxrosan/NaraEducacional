@@ -5,12 +5,11 @@ from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
+from api.escopo import resolver_escopo_criacao
 from api.models import PeriodoAvaliativo, RelatorioTemplate, Relatorio, Aluno, UsuarioTurma
 from api.serializers import PeriodoAvaliativoSerializer, RelatorioTemplateSerializer, RelatorioSerializer
-
-
-def _is_superadmin(user):
-    return user.is_superuser or user.nivel == 'superadmin'
+from api.services.relatorio import refresh_img_urls_in_html
+from api.tenancy import is_superadmin as _is_superadmin
 
 
 def _pode_gerenciar_geral(user):
@@ -20,31 +19,6 @@ def _pode_gerenciar_geral(user):
 def _professor_vinculado_turma(usuario, turma):
     return UsuarioTurma.objects.filter(usuario=usuario, turma=turma).exists()
 
-
-def _escola_instituicao_por_escopo(user, request):
-    """Resolve (escola_id, instituicao_id) pra criação, ou (None, None, Response) se inválido."""
-    if _is_superadmin(user):
-        instituicao_id = request.data.get('instituicao')
-        escola_id = request.data.get('escola')
-        if not instituicao_id or not escola_id:
-            return None, None, Response(
-                {'error': 'Campos instituicao e escola são obrigatórios.'},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-        return escola_id, instituicao_id, None
-    if user.nivel == 'admin':
-        if user.instituicao_id is None:
-            return None, None, Response(
-                {'error': 'Usuário sem instituição vinculada.'}, status=status.HTTP_400_BAD_REQUEST,
-            )
-        escola_id = request.data.get('escola')
-        return escola_id, user.instituicao_id, None
-    # coordenador
-    if user.escola_id is None:
-        return None, None, Response(
-            {'error': 'Usuário sem escola vinculada.'}, status=status.HTTP_400_BAD_REQUEST,
-        )
-    return user.escola_id, user.instituicao_id, None
 
 
 # ============================================================
@@ -65,7 +39,7 @@ def criar_periodo_avaliativo(request):
     if not _pode_gerenciar_geral(user):
         return Response({'error': 'Sem permissão.'}, status=status.HTTP_403_FORBIDDEN)
 
-    escola_id, instituicao_id, erro = _escola_instituicao_por_escopo(user, request)
+    escola_id, instituicao_id, erro = resolver_escopo_criacao(user, request.data)
     if erro:
         return erro
 
@@ -121,7 +95,7 @@ def criar_relatorio_template(request):
     if not _pode_gerenciar_geral(user):
         return Response({'error': 'Sem permissão.'}, status=status.HTTP_403_FORBIDDEN)
 
-    escola_id, instituicao_id, erro = _escola_instituicao_por_escopo(user, request)
+    escola_id, instituicao_id, erro = resolver_escopo_criacao(user, request.data)
     if erro:
         return erro
 
@@ -205,7 +179,12 @@ def detalhe_relatorio(request, relatorio_id):
         relatorio = Relatorio.objects.get(id=relatorio_id)
     except Relatorio.DoesNotExist:
         return Response({'error': 'Relatório não encontrado.'}, status=status.HTTP_404_NOT_FOUND)
-    return Response(RelatorioSerializer(relatorio).data)
+    data = dict(RelatorioSerializer(relatorio).data)
+    # As <img> do HTML guardam URLs pré-assinadas do S3 que expiram em ~1h.
+    # Re-assinar aqui evita fotos quebradas na tela do relatório.
+    if data.get('conteudo'):
+        data['conteudo'] = refresh_img_urls_in_html(data['conteudo'])
+    return Response(data)
 
 
 def _pode_editar_relatorio(user, relatorio):

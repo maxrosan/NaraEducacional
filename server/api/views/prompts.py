@@ -7,10 +7,7 @@ from rest_framework.response import Response
 
 from api.models import PromptCategoria, PromptTemplate
 from api.serializers import PromptCategoriaSerializer, PromptTemplateSerializer
-
-
-def _is_superadmin(user):
-    return user.is_superuser or user.nivel == 'superadmin'
+from api.tenancy import is_superadmin as _is_superadmin
 
 
 def _pode_gerenciar_biblioteca(user):

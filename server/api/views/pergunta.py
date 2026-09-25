@@ -1,17 +1,14 @@
 """Endpoints de Pergunta e PerguntaEspecialista."""
 
-from django.db.models import Q
 from rest_framework import status
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
+from api.escopo import SEM_ESCOLA_OFICIAL, filtro_visiveis, pode_editar, pode_ver, resolver_escopo_criacao
 from api.models import Pergunta, PerguntaEspecialista
 from api.serializers import PerguntaSerializer, PerguntaEspecialistaSerializer
-
-
-def _is_superadmin(user):
-    return user.is_superuser or user.nivel == 'superadmin'
+from api.tenancy import is_superadmin as _is_superadmin
 
 
 def _pode_gerenciar(user):
@@ -23,22 +20,7 @@ def _pode_gerenciar(user):
 def listar_perguntas(request):
     user = request.user
 
-    if _is_superadmin(user):
-        perguntas = Pergunta.todos.all()
-    elif user.nivel == 'admin':
-        if user.instituicao_id is None:
-            perguntas = Pergunta.todos.filter(escola__isnull=True)
-        else:
-            perguntas = Pergunta.todos.filter(
-                Q(instituicao_id=user.instituicao_id) | Q(escola__isnull=True, instituicao__isnull=True),
-            )
-    else:
-        if user.escola_id is None:
-            perguntas = Pergunta.todos.filter(escola__isnull=True)
-        else:
-            perguntas = Pergunta.todos.filter(
-                Q(escola_id=user.escola_id) | Q(escola__isnull=True),
-            )
+    perguntas = Pergunta.todos.filter(filtro_visiveis(user))
 
     faixa_etaria = request.query_params.get('faixa_etaria')
     if faixa_etaria:
@@ -54,19 +36,9 @@ def criar_pergunta(request):
     if not _pode_gerenciar(user):
         return Response({'error': 'Sem permissão.'}, status=status.HTTP_403_FORBIDDEN)
 
-    if _is_superadmin(user):
-        escola_id = request.data.get('escola')
-        instituicao_id = request.data.get('instituicao')
-    elif user.nivel == 'admin':
-        if user.instituicao_id is None:
-            return Response({'error': 'Usuário sem instituição vinculada.'}, status=status.HTTP_400_BAD_REQUEST)
-        instituicao_id = user.instituicao_id
-        escola_id = request.data.get('escola')
-    else:  # coordenador
-        if user.escola_id is None:
-            return Response({'error': 'Usuário sem escola vinculada.'}, status=status.HTTP_400_BAD_REQUEST)
-        instituicao_id = user.instituicao_id
-        escola_id = user.escola_id
+    escola_id, instituicao_id, erro = resolver_escopo_criacao(user, request.data, sem_escola=SEM_ESCOLA_OFICIAL)
+    if erro:
+        return erro
 
     serializer = PerguntaSerializer(data=request.data)
     serializer.is_valid(raise_exception=True)
@@ -83,8 +55,7 @@ def detalhe_pergunta(request, pergunta_id):
     except Pergunta.DoesNotExist:
         return Response({'error': 'Pergunta não encontrada.'}, status=status.HTTP_404_NOT_FOUND)
 
-    if pergunta.escola_id is not None and not _is_superadmin(user) \
-            and str(pergunta.instituicao_id) != str(user.instituicao_id):
+    if not pode_ver(user, pergunta):
         return Response({'error': 'Sem permissão.'}, status=status.HTTP_403_FORBIDDEN)
 
     return Response(PerguntaSerializer(pergunta).data)
@@ -102,10 +73,9 @@ def atualizar_pergunta(request, pergunta_id):
     except Pergunta.DoesNotExist:
         return Response({'error': 'Pergunta não encontrada.'}, status=status.HTTP_404_NOT_FOUND)
 
-    if pergunta.escola_id is None and not _is_superadmin(user):
-        return Response({'error': 'Só superadmin pode editar perguntas oficiais.'}, status=status.HTTP_403_FORBIDDEN)
-    if not _is_superadmin(user) and str(pergunta.instituicao_id) != str(user.instituicao_id):
-        return Response({'error': 'Sem permissão.'}, status=status.HTTP_403_FORBIDDEN)
+    erro = pode_editar(user, pergunta)
+    if erro:
+        return erro
 
     partial = request.method == 'PATCH'
     serializer = PerguntaSerializer(pergunta, data=request.data, partial=partial)

@@ -42,15 +42,12 @@ from api.services.planejamento_ia import (
     remover_arquivo_planejamento,
 )
 from api.ia_utils import IA_REQUEST_TIMEOUT_SECONDS, run_with_timeout, validate_uploaded_file
+from api.tenancy import is_superadmin as _is_superadmin
 
 DIAS_SEMANA_ORDENADOS = ["segunda", "terca", "quarta", "quinta", "sexta"]
 DIAS_SEMANA_VALIDOS = set(DIAS_SEMANA_ORDENADOS)
 
 logger = logging.getLogger(__name__)
-
-
-def _is_superadmin(user):
-    return user.is_superuser or user.nivel == 'superadmin'
 
 
 def _pode_gerenciar_geral(user):

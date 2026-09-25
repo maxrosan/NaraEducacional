@@ -5,12 +5,10 @@ from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
-from api.models import Turma, Escola, Usuario, UsuarioTurma
+from api.escopo import resolver_escopo_criacao
+from api.models import Turma, Usuario, UsuarioTurma
 from api.serializers import TurmaSerializer, UsuarioTurmaSerializer
-
-
-def _is_superadmin(user):
-    return user.is_superuser or user.nivel == 'superadmin'
+from api.tenancy import is_superadmin as _is_superadmin
 
 
 def _pode_gerenciar(user):
@@ -35,25 +33,9 @@ def criar_turma(request):
     if not _pode_gerenciar(user):
         return Response({'error': 'Sem permissão.'}, status=status.HTTP_403_FORBIDDEN)
 
-    if _is_superadmin(user):
-        instituicao_id = request.data.get('instituicao')
-        escola_id = request.data.get('escola')
-        if not instituicao_id or not escola_id:
-            return Response({'error': 'Campos instituicao e escola são obrigatórios.'},
-                             status=status.HTTP_400_BAD_REQUEST)
-    elif user.nivel == 'admin':
-        if user.instituicao_id is None:
-            return Response({'error': 'Usuário sem instituição vinculada.'}, status=status.HTTP_400_BAD_REQUEST)
-        instituicao_id = user.instituicao_id
-        escola_id = request.data.get('escola')
-        if not escola_id or not Escola.objects.filter(id=escola_id, instituicao_id=instituicao_id).exists():
-            return Response({'error': 'Campo escola é obrigatório e precisa pertencer à sua instituição.'},
-                             status=status.HTTP_400_BAD_REQUEST)
-    else:  # coordenador
-        if user.escola_id is None:
-            return Response({'error': 'Usuário sem escola vinculada.'}, status=status.HTTP_400_BAD_REQUEST)
-        instituicao_id = user.instituicao_id
-        escola_id = user.escola_id
+    escola_id, instituicao_id, erro = resolver_escopo_criacao(user, request.data)
+    if erro:
+        return erro
 
     serializer = TurmaSerializer(data=request.data)
     serializer.is_valid(raise_exception=True)

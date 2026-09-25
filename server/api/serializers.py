@@ -284,7 +284,7 @@ class CampoPedagogicoSerializer(serializers.ModelSerializer):
             'id', 'nome', 'etapa', 'icone', 'cor', 'ativo',
             'escola', 'escola_nome', 'instituicao', 'criado_em', 'atualizado_em',
         ]
-        read_only_fields = ['id', 'criado_em', 'atualizado_em']
+        read_only_fields = ['id', 'criado_em', 'atualizado_em', 'escola', 'instituicao']
 
 
 class HabilidadeBNCCSerializer(serializers.ModelSerializer):
@@ -307,7 +307,7 @@ class PerguntaSerializer(serializers.ModelSerializer):
             'faixa_etaria', 'campo_experiencia', 'habilidade_bncc',
             'escola', 'escola_nome', 'instituicao', 'criado_em', 'atualizado_em',
         ]
-        read_only_fields = ['id', 'criado_em', 'atualizado_em']
+        read_only_fields = ['id', 'criado_em', 'atualizado_em', 'escola', 'instituicao']
 
 
 class PerguntaEspecialistaSerializer(serializers.ModelSerializer):
@@ -557,7 +557,7 @@ class TemplateDocumentoSerializer(serializers.ModelSerializer):
             'responsavel', 'criado_por', 'atualizado_por',
             'escola', 'instituicao', 'criado_em', 'atualizado_em',
         ]
-        read_only_fields = ['id', 'criado_por', 'atualizado_por', 'criado_em', 'atualizado_em']
+        read_only_fields = ['id', 'criado_por', 'atualizado_por', 'criado_em', 'atualizado_em', 'escola', 'instituicao']
 
 
 class ContratoSerializer(serializers.ModelSerializer):
@@ -585,7 +585,7 @@ class PromptTemplateSerializer(serializers.ModelSerializer):
             'id', 'categoria', 'prompt_global', 'personalizado',
             'escola', 'instituicao', 'instituicao_nome', 'criado_em', 'atualizado_em',
         ]
-        read_only_fields = ['id', 'categoria', 'criado_em', 'atualizado_em']
+        read_only_fields = ['id', 'categoria', 'criado_em', 'atualizado_em', 'escola', 'instituicao']
 
 
 class PromptCategoriaSerializer(serializers.ModelSerializer):

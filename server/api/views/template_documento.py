@@ -5,12 +5,10 @@ from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
+from api.escopo import SEM_ESCOLA_INSTITUICAO, resolver_escopo_criacao
 from api.models import TemplateDocumento, Contrato, Escola
 from api.serializers import TemplateDocumentoSerializer, ContratoSerializer
-
-
-def _is_superadmin(user):
-    return user.is_superuser or user.nivel == 'superadmin'
+from api.tenancy import is_superadmin as _is_superadmin
 
 
 def _pode_gerenciar(user):
@@ -33,9 +31,17 @@ def criar_template_documento(request):
     if not _pode_gerenciar(user):
         return Response({'error': 'Sem permissão.'}, status=status.HTTP_403_FORBIDDEN)
 
+    escola_id, instituicao_id, erro = resolver_escopo_criacao(
+        user, request.data, sem_escola=SEM_ESCOLA_INSTITUICAO,
+    )
+    if erro:
+        return erro
+
     serializer = TemplateDocumentoSerializer(data=request.data)
     serializer.is_valid(raise_exception=True)
-    template = serializer.save(responsavel=user, criado_por=user)
+    template = serializer.save(
+        responsavel=user, criado_por=user, escola_id=escola_id, instituicao_id=instituicao_id,
+    )
     return Response(TemplateDocumentoSerializer(template).data, status=status.HTTP_201_CREATED)
 
 

@@ -1,5 +1,7 @@
 from django.core.cache import cache
 
+from api.tenancy import chave_cache_escopo
+
 from api.models import (
     Turma,
     Aluno,
@@ -17,7 +19,7 @@ from api.models import (
 
 def contar_registros_instituicao(instituicao_id, data_inicio=None, data_fim=None):
     """Conta registros enviados no período, para toda a instituição (todas as escolas)."""
-    cache_key = f"contagem_registros_{instituicao_id}_{data_inicio}_{data_fim}"
+    cache_key = f"contagem_registros_{chave_cache_escopo()}_{instituicao_id}_{data_inicio}_{data_fim}"
 
     resultado = cache.get(cache_key)
     if resultado is not None:
@@ -63,7 +65,7 @@ def contar_registros_instituicao(instituicao_id, data_inicio=None, data_fim=None
 
 def get_participacao_docente(instituicao_id, data_inicio=None):
     """Produção docente por professor, para toda a instituição."""
-    cache_key = f"get_participacao_docente_{instituicao_id}_{data_inicio}"
+    cache_key = f"get_participacao_docente_{chave_cache_escopo()}_{instituicao_id}_{data_inicio}"
     resultado = cache.get(cache_key)
     if resultado is not None:
         return resultado

@@ -1,5 +1,6 @@
 import hashlib
 import logging
+from datetime import date
 
 from django.core.cache import cache
 from django.http import JsonResponse
@@ -9,6 +10,7 @@ from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import IsAuthenticated
 
 from api.models import OpenAIUsage
+from api.tenancy import is_superadmin
 
 logger = logging.getLogger(__name__)
 
@@ -18,15 +20,29 @@ _SUMMARY_CACHE_TTL = 300
 
 # ─── Autenticação ─────────────────────────────────────────────────────────────
 
-def _is_superadmin(user) -> bool:
-    return bool(user.is_superuser) or getattr(user, "nivel", "") == "superadmin"
-
-
 def _admin_required(request) -> JsonResponse | None:
     """Só admin (da própria instituição) e superadmin (todas) veem o consumo."""
-    if _is_superadmin(request.user) or getattr(request.user, "nivel", "") == "admin":
+    user = request.user
+    if is_superadmin(user):
+        return None
+    if getattr(user, "nivel", "") == "admin":
+        if not user.instituicao_id:
+            # Sem isso, `_escopo` filtraria instituicao_id=None e mostraria
+            # justamente os registros sem dono (uso do sistema).
+            return JsonResponse({"error": "Usuário sem instituição vinculada."}, status=403)
         return None
     return JsonResponse({"error": "Acesso restrito a administradores."}, status=403)
+
+
+def _datas_validas(data_inicio, data_fim) -> JsonResponse | None:
+    """Valida `YYYY-MM-DD` antes da query (senão vira 500 no except genérico)."""
+    try:
+        for valor in (data_inicio, data_fim):
+            if valor:
+                date.fromisoformat(valor)
+    except ValueError:
+        return JsonResponse({"error": "Datas inválidas (use YYYY-MM-DD)."}, status=400)
+    return None
 
 
 def _escopo(request, qs):
@@ -35,7 +51,7 @@ def _escopo(request, qs):
     Retorna (queryset, id_do_escopo) — o id entra na chave do cache para que o
     resumo de uma instituição nunca seja servido para outra.
     """
-    if _is_superadmin(request.user):
+    if is_superadmin(request.user):
         return qs, "todas"
     inst = request.user.instituicao_id
     return qs.filter(instituicao_id=inst), str(inst)
@@ -83,6 +99,10 @@ def openai_usage_summary(request):
     model_filter = request.GET.get("model", "").strip() or None
     data_inicio  = request.GET.get("data_inicio", "").strip() or None
     data_fim     = request.GET.get("data_fim", "").strip() or None
+
+    erro = _datas_validas(data_inicio, data_fim)
+    if erro:
+        return erro
 
     base_qs, escopo = _escopo(request, OpenAIUsage.objects.all())
     key = _cache_key(
@@ -225,18 +245,22 @@ def listar_openai_usage(request):
     if erro:
         return erro
 
+    model_filter   = request.GET.get("model", "").strip() or None
+    usuario_filter = request.GET.get("usuario_id", "").strip() or None
+    data_inicio    = request.GET.get("data_inicio", "").strip() or None
+    data_fim       = request.GET.get("data_fim", "").strip() or None
+
+    erro = _datas_validas(data_inicio, data_fim)
+    if erro:
+        return erro
+
     try:
-        model_filter   = request.GET.get("model", "").strip() or None
-        usuario_filter = request.GET.get("usuario_id", "").strip() or None
-        data_inicio    = request.GET.get("data_inicio", "").strip() or None
-        data_fim       = request.GET.get("data_fim", "").strip() or None
+        page      = max(1, int(request.GET.get("page", 1)))
+        page_size = min(100, max(1, int(request.GET.get("page_size", 10))))
+    except (ValueError, TypeError):
+        page, page_size = 1, 10
 
-        try:
-            page      = max(1, int(request.GET.get("page", 1)))
-            page_size = min(100, max(1, int(request.GET.get("page_size", 10))))
-        except (ValueError, TypeError):
-            page, page_size = 1, 10
-
+    try:
         qs, _ = _escopo(request, OpenAIUsage.objects.select_related("usuario"))
         qs = _aplicar_filtros(qs, model_filter, usuario_filter, data_inicio, data_fim)
 
