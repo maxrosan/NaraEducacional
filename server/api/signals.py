@@ -2,7 +2,7 @@
 
 import logging
 
-from django.db.models.signals import pre_save
+from django.db.models.signals import post_delete, pre_save
 from django.dispatch import receiver
 
 from api.models import Relatorio
@@ -59,3 +59,21 @@ def invalidar_pdf_ao_editar_conteudo(sender, instance: Relatorio, update_fields=
         "PDF cacheado descartado após edição do relatório.",
         extra={"relatorio_id": str(instance.pk), "storage_key": chave_antiga},
     )
+
+
+@receiver(post_delete, sender=Relatorio)
+def apagar_pdf_ao_excluir_relatorio(sender, instance: Relatorio, **kwargs):
+    """Remove do storage o PDF cacheado de um relatório excluído.
+
+    Mesmo princípio do `pre_save` acima: qualquer caminho que apague um
+    Relatorio (view, admin, shell, cascade do aluno) limpa o PDF — sem depender
+    de cada view lembrar. Roda depois do DELETE; `delete_from_storage` é
+    best-effort e nunca levanta, então não derruba a exclusão.
+    """
+    chave = instance.pdf_storage_key
+    if chave:
+        delete_from_storage(chave)
+        logger.info(
+            "PDF removido junto com o relatório.",
+            extra={"relatorio_id": str(instance.pk), "storage_key": chave},
+        )

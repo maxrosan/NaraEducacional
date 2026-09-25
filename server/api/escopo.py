@@ -305,22 +305,36 @@ def dono_ou_gestao(user, obj, campo_dono='professor_id') -> bool:
     return pode_gerenciar(user) or getattr(obj, campo_dono) == user.id
 
 
-def aluno_do_body(request, campo='aluno', exigir_vinculo=True):
-    """Aluno informado no body para criar um registro. Retorna `(aluno, erro)`.
+def aluno_com_vinculo(user, aluno_id, exigir_vinculo=True):
+    """Aluno do escopo para gravar algo dele (registro, relatório, upload).
+    Retorna `(aluno, erro)`.
 
     Com `exigir_vinculo`, quem não é gestão precisa estar vinculado
     (UsuarioTurma) à turma do aluno.
     """
+    aluno = buscar_no_escopo(Aluno, aluno_id) if aluno_id else None
+    if aluno is None:
+        return None, _erro('Aluno não encontrado.', status.HTTP_404_NOT_FOUND)
+    if exigir_vinculo and not pode_gerenciar(user) and not professor_vinculado_turma(user, aluno.turma_id):
+        return None, _erro('Você não está vinculado à turma desse aluno.', status.HTTP_403_FORBIDDEN)
+    return aluno, None
+
+
+def aluno_do_body(request, campo='aluno', exigir_vinculo=True):
+    """Como `aluno_com_vinculo`, lendo o id do campo `campo` do body."""
     aluno_id = request.data.get(campo)
     if not aluno_id:
         return None, _erro(f'Campo {campo} é obrigatório.')
-    aluno = buscar_no_escopo(Aluno, aluno_id)
-    if aluno is None:
-        return None, _erro('Aluno não encontrado.', status.HTTP_404_NOT_FOUND)
-    if exigir_vinculo and not pode_gerenciar(request.user) \
-            and not professor_vinculado_turma(request.user, aluno.turma_id):
-        return None, _erro('Você não está vinculado à turma desse aluno.', status.HTTP_403_FORBIDDEN)
-    return aluno, None
+    return aluno_com_vinculo(request.user, aluno_id, exigir_vinculo)
+
+
+def cliente_id_do_usuario(user):
+    """`cliente_id` usado pelo `prompt_resolver` (a instituição do usuário, em
+    str). Perfis de escola sem `instituicao_id` no cadastro usam a da escola."""
+    instituicao_id = getattr(user, 'instituicao_id', None)
+    if not instituicao_id and getattr(user, 'escola_id', None):
+        instituicao_id = user.escola.instituicao_id
+    return str(instituicao_id) if instituicao_id else None
 
 
 # ---------------------------------------------------------------------------
