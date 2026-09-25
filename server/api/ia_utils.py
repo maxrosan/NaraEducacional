@@ -8,7 +8,6 @@ Esta versão corrige a legada em três pontos — não reintroduzir aquelas:
     as queries feitas dentro dela saíam sem filtro de escola/instituição);
   * gerar_nome_arquivo_seguro não põe o nome da criança na chave do storage
     (LGPD) e usa `secrets`, não md5 de dados previsíveis;
-  * check_rate_limit conta por usuário, não por IP compartilhado da escola.
 """
 
 import contextvars
@@ -18,7 +17,6 @@ import secrets
 import time
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
 
-from django.core.cache import cache
 from rest_framework import status
 
 
@@ -123,33 +121,6 @@ def validate_uploaded_file(file_obj, allowed_types, allowed_extensions, max_size
         )
 
     return None
-
-def check_rate_limit(request, prefix: str):
-    """Rate limiting por usuário (ou IP, se anônimo), com janela fixa.
-
-    Retorna ``(permitido, retry_after_segundos)``.
-    """
-    user = getattr(request, "user", None)
-    if user is not None and getattr(user, "is_authenticated", False):
-        identidade = f"u:{user.pk}"
-    else:
-        identidade = f"ip:{request.META.get('REMOTE_ADDR', 'unknown')}"
-    key = f"rl:{prefix}:{identidade}"
-    now = time.time()
-
-    stored = cache.get(key)
-    if stored and now <= stored[1]:
-        count, expires_at = stored
-    else:
-        count, expires_at = 0, now + UPLOAD_RATE_WINDOW_SECONDS
-
-    count += 1
-    cache.set(key, (count, expires_at), timeout=max(int(expires_at - now), 1))
-
-    if count > UPLOAD_RATE_LIMIT:
-        return False, max(int(expires_at - now), 1)
-    return True, None
-
 
 def gerar_nome_arquivo_seguro(nome_aluno, arquivo_original):
     """Gera ``(nome_do_arquivo, hash)`` para armazenar uma produção.

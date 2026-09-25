@@ -2,12 +2,10 @@
 
 import json
 import logging
-import os
 from datetime import date
 
 from api.models import RegistroEscrita, RegistroDesenho
 from api.openai_client import get_openai_client
-from api.storage import upload_bytes_to_storage
 from api.ia_utils import run_with_timeout, IA_REQUEST_TIMEOUT_SECONDS
 
 from api.services.fases_producao import (
@@ -29,30 +27,6 @@ ELEMENTOS_DESENHO_CONHECIDOS = ("casa", "sol", "árvore", "pessoa", "animal", "f
 # ---------------------------------------------------------------------------
 # Upload para S3 (com fallback em disco local)
 # ---------------------------------------------------------------------------
-
-def upload_para_s3(file_bytes: bytes, tipo: str, arquivo_nome: str, content_type: str) -> str:
-    """Envia o arquivo ao S3 e retorna a *key*; se falhar, grava em ``uploads/<tipo>/`` e retorna o caminho local."""
-    s3_key = f"{tipo}/{arquivo_nome}"
-    try:
-        _, url = upload_bytes_to_storage(
-            key=s3_key,
-            content=file_bytes,
-            content_type=content_type or "image/jpeg",
-        )
-        if url:
-            logger.info("[S3] Upload de %s concluído: %s", tipo, url)
-            return s3_key
-        logger.warning("[S3] Upload de %s não retornou URL; usando disco local.", tipo)
-    except Exception as e:
-        logger.warning("[S3] Falha no upload de %s para S3: %s", tipo, e)
-
-    upload_dir = f"uploads/{tipo}"
-    os.makedirs(upload_dir, exist_ok=True)
-    local_path = os.path.join(upload_dir, arquivo_nome)
-    with open(local_path, "wb") as f:
-        f.write(file_bytes)
-    return local_path
-
 
 # ---------------------------------------------------------------------------
 # Helpers de prompt e validação

@@ -29,11 +29,10 @@ from api.models import (
     RegistroDesenho,
     RegistroEscrita,
     RegistroObservacao,
-    Relatorio,
     RelatorioTemplate,
 )
 from api.openai_client import get_openai_client
-from api.storage import delete_from_storage, refresh_presigned_url
+from api.storage import refresh_presigned_url
 
 from api.services.openai_usage import registrar_uso_openai
 from api.services.prompt_resolver import resolver_prompt
@@ -1343,20 +1342,6 @@ def gerar_relatorio_com_ia(nome_crianca, dados_estudante, periodo, crianca_id, n
             'modeloCapa': modelo,
         },
     }
-
-def deletar_relatorio(relatorio_id):
-    """Deleta um relatório e seu PDF associado no S3."""
-    relatorio = Relatorio.objects.filter(id=relatorio_id).first()
-    if not relatorio:
-        return {'success': False, 'error': 'Relatório não encontrado'}
-
-    if relatorio.pdf_storage_key:
-        delete_from_storage(relatorio.pdf_storage_key)
-
-    relatorio.delete()
-    logger.info("Relatório deletado.", extra={"relatorio_id": str(relatorio_id)})
-    return {'success': True}
-
 
 # Captura <img ... src="..."> ou <img ... src='...'>; o group(3) é o valor do src.
 _IMG_SRC_PATTERN = re.compile(
