@@ -5,10 +5,17 @@ from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
-from api.escopo import resolver_escopo_criacao
+from api.escopo import buscar_no_escopo, pode_gerenciar, resolver_escopo_criacao
 from api.models import Projeto
 from api.serializers import ProjetoSerializer
-from api.escopo import pode_gerenciar as _pode_gerenciar
+
+
+def _projeto_ou_404(projeto_id):
+    """Retorna (projeto, erro)."""
+    projeto = buscar_no_escopo(Projeto, projeto_id)
+    if projeto is None:
+        return None, Response({'error': 'Projeto não encontrado.'}, status=status.HTTP_404_NOT_FOUND)
+    return projeto, None
 
 
 @api_view(['GET'])
@@ -23,7 +30,7 @@ def listar_projetos(request):
 @permission_classes([IsAuthenticated])
 def criar_projeto(request):
     user = request.user
-    if not _pode_gerenciar(user):
+    if not pode_gerenciar(user):
         return Response({'error': 'Sem permissão.'}, status=status.HTTP_403_FORBIDDEN)
 
     escola_id, instituicao_id, erro = resolver_escopo_criacao(user, request.data)
@@ -39,23 +46,21 @@ def criar_projeto(request):
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
 def detalhe_projeto(request, projeto_id):
-    try:
-        projeto = Projeto.objects.get(id=projeto_id)
-    except Projeto.DoesNotExist:
-        return Response({'error': 'Projeto não encontrado.'}, status=status.HTTP_404_NOT_FOUND)
+    projeto, erro = _projeto_ou_404(projeto_id)
+    if erro:
+        return erro
     return Response(ProjetoSerializer(projeto).data)
 
 
 @api_view(['PATCH', 'PUT'])
 @permission_classes([IsAuthenticated])
 def atualizar_projeto(request, projeto_id):
-    if not _pode_gerenciar(request.user):
+    if not pode_gerenciar(request.user):
         return Response({'error': 'Sem permissão.'}, status=status.HTTP_403_FORBIDDEN)
 
-    try:
-        projeto = Projeto.objects.get(id=projeto_id)
-    except Projeto.DoesNotExist:
-        return Response({'error': 'Projeto não encontrado.'}, status=status.HTTP_404_NOT_FOUND)
+    projeto, erro = _projeto_ou_404(projeto_id)
+    if erro:
+        return erro
 
     partial = request.method == 'PATCH'
     serializer = ProjetoSerializer(projeto, data=request.data, partial=partial)

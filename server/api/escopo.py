@@ -65,7 +65,10 @@ def resolver_escopo_criacao(user, data, sem_escola=SEM_ESCOLA_PROIBIDO):
         if sem_escola == SEM_ESCOLA_OFICIAL:
             return None, None, None
         if sem_escola == SEM_ESCOLA_INSTITUICAO and data.get('instituicao'):
-            return None, data.get('instituicao'), None
+            instituicao = buscar_no_escopo(Instituicao, data.get('instituicao'))
+            if instituicao is None:
+                return None, None, _erro('Instituição não encontrada.')
+            return None, instituicao.id, None
         return None, None, _erro('Campo escola é obrigatório.')
 
     if user.nivel == 'admin':
@@ -83,7 +86,9 @@ def resolver_escopo_criacao(user, data, sem_escola=SEM_ESCOLA_PROIBIDO):
     # coordenador e demais perfis de escola: sempre a própria escola (body ignorado)
     if user.escola_id is None:
         return None, None, _erro('Usuário sem escola vinculada.')
-    return user.escola_id, user.instituicao_id, None
+    # Instituição sempre derivada da escola (não do cadastro do usuário, que
+    # pode estar vazio ou desatualizado).
+    return user.escola_id, user.escola.instituicao_id, None
 
 
 # ---------------------------------------------------------------------------
