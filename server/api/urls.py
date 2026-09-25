@@ -70,12 +70,10 @@ from .views.producao import (
 )
 from .views.registro import (
     listar_registros_escrita,
-    criar_registro_escrita,
     detalhe_registro_escrita,
     atualizar_registro_escrita,
     deletar_registro_escrita,
     listar_registros_desenho,
-    criar_registro_desenho,
     detalhe_registro_desenho,
     atualizar_registro_desenho,
     deletar_registro_desenho,
@@ -319,14 +317,12 @@ urlpatterns = [
 
     # Registros de Escrita
     path('registros-escrita/', listar_registros_escrita, name='listar_registros_escrita'),
-    path('registros-escrita/criar/', criar_registro_escrita, name='criar_registro_escrita'),
     path('registros-escrita/<uuid:registro_id>/', detalhe_registro_escrita, name='detalhe_registro_escrita'),
     path('registros-escrita/<uuid:registro_id>/atualizar/', atualizar_registro_escrita, name='atualizar_registro_escrita'),
     path('registros-escrita/<uuid:registro_id>/deletar/', deletar_registro_escrita, name='deletar_registro_escrita'),
 
     # Registros de Desenho
     path('registros-desenho/', listar_registros_desenho, name='listar_registros_desenho'),
-    path('registros-desenho/criar/', criar_registro_desenho, name='criar_registro_desenho'),
     path('registros-desenho/<uuid:registro_id>/', detalhe_registro_desenho, name='detalhe_registro_desenho'),
     path('registros-desenho/<uuid:registro_id>/atualizar/', atualizar_registro_desenho, name='atualizar_registro_desenho'),
     path('registros-desenho/<uuid:registro_id>/deletar/', deletar_registro_desenho, name='deletar_registro_desenho'),

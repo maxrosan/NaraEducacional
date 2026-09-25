@@ -20,7 +20,7 @@ from django.db.models import Q
 from rest_framework import status
 from rest_framework.response import Response
 
-from api.models import Escola
+from api.models import Aluno, Escola, UsuarioTurma
 from api.tenancy import is_superadmin  # noqa: F401 — fonte única em tenancy; reexportado
 
 
@@ -96,14 +96,38 @@ def eh_oficial(obj) -> bool:
     return obj.escola_id is None and obj.instituicao_id is None
 
 
+OFICIAL = Q(escola__isnull=True, instituicao__isnull=True)
+
+
+def filtro_oficiais_e_da_escola(escola_id) -> Q:
+    """O que UMA ESCOLA enxerga de um cadastro "oficial OU customizado"
+    (Pergunta, CampoPedagogico): os oficiais — comuns a todas as escolas, sem
+    exceção — mais os customizados da própria escola.
+
+    Fonte única desta regra: views e services (painel da coordenação,
+    relatório, matriz de indicadores) usam esta função. Nunca usar só
+    `escola__isnull=True`: isso também traz registros de escola nula com
+    instituição preenchida, que pertencem a OUTRA rede.
+    """
+    return OFICIAL | Q(escola_id=escola_id)
+
+
+def buscar_oficial_ou_da_escola(model, pk, escola_id):
+    """Registro "oficial OU customizado" utilizável pela escola informada, ou
+    None (inexistente, de outra escola/rede ou UUID malformado)."""
+    try:
+        return model._base_manager.filter(filtro_oficiais_e_da_escola(escola_id), pk=pk).first()
+    except (DjangoValidationError, ValueError, TypeError):
+        return None
+
+
 def filtro_visiveis(user) -> Q:
     """Q para `Model.todos` (manager sem tenant): oficiais + os do escopo do usuário."""
-    oficial = Q(escola__isnull=True, instituicao__isnull=True)
     if is_superadmin(user):
         return Q()
     if user.nivel == 'admin':
-        return oficial | Q(instituicao_id=user.instituicao_id) if user.instituicao_id else oficial
-    return oficial | Q(escola_id=user.escola_id) if user.escola_id else oficial
+        return OFICIAL | Q(instituicao_id=user.instituicao_id) if user.instituicao_id else OFICIAL
+    return filtro_oficiais_e_da_escola(user.escola_id) if user.escola_id else OFICIAL
 
 
 def pode_ver(user, obj) -> bool:
@@ -221,8 +245,31 @@ def professor_vinculado_turma(usuario, turma_id) -> bool:
     """Usuário tem vínculo (UsuarioTurma) com a turma."""
     if turma_id is None:
         return False
-    from api.models import UsuarioTurma
     return UsuarioTurma.objects.filter(usuario=usuario, turma_id=turma_id).exists()
+
+
+def dono_ou_gestao(user, obj, campo_dono='professor_id') -> bool:
+    """Editar/apagar um registro: gestão pode qualquer um do escopo; os demais,
+    só os próprios (`campo_dono` aponta o autor: professor_id, usuario_especialista_id...)."""
+    return pode_gerenciar(user) or getattr(obj, campo_dono) == user.id
+
+
+def aluno_do_body(request, campo='aluno', exigir_vinculo=True):
+    """Aluno informado no body para criar um registro. Retorna `(aluno, erro)`.
+
+    Com `exigir_vinculo`, quem não é gestão precisa estar vinculado
+    (UsuarioTurma) à turma do aluno.
+    """
+    aluno_id = request.data.get(campo)
+    if not aluno_id:
+        return None, _erro(f'Campo {campo} é obrigatório.')
+    aluno = buscar_no_escopo(Aluno, aluno_id)
+    if aluno is None:
+        return None, _erro('Aluno não encontrado.', status.HTTP_404_NOT_FOUND)
+    if exigir_vinculo and not pode_gerenciar(request.user) \
+            and not professor_vinculado_turma(request.user, aluno.turma_id):
+        return None, _erro('Você não está vinculado à turma desse aluno.', status.HTTP_403_FORBIDDEN)
+    return aluno, None
 
 
 # ---------------------------------------------------------------------------

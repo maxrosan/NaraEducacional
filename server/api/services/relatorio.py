@@ -38,6 +38,7 @@ from api.storage import delete_from_storage, refresh_presigned_url
 from api.services.openai_usage import registrar_uso_openai
 from api.services.prompt_resolver import resolver_prompt
 from api.services.relatorio_capa import renderizar_capa, ELEMENTOS_VISIVEIS_PADRAO
+from api.escopo import filtro_oficiais_e_da_escola
 
 logger = logging.getLogger(__name__)
 
@@ -874,7 +875,7 @@ def _gerar_secao_bncc(crianca_id, periodo, escola_id=None):
         # as oficiais de quem tem escopo de escola.
         perguntas_bncc = list(
             Pergunta.todos.filter(ativa=True)
-            .filter(Q(escola__isnull=True) | Q(escola_id=escola_id))
+            .filter(filtro_oficiais_e_da_escola(escola_id))
             .select_related('habilidade_bncc')
         )
 

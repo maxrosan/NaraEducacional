@@ -233,7 +233,8 @@ class RegistroEscritaSerializer(serializers.ModelSerializer):
             'escola', 'instituicao', 'criado_em', 'atualizado_em',
         ]
         read_only_fields = [
-            'id', 'turma', 'professor', 'escola', 'instituicao', 'criado_em', 'atualizado_em',
+            'id', 'aluno', 'turma', 'professor', 'escola', 'instituicao', 'criado_em', 'atualizado_em',
+            'arquivo_nome', 'arquivo_hash', 'arquivo_path', 'arquivo_original', 'tamanho_arquivo', 'tipo_arquivo',
         ]
 
 
@@ -252,7 +253,8 @@ class RegistroDesenhoSerializer(serializers.ModelSerializer):
             'escola', 'instituicao', 'criado_em', 'atualizado_em',
         ]
         read_only_fields = [
-            'id', 'turma', 'professor', 'escola', 'instituicao', 'criado_em', 'atualizado_em',
+            'id', 'aluno', 'turma', 'professor', 'escola', 'instituicao', 'criado_em', 'atualizado_em',
+            'arquivo_nome', 'arquivo_hash', 'arquivo_path', 'arquivo_original', 'tamanho_arquivo', 'tipo_arquivo',
         ]
 
 
@@ -328,6 +330,11 @@ class PerguntaEspecialistaSerializer(serializers.ModelSerializer):
 
 class RegistroObservacaoSerializer(serializers.ModelSerializer):
     aluno_nome = serializers.CharField(source='aluno.nome_completo', read_only=True)
+    # `todos`: o TenantManager esconderia as perguntas oficiais (escola nula).
+    # O recorte oficial + escola do aluno é feito na view (_pergunta_invalida).
+    pergunta = serializers.PrimaryKeyRelatedField(
+        queryset=Pergunta.todos.all(), required=False, allow_null=True,
+    )
 
     class Meta:
         model = RegistroObservacao
@@ -337,7 +344,7 @@ class RegistroObservacaoSerializer(serializers.ModelSerializer):
             'aluno', 'aluno_nome', 'professor', 'escola', 'instituicao',
             'criado_em', 'atualizado_em',
         ]
-        read_only_fields = ['id', 'professor', 'escola', 'instituicao', 'criado_em', 'atualizado_em']
+        read_only_fields = ['id', 'aluno', 'professor', 'escola', 'instituicao', 'criado_em', 'atualizado_em']
 
     def validate(self, attrs):
         pergunta = attrs.get('pergunta', getattr(self.instance, 'pergunta', None))

@@ -1,60 +1,96 @@
-"""Endpoints de RegistroObservacao e ObservacaoTranscricao."""
+"""Endpoints de RegistroObservacao e ObservacaoTranscricao.
+
+Regras (iguais às dos demais registros pedagógicos):
+  * leitura: todos do escopo (TenantManager);
+  * criação: gestão, ou professor vinculado à turma;
+  * edição/exclusão: gestão, ou o professor autor.
+"""
 
 from rest_framework import status
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
-from api.models import RegistroObservacao, ObservacaoTranscricao, Aluno, Turma, UsuarioTurma
+from api.escopo import (
+    aluno_do_body, buscar_no_escopo, buscar_oficial_ou_da_escola, dono_ou_gestao, filtrar_por,
+    pode_gerenciar, professor_vinculado_turma,
+)
+from api.models import RegistroObservacao, ObservacaoTranscricao, Aluno, Pergunta, Turma
 from api.serializers import RegistroObservacaoSerializer, ObservacaoTranscricaoSerializer
-from api.tenancy import is_superadmin as _is_superadmin
 
 
-def _pode_gerenciar_geral(user):
-    return _is_superadmin(user) or user.nivel in ('admin', 'coordenador')
+def _sem_permissao(mensagem='Sem permissão.'):
+    return Response({'error': mensagem}, status=status.HTTP_403_FORBIDDEN)
 
 
-def _professor_vinculado_turma(usuario, turma):
-    return UsuarioTurma.objects.filter(usuario=usuario, turma=turma).exists()
+def _nao_encontrado(mensagem):
+    return Response({'error': mensagem}, status=status.HTTP_404_NOT_FOUND)
 
 
-def _pode_editar(user, registro):
-    if _pode_gerenciar_geral(user):
-        return True
-    return registro.professor_id == user.id
+def _obj_ou_erro(request, model, obj_id, msg_nao_encontrado, editar=False):
+    """Retorna (obj, erro). Com `editar=True` também checa a permissão."""
+    obj = buscar_no_escopo(model, obj_id)
+    if obj is None:
+        return None, _nao_encontrado(msg_nao_encontrado)
+    if editar and not dono_ou_gestao(request.user, obj):
+        return None, _sem_permissao()
+    return obj, None
+
+
+def _salvar_edicao(request, obj, serializer_class):
+    partial = request.method == 'PATCH'
+    serializer = serializer_class(obj, data=request.data, partial=partial)
+    serializer.is_valid(raise_exception=True)
+    serializer.save()
+    return Response(serializer.data)
+
+
+# ============================================================
+# RegistroObservacao
+# ============================================================
+
+_OBS_NAO_ENCONTRADA = 'Registro não encontrado.'
+
+
+def _pergunta_invalida(request, escola_id):
+    """Se o body informa `pergunta`, ela precisa ser oficial ou customizada da
+    escola do registro (perguntas oficiais valem para todas as escolas).
+    Retorna `erro` ou None.
+
+    O serializer aceita qualquer id (`Pergunta.todos`) justamente para não
+    barrar as oficiais; o recorte por escola é feito aqui.
+    """
+    pergunta_id = request.data.get('pergunta')
+    if not pergunta_id:
+        return None
+    if buscar_oficial_ou_da_escola(Pergunta, pergunta_id, escola_id) is None:
+        return Response({'error': 'Pergunta não encontrada para a escola deste aluno.'},
+                        status=status.HTTP_400_BAD_REQUEST)
+    return None
 
 
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
 def listar_registros_observacao(request):
-    registros = RegistroObservacao.objects.all()
-    aluno_id = request.query_params.get('aluno')
-    if aluno_id:
-        registros = registros.filter(aluno_id=aluno_id)
+    registros = filtrar_por(RegistroObservacao.objects.all(), request, 'aluno', Aluno, 'aluno')
     return Response(RegistroObservacaoSerializer(registros.order_by('-data_observacao'), many=True).data)
 
 
 @api_view(['POST'])
 @permission_classes([IsAuthenticated])
 def criar_registro_observacao(request):
-    user = request.user
-    aluno_id = request.data.get('aluno')
-    if not aluno_id:
-        return Response({'error': 'Campo aluno é obrigatório.'}, status=status.HTTP_400_BAD_REQUEST)
+    aluno, erro = aluno_do_body(request)
+    if erro:
+        return erro
 
-    try:
-        aluno = Aluno.objects.get(id=aluno_id)
-    except Aluno.DoesNotExist:
-        return Response({'error': 'Aluno não encontrado.'}, status=status.HTTP_404_NOT_FOUND)
-
-    if not _pode_gerenciar_geral(user) and not _professor_vinculado_turma(user, aluno.turma):
-        return Response({'error': 'Você não está vinculado à turma desse aluno.'},
-                         status=status.HTTP_403_FORBIDDEN)
+    erro = _pergunta_invalida(request, aluno.escola_id)
+    if erro:
+        return erro
 
     serializer = RegistroObservacaoSerializer(data=request.data)
     serializer.is_valid(raise_exception=True)
     registro = serializer.save(
-        aluno=aluno, professor=user, escola_id=aluno.escola_id, instituicao_id=aluno.instituicao_id,
+        aluno=aluno, professor=request.user, escola_id=aluno.escola_id, instituicao_id=aluno.instituicao_id,
     )
     return Response(RegistroObservacaoSerializer(registro).data, status=status.HTTP_201_CREATED)
 
@@ -62,53 +98,64 @@ def criar_registro_observacao(request):
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
 def detalhe_registro_observacao(request, registro_id):
-    try:
-        registro = RegistroObservacao.objects.get(id=registro_id)
-    except RegistroObservacao.DoesNotExist:
-        return Response({'error': 'Registro não encontrado.'}, status=status.HTTP_404_NOT_FOUND)
+    registro, erro = _obj_ou_erro(request, RegistroObservacao, registro_id, _OBS_NAO_ENCONTRADA)
+    if erro:
+        return erro
     return Response(RegistroObservacaoSerializer(registro).data)
 
 
 @api_view(['PATCH', 'PUT'])
 @permission_classes([IsAuthenticated])
 def atualizar_registro_observacao(request, registro_id):
-    try:
-        registro = RegistroObservacao.objects.get(id=registro_id)
-    except RegistroObservacao.DoesNotExist:
-        return Response({'error': 'Registro não encontrado.'}, status=status.HTTP_404_NOT_FOUND)
-    if not _pode_editar(request.user, registro):
-        return Response({'error': 'Sem permissão.'}, status=status.HTTP_403_FORBIDDEN)
+    registro, erro = _obj_ou_erro(request, RegistroObservacao, registro_id, _OBS_NAO_ENCONTRADA, editar=True)
+    if erro:
+        return erro
 
-    partial = request.method == 'PATCH'
-    serializer = RegistroObservacaoSerializer(registro, data=request.data, partial=partial)
-    serializer.is_valid(raise_exception=True)
-    serializer.save()
-    return Response(serializer.data)
+    erro = _pergunta_invalida(request, registro.escola_id)
+    if erro:
+        return erro
+    return _salvar_edicao(request, registro, RegistroObservacaoSerializer)
 
 
 @api_view(['DELETE'])
 @permission_classes([IsAuthenticated])
 def deletar_registro_observacao(request, registro_id):
-    try:
-        registro = RegistroObservacao.objects.get(id=registro_id)
-    except RegistroObservacao.DoesNotExist:
-        return Response({'error': 'Registro não encontrado.'}, status=status.HTTP_404_NOT_FOUND)
-    if not _pode_editar(request.user, registro):
-        return Response({'error': 'Sem permissão.'}, status=status.HTTP_403_FORBIDDEN)
+    registro, erro = _obj_ou_erro(request, RegistroObservacao, registro_id, _OBS_NAO_ENCONTRADA, editar=True)
+    if erro:
+        return erro
     registro.delete()
     return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+# ============================================================
+# ObservacaoTranscricao
+# ============================================================
+
+_TRANSC_NAO_ENCONTRADA = 'Observação não encontrada.'
+
+
+def _aluno_fora_da_turma(request, turma_id):
+    """Se o body vincula um aluno, ele precisa existir no escopo e ser da turma.
+    Retorna `erro` ou None. `aluno` nulo/ausente é permitido (transcrição sem
+    criança identificada)."""
+    aluno_id = request.data.get('aluno')
+    if not aluno_id:
+        return None
+    aluno = buscar_no_escopo(Aluno, aluno_id)
+    if aluno is None:
+        return _nao_encontrado('Aluno não encontrado.')
+    if aluno.turma_id != turma_id:
+        return Response({'error': 'O aluno precisa pertencer à turma da observação.'},
+                        status=status.HTTP_400_BAD_REQUEST)
+    return None
 
 
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
 def listar_observacoes_transcricao(request):
     observacoes = ObservacaoTranscricao.objects.all()
-    turma_id = request.query_params.get('turma')
-    if turma_id:
-        observacoes = observacoes.filter(turma_id=turma_id)
-    aluno_id = request.query_params.get('aluno')
-    if aluno_id:
-        observacoes = observacoes.filter(aluno_id=aluno_id)
+    observacoes = filtrar_por(observacoes, request, 'turma', Turma, 'turma')
+    observacoes = filtrar_por(observacoes, request, 'aluno', Aluno, 'aluno')
     return Response(ObservacaoTranscricaoSerializer(observacoes.order_by('-data_observacao'), many=True).data)
 
 
@@ -125,14 +172,16 @@ def criar_observacao_transcricao(request):
     if not turma_id:
         return Response({'error': 'Campo turma é obrigatório.'}, status=status.HTTP_400_BAD_REQUEST)
 
-    try:
-        turma = Turma.objects.get(id=turma_id)
-    except Turma.DoesNotExist:
-        return Response({'error': 'Turma não encontrada.'}, status=status.HTTP_404_NOT_FOUND)
+    turma = buscar_no_escopo(Turma, turma_id)
+    if turma is None:
+        return _nao_encontrado('Turma não encontrada.')
 
-    if not _pode_gerenciar_geral(user) and not _professor_vinculado_turma(user, turma):
-        return Response({'error': 'Você não está vinculado a essa turma.'},
-                         status=status.HTTP_403_FORBIDDEN)
+    if not pode_gerenciar(user) and not professor_vinculado_turma(user, turma.id):
+        return _sem_permissao('Você não está vinculado a essa turma.')
+
+    erro = _aluno_fora_da_turma(request, turma.id)
+    if erro:
+        return erro
 
     serializer = ObservacaoTranscricaoSerializer(data=request.data)
     serializer.is_valid(raise_exception=True)
@@ -145,38 +194,34 @@ def criar_observacao_transcricao(request):
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
 def detalhe_observacao_transcricao(request, observacao_id):
-    try:
-        observacao = ObservacaoTranscricao.objects.get(id=observacao_id)
-    except ObservacaoTranscricao.DoesNotExist:
-        return Response({'error': 'Observação não encontrada.'}, status=status.HTTP_404_NOT_FOUND)
+    observacao, erro = _obj_ou_erro(request, ObservacaoTranscricao, observacao_id, _TRANSC_NAO_ENCONTRADA)
+    if erro:
+        return erro
     return Response(ObservacaoTranscricaoSerializer(observacao).data)
 
 
 @api_view(['PATCH', 'PUT'])
 @permission_classes([IsAuthenticated])
 def atualizar_observacao_transcricao(request, observacao_id):
-    try:
-        observacao = ObservacaoTranscricao.objects.get(id=observacao_id)
-    except ObservacaoTranscricao.DoesNotExist:
-        return Response({'error': 'Observação não encontrada.'}, status=status.HTTP_404_NOT_FOUND)
-    if not _pode_editar(request.user, observacao):
-        return Response({'error': 'Sem permissão.'}, status=status.HTTP_403_FORBIDDEN)
+    observacao, erro = _obj_ou_erro(
+        request, ObservacaoTranscricao, observacao_id, _TRANSC_NAO_ENCONTRADA, editar=True,
+    )
+    if erro:
+        return erro
 
-    partial = request.method == 'PATCH'
-    serializer = ObservacaoTranscricaoSerializer(observacao, data=request.data, partial=partial)
-    serializer.is_valid(raise_exception=True)
-    serializer.save()
-    return Response(serializer.data)
+    erro = _aluno_fora_da_turma(request, observacao.turma_id)
+    if erro:
+        return erro
+    return _salvar_edicao(request, observacao, ObservacaoTranscricaoSerializer)
 
 
 @api_view(['DELETE'])
 @permission_classes([IsAuthenticated])
 def deletar_observacao_transcricao(request, observacao_id):
-    try:
-        observacao = ObservacaoTranscricao.objects.get(id=observacao_id)
-    except ObservacaoTranscricao.DoesNotExist:
-        return Response({'error': 'Observação não encontrada.'}, status=status.HTTP_404_NOT_FOUND)
-    if not _pode_editar(request.user, observacao):
-        return Response({'error': 'Sem permissão.'}, status=status.HTTP_403_FORBIDDEN)
+    observacao, erro = _obj_ou_erro(
+        request, ObservacaoTranscricao, observacao_id, _TRANSC_NAO_ENCONTRADA, editar=True,
+    )
+    if erro:
+        return erro
     observacao.delete()
     return Response(status=status.HTTP_204_NO_CONTENT)

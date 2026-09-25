@@ -36,7 +36,7 @@ from datetime import date, timedelta
 from typing import Any
 
 from django.db import transaction
-from django.db.models import Count, Max, Min, Q
+from django.db.models import Count, Max, Min
 from django.db.models.functions import Length, Substr
 from django.utils import timezone
 
@@ -47,6 +47,7 @@ from api.models import (
     Relatorio, Turma, UsuarioTurma,
 )
 from api.services.fases_producao import FASES_ESCRITA as ORDEM_ESCRITA
+from api.escopo import filtro_oficiais_e_da_escola
 
 logger = logging.getLogger(__name__)
 
@@ -95,8 +96,8 @@ def _padronizar_faixa(faixa: str | None) -> str:
 
 
 def _perguntas_visiveis(escola_id):
-    """Perguntas oficiais (escola nula) + customizadas desta escola."""
-    return Pergunta.todos.filter(Q(escola_id=escola_id) | Q(escola__isnull=True))
+    """Perguntas oficiais (comuns a todas as escolas) + customizadas desta escola."""
+    return Pergunta.todos.filter(filtro_oficiais_e_da_escola(escola_id))
 
 
 def _registros_do_periodo(escola_id, data_inicio: date, data_fim: date):

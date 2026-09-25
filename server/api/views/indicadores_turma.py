@@ -41,7 +41,7 @@ from rest_framework import status
 
 from api.models import Aluno, PeriodoAvaliativo, Pergunta, RegistroDesenho, RegistroEscrita, RegistroLeitura, RegistroObservacao, Turma
 from api.services.coordenacao_cache import _padronizar_faixa
-from api.escopo import pode_ver_escola
+from api.escopo import filtro_oficiais_e_da_escola, pode_ver_escola
 from api.services.fases_producao import fase_desenho_canonica
 from api.views.coordenacao_cache import recorte_da_requisicao
 
@@ -120,18 +120,20 @@ def indicadores_turma(request):
 
     faixa = _padronizar_faixa(turma.faixa_etaria)
 
-    # Indicadores (perguntas) da faixa, agrupados por campo de experiência.
-    perguntas = list(
-        Pergunta.todos.filter(escola_id=turma.escola_id, faixa_etaria=faixa)
-        .values('id', 'pergunta', 'campo_experiencia__nome', 'area_conhecimento')
-        .order_by('campo_experiencia__nome', 'criado_em')
-    )
-    if not perguntas and faixa:
-        perguntas = list(
-            Pergunta.todos.filter(escola_id=turma.escola_id, faixa_etaria__icontains=faixa)
+    # Indicadores (perguntas) da faixa, agrupados por campo de experiência:
+    # oficiais (comuns a todas as escolas) + customizadas desta escola.
+    base_perguntas = Pergunta.todos.filter(filtro_oficiais_e_da_escola(turma.escola_id))
+
+    def _perguntas_da_faixa(**filtro_faixa):
+        return list(
+            base_perguntas.filter(**filtro_faixa)
             .values('id', 'pergunta', 'campo_experiencia__nome', 'area_conhecimento')
             .order_by('campo_experiencia__nome', 'criado_em')
         )
+
+    perguntas = _perguntas_da_faixa(faixa_etaria=faixa)
+    if not perguntas and faixa:
+        perguntas = _perguntas_da_faixa(faixa_etaria__icontains=faixa)
     pergunta_ids = [p['id'] for p in perguntas]
 
     alunos = list(
