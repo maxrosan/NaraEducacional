@@ -32,6 +32,12 @@ def resolver_prompt(titulo_categoria: str, cliente_id: str = None, fallback_arqu
     comportamento previsível mesmo se existir mais de um registro para a
     mesma categoria/instituição (cenário de dados legados/duplicados).
 
+    Usa `_base_manager` (sem tenant) de propósito: esta função roda DENTRO de
+    requisições (análise de produção, relatório, planejamento, áudio). Com o
+    `TenantManager`, um professor/coordenador só enxergaria templates com
+    `escola_id` = a escola dele — o global (sem escola) sumiria e todo mundo
+    cairia no .txt. O recorte correto aqui é por instituição, feito à mão.
+
     Args:
         titulo_categoria: Título exato da PromptCategoria no banco.
         cliente_id:       instituicao_id do usuário (str ou None). Nome mantido
@@ -46,7 +52,7 @@ def resolver_prompt(titulo_categoria: str, cliente_id: str = None, fallback_arqu
             # 1. Personalizado mais recente da instituição
             if cliente_id:
                 tpl = (
-                    PromptTemplate.objects.filter(
+                    PromptTemplate._base_manager.filter(
                         categoria=categoria,
                         instituicao_id=cliente_id,
                     )
@@ -62,7 +68,7 @@ def resolver_prompt(titulo_categoria: str, cliente_id: str = None, fallback_arqu
 
             # 2. Global mais recente do banco
             tpl_global = (
-                PromptTemplate.objects.filter(
+                PromptTemplate._base_manager.filter(
                     categoria=categoria,
                     instituicao__isnull=True,
                 )
