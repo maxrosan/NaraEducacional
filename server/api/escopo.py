@@ -20,7 +20,7 @@ from django.db.models import Q
 from rest_framework import status
 from rest_framework.response import Response
 
-from api.models import Aluno, Escola, UsuarioTurma
+from api.models import Aluno, Escola, Instituicao, UsuarioTurma
 from api.tenancy import is_superadmin  # noqa: F401 — fonte única em tenancy; reexportado
 
 
@@ -235,6 +235,32 @@ NIVEIS_ESPECIALISTA = ('especialista', 'professor_especialista')
 
 def eh_especialista(user) -> bool:
     return user.nivel in NIVEIS_ESPECIALISTA
+
+
+def pode_administrar(user) -> bool:
+    """Cadastros estruturais da rede (escolas, especialistas): superadmin ou admin.
+    Coordenador gerencia o dia a dia da escola, mas não a estrutura da rede."""
+    return is_superadmin(user) or user.nivel == 'admin'
+
+
+def resolver_instituicao_cadastro(user, data):
+    """Instituição de um cadastro que pertence à rede (escola, especialista).
+    Retorna `(instituicao_id, erro)`.
+
+    * superadmin: `instituicao` do body — obrigatória e precisa existir;
+    * admin: sempre a própria (o body é ignorado).
+    """
+    if is_superadmin(user):
+        informada = data.get('instituicao')
+        if not informada:
+            return None, _erro('Campo instituicao é obrigatório.')
+        instituicao = buscar_no_escopo(Instituicao, informada)
+        if instituicao is None:
+            return None, _erro('Instituição não encontrada.', status.HTTP_404_NOT_FOUND)
+        return instituicao.id, None
+    if not user.instituicao_id:
+        return None, _erro('Usuário sem instituição vinculada.')
+    return user.instituicao_id, None
 
 
 def pode_gerenciar(user) -> bool:

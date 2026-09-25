@@ -1,21 +1,50 @@
-"""Endpoints de Instituicao (topo da hierarquia multi-tenant)."""
+"""Endpoints de Instituicao (topo da hierarquia multi-tenant).
+
+* listar/criar: só superadmin;
+* detalhe: superadmin, ou qualquer usuário da própria instituição;
+* editar: superadmin, ou o ADMIN da própria instituição — e o admin não mexe
+  em `ativa` (ativar/desativar uma rede é decisão da plataforma).
+"""
 
 from rest_framework import status
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
+from api.escopo import buscar_no_escopo
 from api.models import Instituicao
 from api.serializers import InstituicaoSerializer
-from api.tenancy import is_superadmin as _is_superadmin
+from api.tenancy import is_superadmin
+
+# Campos que só o superadmin altera.
+CAMPOS_SO_SUPERADMIN = ('ativa',)
+
+
+def _sem_permissao():
+    return Response({'error': 'Sem permissão.'}, status=status.HTTP_403_FORBIDDEN)
+
+
+def _instituicao_ou_erro(user, instituicao_id, editar=False):
+    """Retorna (instituicao, erro). Checa a permissão ANTES de buscar, para não
+    revelar se o id de outra rede existe."""
+    if not is_superadmin(user):
+        if str(user.instituicao_id) != str(instituicao_id):
+            return None, _sem_permissao()
+        if editar and user.nivel != 'admin':
+            return None, _sem_permissao()
+
+    instituicao = buscar_no_escopo(Instituicao, instituicao_id)
+    if instituicao is None:
+        return None, Response({'error': 'Instituição não encontrada.'}, status=status.HTTP_404_NOT_FOUND)
+    return instituicao, None
 
 
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
 def listar_instituicoes(request):
     """Lista todas as instituições. Só superadmin."""
-    if not _is_superadmin(request.user):
-        return Response({'error': 'Sem permissão.'}, status=status.HTTP_403_FORBIDDEN)
+    if not is_superadmin(request.user):
+        return _sem_permissao()
 
     instituicoes = Instituicao.objects.all().order_by('nome')
     return Response(InstituicaoSerializer(instituicoes, many=True).data)
@@ -25,8 +54,8 @@ def listar_instituicoes(request):
 @permission_classes([IsAuthenticated])
 def criar_instituicao(request):
     """Cria uma nova instituição. Só superadmin."""
-    if not _is_superadmin(request.user):
-        return Response({'error': 'Sem permissão.'}, status=status.HTTP_403_FORBIDDEN)
+    if not is_superadmin(request.user):
+        return _sem_permissao()
 
     serializer = InstituicaoSerializer(data=request.data)
     serializer.is_valid(raise_exception=True)
@@ -37,32 +66,30 @@ def criar_instituicao(request):
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
 def detalhe_instituicao(request, instituicao_id):
-    """Detalhe de uma instituição. Superadmin vê qualquer uma; admin só a própria."""
-    if not _is_superadmin(request.user) and str(request.user.instituicao_id) != str(instituicao_id):
-        return Response({'error': 'Sem permissão.'}, status=status.HTTP_403_FORBIDDEN)
-
-    try:
-        instituicao = Instituicao.objects.get(id=instituicao_id)
-    except Instituicao.DoesNotExist:
-        return Response({'error': 'Instituição não encontrada.'}, status=status.HTTP_404_NOT_FOUND)
-
+    """Superadmin vê qualquer uma; os demais, só a própria."""
+    instituicao, erro = _instituicao_ou_erro(request.user, instituicao_id)
+    if erro:
+        return erro
     return Response(InstituicaoSerializer(instituicao).data)
 
 
 @api_view(['PATCH', 'PUT'])
 @permission_classes([IsAuthenticated])
 def atualizar_instituicao(request, instituicao_id):
-    """Atualiza uma instituição. Superadmin edita qualquer uma; admin só a própria."""
-    if not _is_superadmin(request.user) and str(request.user.instituicao_id) != str(instituicao_id):
-        return Response({'error': 'Sem permissão.'}, status=status.HTTP_403_FORBIDDEN)
+    """Superadmin edita qualquer uma; admin só a própria, sem os CAMPOS_SO_SUPERADMIN."""
+    user = request.user
+    instituicao, erro = _instituicao_ou_erro(user, instituicao_id, editar=True)
+    if erro:
+        return erro
 
-    try:
-        instituicao = Instituicao.objects.get(id=instituicao_id)
-    except Instituicao.DoesNotExist:
-        return Response({'error': 'Instituição não encontrada.'}, status=status.HTTP_404_NOT_FOUND)
+    data = request.data
+    if not is_superadmin(user):
+        data = request.data.copy()
+        for campo in CAMPOS_SO_SUPERADMIN:
+            data.pop(campo, None)
 
     partial = request.method == 'PATCH'
-    serializer = InstituicaoSerializer(instituicao, data=request.data, partial=partial)
+    serializer = InstituicaoSerializer(instituicao, data=data, partial=partial)
     serializer.is_valid(raise_exception=True)
     serializer.save()
     return Response(serializer.data)
