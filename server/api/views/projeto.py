@@ -8,11 +8,7 @@ from rest_framework.response import Response
 from api.escopo import resolver_escopo_criacao
 from api.models import Projeto
 from api.serializers import ProjetoSerializer
-from api.tenancy import is_superadmin as _is_superadmin
-
-
-def _pode_gerenciar(user):
-    return _is_superadmin(user) or user.nivel in ('admin', 'coordenador')
+from api.escopo import pode_gerenciar as _pode_gerenciar
 
 
 @api_view(['GET'])

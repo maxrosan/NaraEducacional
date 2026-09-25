@@ -187,6 +187,27 @@ def validar_vinculos_usuario(user, data, alvo=None):
 
 
 # ---------------------------------------------------------------------------
+# Gestão e busca no escopo (views de cadastro)
+# ---------------------------------------------------------------------------
+
+NIVEIS_GESTAO = ('admin', 'coordenador')
+
+
+def pode_gerenciar(user) -> bool:
+    """Quem pode criar/editar cadastros (turma, aluno, usuário...)."""
+    return is_superadmin(user) or user.nivel in NIVEIS_GESTAO
+
+
+def buscar_no_escopo(model, pk):
+    """Objeto pelo id via `model.objects` (TenantManager): fora do escopo do
+    usuário → None, igual a inexistente. UUID malformado → None em vez de 500."""
+    try:
+        return model.objects.filter(pk=pk).first()
+    except (DjangoValidationError, ValueError, TypeError):
+        return None
+
+
+# ---------------------------------------------------------------------------
 # Leitura por escola (painéis da coordenação)
 # ---------------------------------------------------------------------------
 

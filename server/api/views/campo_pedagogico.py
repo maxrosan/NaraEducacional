@@ -9,10 +9,7 @@ from api.escopo import SEM_ESCOLA_OFICIAL, filtro_visiveis, pode_editar, pode_ve
 from api.models import CampoPedagogico, HabilidadeBNCC
 from api.serializers import CampoPedagogicoSerializer, HabilidadeBNCCSerializer
 from api.tenancy import is_superadmin as _is_superadmin
-
-
-def _pode_gerenciar(user):
-    return _is_superadmin(user) or user.nivel in ('admin', 'coordenador')
+from api.escopo import pode_gerenciar as _pode_gerenciar
 
 
 # ============================================================

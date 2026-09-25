@@ -1,38 +1,86 @@
 """Endpoints de MetaPAEE, SessaoEspecialista, SessaoPAEEMeta e TarefaPAEE."""
 
+from django.core.exceptions import ValidationError
 from rest_framework import status
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
+from api.escopo import buscar_no_escopo, pode_gerenciar
 from api.models import MetaPAEE, SessaoEspecialista, SessaoPAEEMeta, TarefaPAEE, Aluno, UsuarioTurma
 from api.serializers import (
     MetaPAEESerializer, SessaoEspecialistaSerializer, SessaoPAEEMetaSerializer, TarefaPAEESerializer,
 )
-from api.tenancy import is_superadmin as _is_superadmin
 
 NIVEIS_ESPECIALISTA = ('especialista', 'professor_especialista')
 
+# O que um professor (sem gestão de PAEE) pode alterar numa tarefa.
+CAMPOS_CONCLUSAO_TAREFA = ('concluida', 'observacao_professor', 'data_conclusao')
 
-def _pode_gerenciar_geral(user):
-    return _is_superadmin(user) or user.nivel in ('admin', 'coordenador')
 
+# ---------------------------------------------------------------------------
+# Permissões
+# ---------------------------------------------------------------------------
 
 def _pode_criar_paee(user):
-    return _pode_gerenciar_geral(user) or user.nivel in NIVEIS_ESPECIALISTA
+    """Gestão (admin/coordenador/superadmin) ou especialista."""
+    return pode_gerenciar(user) or user.nivel in NIVEIS_ESPECIALISTA
 
 
-def _professor_vinculado_turma(usuario, turma):
-    return UsuarioTurma.objects.filter(usuario=usuario, turma=turma).exists()
+def _pode_editar_do_especialista(user, obj):
+    """Meta e sessão: gestão edita qualquer uma; especialista só as próprias."""
+    return pode_gerenciar(user) or obj.usuario_especialista_id == user.id
 
+
+def _professor_vinculado_turma(usuario, turma_id):
+    return turma_id is not None and UsuarioTurma.objects.filter(usuario=usuario, turma_id=turma_id).exists()
+
+
+# ---------------------------------------------------------------------------
+# Respostas comuns
+# ---------------------------------------------------------------------------
+
+def _sem_permissao():
+    return Response({'error': 'Sem permissão.'}, status=status.HTTP_403_FORBIDDEN)
+
+
+def _nao_encontrado(mensagem):
+    return Response({'error': mensagem}, status=status.HTTP_404_NOT_FOUND)
+
+
+def _obrigatorio(campo):
+    return Response({'error': f'Campo {campo} é obrigatório.'}, status=status.HTTP_400_BAD_REQUEST)
+
+
+def _filtrar_por(qs, request, parametro, model, campo):
+    """Aplica ?<parametro>=<uuid> como filtro por FK. Id inexistente, fora do
+    escopo ou malformado → queryset vazio (em vez de 500)."""
+    valor = request.query_params.get(parametro)
+    if not valor:
+        return qs
+    obj = buscar_no_escopo(model, valor)
+    return qs.filter(**{campo: obj}) if obj else qs.none()
+
+
+def _aluno_do_body(request):
+    """Retorna (aluno, erro) a partir do campo `aluno` do body."""
+    aluno_id = request.data.get('aluno')
+    if not aluno_id:
+        return None, _obrigatorio('aluno')
+    aluno = buscar_no_escopo(Aluno, aluno_id)
+    if aluno is None:
+        return None, _nao_encontrado('Aluno não encontrado.')
+    return aluno, None
+
+
+# ---------------------------------------------------------------------------
+# Metas PAEE
+# ---------------------------------------------------------------------------
 
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
 def listar_metas_paee(request):
-    metas = MetaPAEE.objects.all()
-    aluno_id = request.query_params.get('aluno')
-    if aluno_id:
-        metas = metas.filter(aluno_id=aluno_id)
+    metas = _filtrar_por(MetaPAEE.objects.all(), request, 'aluno', Aluno, 'aluno')
     return Response(MetaPAEESerializer(metas.order_by('-criado_em'), many=True).data)
 
 
@@ -41,21 +89,17 @@ def listar_metas_paee(request):
 def criar_meta_paee(request):
     user = request.user
     if not _pode_criar_paee(user):
-        return Response({'error': 'Sem permissão.'}, status=status.HTTP_403_FORBIDDEN)
+        return _sem_permissao()
 
-    aluno_id = request.data.get('aluno')
-    if not aluno_id:
-        return Response({'error': 'Campo aluno é obrigatório.'}, status=status.HTTP_400_BAD_REQUEST)
-
-    try:
-        aluno = Aluno.objects.get(id=aluno_id)
-    except Aluno.DoesNotExist:
-        return Response({'error': 'Aluno não encontrado.'}, status=status.HTTP_404_NOT_FOUND)
+    aluno, erro = _aluno_do_body(request)
+    if erro:
+        return erro
 
     serializer = MetaPAEESerializer(data=request.data)
     serializer.is_valid(raise_exception=True)
     meta = serializer.save(
-        aluno=aluno, usuario_especialista=user, escola_id=aluno.escola_id, instituicao_id=aluno.instituicao_id,
+        aluno=aluno, usuario_especialista=user, turma_id=aluno.turma_id,
+        escola_id=aluno.escola_id, instituicao_id=aluno.instituicao_id,
     )
     return Response(MetaPAEESerializer(meta).data, status=status.HTTP_201_CREATED)
 
@@ -63,28 +107,20 @@ def criar_meta_paee(request):
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
 def detalhe_meta_paee(request, meta_id):
-    try:
-        meta = MetaPAEE.objects.get(id=meta_id)
-    except MetaPAEE.DoesNotExist:
-        return Response({'error': 'Meta PAEE não encontrada.'}, status=status.HTTP_404_NOT_FOUND)
+    meta = buscar_no_escopo(MetaPAEE, meta_id)
+    if meta is None:
+        return _nao_encontrado('Meta PAEE não encontrada.')
     return Response(MetaPAEESerializer(meta).data)
-
-
-def _pode_editar_meta(user, meta):
-    if _pode_gerenciar_geral(user):
-        return True
-    return meta.usuario_especialista_id == user.id
 
 
 @api_view(['PATCH', 'PUT'])
 @permission_classes([IsAuthenticated])
 def atualizar_meta_paee(request, meta_id):
-    try:
-        meta = MetaPAEE.objects.get(id=meta_id)
-    except MetaPAEE.DoesNotExist:
-        return Response({'error': 'Meta PAEE não encontrada.'}, status=status.HTTP_404_NOT_FOUND)
-    if not _pode_editar_meta(request.user, meta):
-        return Response({'error': 'Sem permissão.'}, status=status.HTTP_403_FORBIDDEN)
+    meta = buscar_no_escopo(MetaPAEE, meta_id)
+    if meta is None:
+        return _nao_encontrado('Meta PAEE não encontrada.')
+    if not _pode_editar_do_especialista(request.user, meta):
+        return _sem_permissao()
 
     partial = request.method == 'PATCH'
     serializer = MetaPAEESerializer(meta, data=request.data, partial=partial)
@@ -93,13 +129,14 @@ def atualizar_meta_paee(request, meta_id):
     return Response(serializer.data)
 
 
+# ---------------------------------------------------------------------------
+# Sessões do especialista
+# ---------------------------------------------------------------------------
+
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
 def listar_sessoes_especialista(request):
-    sessoes = SessaoEspecialista.objects.all()
-    aluno_id = request.query_params.get('aluno')
-    if aluno_id:
-        sessoes = sessoes.filter(aluno_id=aluno_id)
+    sessoes = _filtrar_por(SessaoEspecialista.objects.all(), request, 'aluno', Aluno, 'aluno')
     return Response(SessaoEspecialistaSerializer(sessoes.order_by('-data_atendimento'), many=True).data)
 
 
@@ -108,21 +145,17 @@ def listar_sessoes_especialista(request):
 def criar_sessao_especialista(request):
     user = request.user
     if not _pode_criar_paee(user):
-        return Response({'error': 'Sem permissão.'}, status=status.HTTP_403_FORBIDDEN)
+        return _sem_permissao()
 
-    aluno_id = request.data.get('aluno')
-    if not aluno_id:
-        return Response({'error': 'Campo aluno é obrigatório.'}, status=status.HTTP_400_BAD_REQUEST)
-
-    try:
-        aluno = Aluno.objects.get(id=aluno_id)
-    except Aluno.DoesNotExist:
-        return Response({'error': 'Aluno não encontrado.'}, status=status.HTTP_404_NOT_FOUND)
+    aluno, erro = _aluno_do_body(request)
+    if erro:
+        return erro
 
     serializer = SessaoEspecialistaSerializer(data=request.data)
     serializer.is_valid(raise_exception=True)
     sessao = serializer.save(
-        aluno=aluno, usuario_especialista=user, escola_id=aluno.escola_id, instituicao_id=aluno.instituicao_id,
+        aluno=aluno, usuario_especialista=user, turma_id=aluno.turma_id,
+        escola_id=aluno.escola_id, instituicao_id=aluno.instituicao_id,
     )
     return Response(SessaoEspecialistaSerializer(sessao).data, status=status.HTTP_201_CREATED)
 
@@ -130,28 +163,20 @@ def criar_sessao_especialista(request):
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
 def detalhe_sessao_especialista(request, sessao_id):
-    try:
-        sessao = SessaoEspecialista.objects.get(id=sessao_id)
-    except SessaoEspecialista.DoesNotExist:
-        return Response({'error': 'Sessão não encontrada.'}, status=status.HTTP_404_NOT_FOUND)
+    sessao = buscar_no_escopo(SessaoEspecialista, sessao_id)
+    if sessao is None:
+        return _nao_encontrado('Sessão não encontrada.')
     return Response(SessaoEspecialistaSerializer(sessao).data)
-
-
-def _pode_editar_sessao(user, sessao):
-    if _pode_gerenciar_geral(user):
-        return True
-    return sessao.usuario_especialista_id == user.id
 
 
 @api_view(['PATCH', 'PUT'])
 @permission_classes([IsAuthenticated])
 def atualizar_sessao_especialista(request, sessao_id):
-    try:
-        sessao = SessaoEspecialista.objects.get(id=sessao_id)
-    except SessaoEspecialista.DoesNotExist:
-        return Response({'error': 'Sessão não encontrada.'}, status=status.HTTP_404_NOT_FOUND)
-    if not _pode_editar_sessao(request.user, sessao):
-        return Response({'error': 'Sem permissão.'}, status=status.HTTP_403_FORBIDDEN)
+    sessao = buscar_no_escopo(SessaoEspecialista, sessao_id)
+    if sessao is None:
+        return _nao_encontrado('Sessão não encontrada.')
+    if not _pode_editar_do_especialista(request.user, sessao):
+        return _sem_permissao()
 
     partial = request.method == 'PATCH'
     serializer = SessaoEspecialistaSerializer(sessao, data=request.data, partial=partial)
@@ -160,13 +185,16 @@ def atualizar_sessao_especialista(request, sessao_id):
     return Response(serializer.data)
 
 
+# ---------------------------------------------------------------------------
+# Vínculo sessão ↔ meta
+# ---------------------------------------------------------------------------
+
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
 def listar_metas_sessao(request, sessao_id):
-    try:
-        sessao = SessaoEspecialista.objects.get(id=sessao_id)
-    except SessaoEspecialista.DoesNotExist:
-        return Response({'error': 'Sessão não encontrada.'}, status=status.HTTP_404_NOT_FOUND)
+    sessao = buscar_no_escopo(SessaoEspecialista, sessao_id)
+    if sessao is None:
+        return _nao_encontrado('Sessão não encontrada.')
 
     vinculos = SessaoPAEEMeta.objects.filter(sessao_especialista=sessao).select_related('meta_paee')
     return Response(SessaoPAEEMetaSerializer(vinculos, many=True).data)
@@ -175,26 +203,23 @@ def listar_metas_sessao(request, sessao_id):
 @api_view(['POST'])
 @permission_classes([IsAuthenticated])
 def vincular_meta_sessao(request, sessao_id):
-    try:
-        sessao = SessaoEspecialista.objects.get(id=sessao_id)
-    except SessaoEspecialista.DoesNotExist:
-        return Response({'error': 'Sessão não encontrada.'}, status=status.HTTP_404_NOT_FOUND)
-
-    if not _pode_editar_sessao(request.user, sessao):
-        return Response({'error': 'Sem permissão.'}, status=status.HTTP_403_FORBIDDEN)
+    sessao = buscar_no_escopo(SessaoEspecialista, sessao_id)
+    if sessao is None:
+        return _nao_encontrado('Sessão não encontrada.')
+    if not _pode_editar_do_especialista(request.user, sessao):
+        return _sem_permissao()
 
     meta_id = request.data.get('meta_paee')
     if not meta_id:
-        return Response({'error': 'Campo meta_paee é obrigatório.'}, status=status.HTTP_400_BAD_REQUEST)
+        return _obrigatorio('meta_paee')
 
-    try:
-        meta = MetaPAEE.objects.get(id=meta_id)
-    except MetaPAEE.DoesNotExist:
-        return Response({'error': 'Meta PAEE não encontrada.'}, status=status.HTTP_404_NOT_FOUND)
+    meta = buscar_no_escopo(MetaPAEE, meta_id)
+    if meta is None:
+        return _nao_encontrado('Meta PAEE não encontrada.')
 
-    if str(meta.aluno_id) != str(sessao.aluno_id):
+    if meta.aluno_id != sessao.aluno_id:
         return Response({'error': 'A meta precisa ser do mesmo aluno da sessão.'},
-                         status=status.HTTP_400_BAD_REQUEST)
+                        status=status.HTTP_400_BAD_REQUEST)
 
     vinculo, criado = SessaoPAEEMeta.objects.get_or_create(sessao_especialista=sessao, meta_paee=meta)
     status_code = status.HTTP_201_CREATED if criado else status.HTTP_200_OK
@@ -204,45 +229,45 @@ def vincular_meta_sessao(request, sessao_id):
 @api_view(['DELETE'])
 @permission_classes([IsAuthenticated])
 def desvincular_meta_sessao(request, sessao_id, meta_id):
+    sessao = buscar_no_escopo(SessaoEspecialista, sessao_id)
+    if sessao is None:
+        return _nao_encontrado('Sessão não encontrada.')
+    if not _pode_editar_do_especialista(request.user, sessao):
+        return _sem_permissao()
+
     try:
-        sessao = SessaoEspecialista.objects.get(id=sessao_id)
-    except SessaoEspecialista.DoesNotExist:
-        return Response({'error': 'Sessão não encontrada.'}, status=status.HTTP_404_NOT_FOUND)
-
-    if not _pode_editar_sessao(request.user, sessao):
-        return Response({'error': 'Sem permissão.'}, status=status.HTTP_403_FORBIDDEN)
-
-    deletados, _ = SessaoPAEEMeta.objects.filter(sessao_especialista=sessao, meta_paee_id=meta_id).delete()
+        deletados, _ = SessaoPAEEMeta.objects.filter(sessao_especialista=sessao, meta_paee_id=meta_id).delete()
+    except (ValidationError, ValueError):  # meta_id malformado
+        deletados = 0
     if not deletados:
-        return Response({'error': 'Vínculo não encontrado.'}, status=status.HTTP_404_NOT_FOUND)
+        return _nao_encontrado('Vínculo não encontrado.')
     return Response(status=status.HTTP_204_NO_CONTENT)
 
+
+# ---------------------------------------------------------------------------
+# Tarefas PAEE
+# ---------------------------------------------------------------------------
 
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
 def listar_tarefas_paee(request):
-    tarefas = TarefaPAEE.objects.all()
-    meta_id = request.query_params.get('meta_paee')
-    if meta_id:
-        tarefas = tarefas.filter(meta_paee_id=meta_id)
+    tarefas = _filtrar_por(TarefaPAEE.objects.all(), request, 'meta_paee', MetaPAEE, 'meta_paee')
     return Response(TarefaPAEESerializer(tarefas.order_by('-criado_em'), many=True).data)
 
 
 @api_view(['POST'])
 @permission_classes([IsAuthenticated])
 def criar_tarefa_paee(request):
-    user = request.user
-    if not _pode_criar_paee(user):
-        return Response({'error': 'Sem permissão.'}, status=status.HTTP_403_FORBIDDEN)
+    if not _pode_criar_paee(request.user):
+        return _sem_permissao()
 
     meta_id = request.data.get('meta_paee')
     if not meta_id:
-        return Response({'error': 'Campo meta_paee é obrigatório.'}, status=status.HTTP_400_BAD_REQUEST)
+        return _obrigatorio('meta_paee')
 
-    try:
-        meta = MetaPAEE.objects.get(id=meta_id)
-    except MetaPAEE.DoesNotExist:
-        return Response({'error': 'Meta PAEE não encontrada.'}, status=status.HTTP_404_NOT_FOUND)
+    meta = buscar_no_escopo(MetaPAEE, meta_id)
+    if meta is None:
+        return _nao_encontrado('Meta PAEE não encontrada.')
 
     serializer = TarefaPAEESerializer(data=request.data)
     serializer.is_valid(raise_exception=True)
@@ -253,10 +278,9 @@ def criar_tarefa_paee(request):
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
 def detalhe_tarefa_paee(request, tarefa_id):
-    try:
-        tarefa = TarefaPAEE.objects.get(id=tarefa_id)
-    except TarefaPAEE.DoesNotExist:
-        return Response({'error': 'Tarefa não encontrada.'}, status=status.HTTP_404_NOT_FOUND)
+    tarefa = buscar_no_escopo(TarefaPAEE, tarefa_id)
+    if tarefa is None:
+        return _nao_encontrado('Tarefa não encontrada.')
     return Response(TarefaPAEESerializer(tarefa).data)
 
 
@@ -269,27 +293,31 @@ def atualizar_tarefa_paee(request, tarefa_id):
     quem gerencia PAEE (admin/coordenador/especialista).
     """
     user = request.user
-    try:
-        tarefa = TarefaPAEE.objects.get(id=tarefa_id)
-    except TarefaPAEE.DoesNotExist:
-        return Response({'error': 'Tarefa não encontrada.'}, status=status.HTTP_404_NOT_FOUND)
+    tarefa = buscar_no_escopo(TarefaPAEE, tarefa_id)
+    if tarefa is None:
+        return _nao_encontrado('Tarefa não encontrada.')
 
-    aluno = tarefa.meta_paee.aluno
-    pode_gerenciar = _pode_criar_paee(user)
-    pode_concluir = pode_gerenciar or _professor_vinculado_turma(user, aluno.turma)
+    gerencia_paee = _pode_criar_paee(user)
+    if not gerencia_paee and not _professor_vinculado_turma(user, tarefa.meta_paee.aluno.turma_id):
+        return _sem_permissao()
 
-    if not pode_concluir:
-        return Response({'error': 'Sem permissão.'}, status=status.HTTP_403_FORBIDDEN)
-
-    data = dict(request.data)
-    if not pode_gerenciar:
-        data = {k: v for k, v in data.items() if k in ('concluida', 'observacao_professor', 'data_conclusao')}
+    if gerencia_paee:
+        data = request.data
+    else:
+        data = {k: request.data.get(k) for k in CAMPOS_CONCLUSAO_TAREFA if k in request.data}
 
     serializer = TarefaPAEESerializer(tarefa, data=data, partial=True)
     serializer.is_valid(raise_exception=True)
     tarefa_atualizada = serializer.save()
 
-    if not pode_gerenciar and data.get('concluida') and tarefa_atualizada.professor_conclusao_id is None:
+    # Olha o valor já validado/salvo, não o do body: em multipart,
+    # `concluida` chega como a string "false", que é truthy.
+    if (
+        not gerencia_paee
+        and 'concluida' in data
+        and tarefa_atualizada.concluida
+        and tarefa_atualizada.professor_conclusao_id is None
+    ):
         tarefa_atualizada.professor_conclusao = user
         tarefa_atualizada.save(update_fields=['professor_conclusao'])
 

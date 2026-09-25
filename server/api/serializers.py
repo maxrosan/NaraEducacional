@@ -31,7 +31,7 @@ class TurmaSerializer(serializers.ModelSerializer):
             'escola', 'escola_nome', 'instituicao',
             'criado_em', 'atualizado_em',
         ]
-        read_only_fields = ['id', 'escola', 'instituicao', 'criado_em', 'atualizado_em']
+        read_only_fields = ['id', 'escola', 'instituicao', 'turma', 'criado_em', 'atualizado_em']
 
 
 class UsuarioTurmaSerializer(serializers.ModelSerializer):
@@ -443,7 +443,7 @@ class MetaPAEESerializer(serializers.ModelSerializer):
             'escola', 'instituicao', 'criado_em', 'atualizado_em',
         ]
         read_only_fields = [
-            'id', 'aluno', 'usuario_especialista', 'escola', 'instituicao', 'criado_em', 'atualizado_em',
+            'id', 'aluno', 'usuario_especialista', 'turma', 'escola', 'instituicao', 'criado_em', 'atualizado_em',
         ]
 
 
@@ -459,7 +459,7 @@ class SessaoEspecialistaSerializer(serializers.ModelSerializer):
             'escola', 'instituicao', 'criado_em', 'atualizado_em',
         ]
         read_only_fields = [
-            'id', 'aluno', 'usuario_especialista', 'escola', 'instituicao', 'criado_em', 'atualizado_em',
+            'id', 'aluno', 'usuario_especialista', 'turma', 'escola', 'instituicao', 'criado_em', 'atualizado_em',
         ]
 
 

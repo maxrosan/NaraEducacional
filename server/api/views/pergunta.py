@@ -8,11 +8,7 @@ from rest_framework.response import Response
 from api.escopo import SEM_ESCOLA_OFICIAL, filtro_visiveis, pode_editar, pode_ver, resolver_escopo_criacao
 from api.models import Pergunta, PerguntaEspecialista
 from api.serializers import PerguntaSerializer, PerguntaEspecialistaSerializer
-from api.tenancy import is_superadmin as _is_superadmin
-
-
-def _pode_gerenciar(user):
-    return _is_superadmin(user) or user.nivel in ('admin', 'coordenador')
+from api.escopo import pode_gerenciar as _pode_gerenciar
 
 
 @api_view(['GET'])
