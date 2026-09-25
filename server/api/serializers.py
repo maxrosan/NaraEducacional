@@ -301,6 +301,11 @@ class HabilidadeBNCCSerializer(serializers.ModelSerializer):
 
 class PerguntaSerializer(serializers.ModelSerializer):
     escola_nome = serializers.CharField(source='escola.nome', read_only=True, default=None)
+    # `todos`: o TenantManager esconderia os campos oficiais (escola nula).
+    # O recorte oficial + escola da pergunta é feito na view (_campo_invalido).
+    campo_experiencia = serializers.PrimaryKeyRelatedField(
+        queryset=CampoPedagogico.todos.all(), required=False, allow_null=True,
+    )
 
     class Meta:
         model = Pergunta
@@ -314,6 +319,11 @@ class PerguntaSerializer(serializers.ModelSerializer):
 
 class PerguntaEspecialistaSerializer(serializers.ModelSerializer):
     usuario_especialista_nome = serializers.CharField(source='usuario_especialista.nome', read_only=True)
+    # `todos`: o TenantManager esconderia os campos oficiais (escola nula).
+    # O recorte oficial + escola da pergunta é feito na view (_campo_invalido).
+    campo_experiencia = serializers.PrimaryKeyRelatedField(
+        queryset=CampoPedagogico.todos.all(), required=False, allow_null=True,
+    )
 
     class Meta:
         model = PerguntaEspecialista

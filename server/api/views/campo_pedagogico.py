@@ -1,29 +1,51 @@
-"""Endpoints de CampoPedagogico e HabilidadeBNCC (tabela global)."""
+"""Endpoints de CampoPedagogico e HabilidadeBNCC (tabela global).
+
+CampoPedagogico é um cadastro "oficial OU customizado": os oficiais (escola e
+instituição nulas) valem para todas as escolas; cada escola pode criar os
+seus. Leitura/busca pelo manager `todos` + `escopo.filtro_visiveis`.
+"""
 
 from rest_framework import status
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
-from api.escopo import SEM_ESCOLA_OFICIAL, filtro_visiveis, pode_editar, pode_ver, resolver_escopo_criacao
+from api.escopo import (
+    SEM_ESCOLA_OFICIAL, buscar_no_escopo, buscar_visivel, filtro_visiveis, pode_editar, pode_gerenciar,
+    resolver_escopo_criacao,
+)
 from api.models import CampoPedagogico, HabilidadeBNCC
 from api.serializers import CampoPedagogicoSerializer, HabilidadeBNCCSerializer
-from api.tenancy import is_superadmin as _is_superadmin
-from api.escopo import pode_gerenciar as _pode_gerenciar
+from api.tenancy import is_superadmin
+
+
+def _sem_permissao():
+    return Response({'error': 'Sem permissão.'}, status=status.HTTP_403_FORBIDDEN)
+
+
+def _nao_encontrado(mensagem):
+    return Response({'error': mensagem}, status=status.HTTP_404_NOT_FOUND)
+
+
+def _salvar_edicao(request, obj, serializer_class):
+    partial = request.method == 'PATCH'
+    serializer = serializer_class(obj, data=request.data, partial=partial)
+    serializer.is_valid(raise_exception=True)
+    serializer.save()
+    return Response(serializer.data)
 
 
 # ============================================================
-# CampoPedagogico — usa o manager `todos` (sem tenant), filtro manual
-# pra combinar "oficial (escola nula) OU da minha escola/instituição".
+# CampoPedagogico
 # ============================================================
+
+_CAMPO_NAO_ENCONTRADO = 'Campo pedagógico não encontrado.'
+
 
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
 def listar_campos_pedagogicos(request):
-    user = request.user
-
-    campos = CampoPedagogico.todos.filter(filtro_visiveis(user))
-
+    campos = CampoPedagogico.todos.filter(filtro_visiveis(request.user))
     return Response(CampoPedagogicoSerializer(campos.order_by('nome'), many=True).data)
 
 
@@ -31,8 +53,8 @@ def listar_campos_pedagogicos(request):
 @permission_classes([IsAuthenticated])
 def criar_campo_pedagogico(request):
     user = request.user
-    if not _pode_gerenciar(user):
-        return Response({'error': 'Sem permissão.'}, status=status.HTTP_403_FORBIDDEN)
+    if not pode_gerenciar(user):
+        return _sem_permissao()
 
     escola_id, instituicao_id, erro = resolver_escopo_criacao(user, request.data, sem_escola=SEM_ESCOLA_OFICIAL)
     if erro:
@@ -47,15 +69,9 @@ def criar_campo_pedagogico(request):
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
 def detalhe_campo_pedagogico(request, campo_id):
-    user = request.user
-    try:
-        campo = CampoPedagogico.todos.get(id=campo_id)
-    except CampoPedagogico.DoesNotExist:
-        return Response({'error': 'Campo pedagógico não encontrado.'}, status=status.HTTP_404_NOT_FOUND)
-
-    if not pode_ver(user, campo):
-        return Response({'error': 'Sem permissão.'}, status=status.HTTP_403_FORBIDDEN)
-
+    campo = buscar_visivel(CampoPedagogico, campo_id, request.user)
+    if campo is None:
+        return _nao_encontrado(_CAMPO_NAO_ENCONTRADO)
     return Response(CampoPedagogicoSerializer(campo).data)
 
 
@@ -63,23 +79,17 @@ def detalhe_campo_pedagogico(request, campo_id):
 @permission_classes([IsAuthenticated])
 def atualizar_campo_pedagogico(request, campo_id):
     user = request.user
-    if not _pode_gerenciar(user):
-        return Response({'error': 'Sem permissão.'}, status=status.HTTP_403_FORBIDDEN)
+    if not pode_gerenciar(user):
+        return _sem_permissao()
 
-    try:
-        campo = CampoPedagogico.todos.get(id=campo_id)
-    except CampoPedagogico.DoesNotExist:
-        return Response({'error': 'Campo pedagógico não encontrado.'}, status=status.HTTP_404_NOT_FOUND)
+    campo = buscar_visivel(CampoPedagogico, campo_id, user)
+    if campo is None:
+        return _nao_encontrado(_CAMPO_NAO_ENCONTRADO)
 
-    erro = pode_editar(user, campo)
+    erro = pode_editar(user, campo)  # oficial: só superadmin
     if erro:
         return erro
-
-    partial = request.method == 'PATCH'
-    serializer = CampoPedagogicoSerializer(campo, data=request.data, partial=partial)
-    serializer.is_valid(raise_exception=True)
-    serializer.save()
-    return Response(serializer.data)
+    return _salvar_edicao(request, campo, CampoPedagogicoSerializer)
 
 
 # ============================================================
@@ -87,6 +97,9 @@ def atualizar_campo_pedagogico(request, campo_id):
 # Leitura livre pra qualquer autenticado; escrita só superadmin
 # (é o catálogo oficial da BNCC, não algo que cada escola edita).
 # ============================================================
+
+_HABILIDADE_NAO_ENCONTRADA = 'Habilidade não encontrada.'
+
 
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
@@ -101,8 +114,8 @@ def listar_habilidades_bncc(request):
 @api_view(['POST'])
 @permission_classes([IsAuthenticated])
 def criar_habilidade_bncc(request):
-    if not _is_superadmin(request.user):
-        return Response({'error': 'Sem permissão.'}, status=status.HTTP_403_FORBIDDEN)
+    if not is_superadmin(request.user):
+        return _sem_permissao()
 
     serializer = HabilidadeBNCCSerializer(data=request.data)
     serializer.is_valid(raise_exception=True)
@@ -113,26 +126,19 @@ def criar_habilidade_bncc(request):
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
 def detalhe_habilidade_bncc(request, habilidade_id):
-    try:
-        habilidade = HabilidadeBNCC.objects.get(id=habilidade_id)
-    except HabilidadeBNCC.DoesNotExist:
-        return Response({'error': 'Habilidade não encontrada.'}, status=status.HTTP_404_NOT_FOUND)
+    habilidade = buscar_no_escopo(HabilidadeBNCC, habilidade_id)  # tabela global: só trata id malformado
+    if habilidade is None:
+        return _nao_encontrado(_HABILIDADE_NAO_ENCONTRADA)
     return Response(HabilidadeBNCCSerializer(habilidade).data)
 
 
 @api_view(['PATCH', 'PUT'])
 @permission_classes([IsAuthenticated])
 def atualizar_habilidade_bncc(request, habilidade_id):
-    if not _is_superadmin(request.user):
-        return Response({'error': 'Sem permissão.'}, status=status.HTTP_403_FORBIDDEN)
+    if not is_superadmin(request.user):
+        return _sem_permissao()
 
-    try:
-        habilidade = HabilidadeBNCC.objects.get(id=habilidade_id)
-    except HabilidadeBNCC.DoesNotExist:
-        return Response({'error': 'Habilidade não encontrada.'}, status=status.HTTP_404_NOT_FOUND)
-
-    partial = request.method == 'PATCH'
-    serializer = HabilidadeBNCCSerializer(habilidade, data=request.data, partial=partial)
-    serializer.is_valid(raise_exception=True)
-    serializer.save()
-    return Response(serializer.data)
+    habilidade = buscar_no_escopo(HabilidadeBNCC, habilidade_id)
+    if habilidade is None:
+        return _nao_encontrado(_HABILIDADE_NAO_ENCONTRADA)
+    return _salvar_edicao(request, habilidade, HabilidadeBNCCSerializer)

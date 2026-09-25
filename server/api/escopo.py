@@ -109,7 +109,22 @@ def filtro_oficiais_e_da_escola(escola_id) -> Q:
     `escola__isnull=True`: isso também traz registros de escola nula com
     instituição preenchida, que pertencem a OUTRA rede.
     """
+    if escola_id is None:
+        # Registro oficial (sem escola) só pode referenciar outros oficiais.
+        # Sem este caso, `Q(escola_id=None)` traria também os de escola nula
+        # e instituição preenchida — de outra rede.
+        return OFICIAL
     return OFICIAL | Q(escola_id=escola_id)
+
+
+def buscar_visivel(model, pk, user):
+    """Registro "oficial OU customizado" que o usuário pode ver (ver
+    `filtro_visiveis`), ou None — inexistente, de outro escopo ou UUID
+    malformado. Fora do escopo vira 404, sem revelar que o id existe."""
+    try:
+        return model._base_manager.filter(filtro_visiveis(user), pk=pk).first()
+    except (DjangoValidationError, ValueError, TypeError):
+        return None
 
 
 def buscar_oficial_ou_da_escola(model, pk, escola_id):
@@ -215,6 +230,11 @@ def validar_vinculos_usuario(user, data, alvo=None):
 # ---------------------------------------------------------------------------
 
 NIVEIS_GESTAO = ('admin', 'coordenador')
+NIVEIS_ESPECIALISTA = ('especialista', 'professor_especialista')
+
+
+def eh_especialista(user) -> bool:
+    return user.nivel in NIVEIS_ESPECIALISTA
 
 
 def pode_gerenciar(user) -> bool:
