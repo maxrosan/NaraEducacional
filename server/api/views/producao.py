@@ -1,38 +1,55 @@
 """Endpoints de Producao (portfólio) e do vínculo com Aluno."""
 
+from django.core.exceptions import ValidationError
 from rest_framework import status
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
-from api.models import Producao, ProducaoAluno, Turma, Aluno, UsuarioTurma
+from api.escopo import buscar_no_escopo, filtrar_por, pode_gerenciar, professor_vinculado_turma
+from api.models import Producao, ProducaoAluno, Turma, Aluno
 from api.serializers import ProducaoSerializer, ProducaoAlunoSerializer
-from api.tenancy import is_superadmin as _is_superadmin
 
 
-def _pode_gerenciar_geral(user):
-    """Admin/coordenador/superadmin gerenciam qualquer produção do escopo deles."""
-    return _is_superadmin(user) or user.nivel in ('admin', 'coordenador')
+def _sem_permissao(mensagem='Sem permissão.'):
+    return Response({'error': mensagem}, status=status.HTTP_403_FORBIDDEN)
 
 
-def _professor_vinculado_turma(usuario, turma):
-    return UsuarioTurma.objects.filter(usuario=usuario, turma=turma).exists()
+def _nao_encontrado(mensagem):
+    return Response({'error': mensagem}, status=status.HTTP_404_NOT_FOUND)
 
+
+def _pode_editar_producao(user, producao):
+    """Gestão edita qualquer produção do escopo; professor, só as próprias."""
+    return pode_gerenciar(user) or producao.professor_id == user.id
+
+
+def _producao_ou_erro(request, producao_id, editar=False):
+    """Retorna (producao, erro). Com `editar=True` também checa a permissão.
+
+    É SEMPRE por aqui que as rotas de vínculo chegam à produção: o
+    ProducaoAluno não tem TenantManager, então o escopo vem da produção.
+    """
+    producao = buscar_no_escopo(Producao, producao_id)
+    if producao is None:
+        return None, _nao_encontrado('Produção não encontrada.')
+    if editar and not _pode_editar_producao(request.user, producao):
+        return None, _sem_permissao()
+    return producao, None
+
+
+# ---------------------------------------------------------------------------
+# Produção
+# ---------------------------------------------------------------------------
 
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
 def listar_producoes(request):
     """Já filtrado pelo TenantManager. Aceita ?turma=<uuid> e ?aluno=<uuid>."""
     producoes = Producao.objects.all()
-
-    turma_id = request.query_params.get('turma')
-    if turma_id:
-        producoes = producoes.filter(turma_id=turma_id)
-
-    aluno_id = request.query_params.get('aluno')
-    if aluno_id:
-        producoes = producoes.filter(producao_alunos__aluno_id=aluno_id).distinct()
-
+    producoes = filtrar_por(producoes, request, 'turma', Turma, 'turma')
+    if request.query_params.get('aluno'):
+        producoes = filtrar_por(producoes, request, 'aluno', Aluno, 'producao_alunos__aluno').distinct()
     return Response(ProducaoSerializer(producoes.order_by('-criado_em'), many=True).data)
 
 
@@ -44,16 +61,13 @@ def criar_producao(request):
     if not turma_id:
         return Response({'error': 'Campo turma é obrigatório.'}, status=status.HTTP_400_BAD_REQUEST)
 
-    try:
-        turma = Turma.objects.get(id=turma_id)  # já respeita o escopo do TenantManager
-    except Turma.DoesNotExist:
-        return Response({'error': 'Turma não encontrada.'}, status=status.HTTP_404_NOT_FOUND)
+    turma = buscar_no_escopo(Turma, turma_id)
+    if turma is None:
+        return _nao_encontrado('Turma não encontrada.')
 
-    if not _pode_gerenciar_geral(user):
-        # Professor: só pode subir produção pra turma em que está vinculado.
-        if not _professor_vinculado_turma(user, turma):
-            return Response({'error': 'Você não está vinculado a essa turma.'},
-                             status=status.HTTP_403_FORBIDDEN)
+    # Professor: só pode subir produção pra turma em que está vinculado.
+    if not pode_gerenciar(user) and not professor_vinculado_turma(user, turma.id):
+        return _sem_permissao('Você não está vinculado a essa turma.')
 
     serializer = ProducaoSerializer(data=request.data)
     serializer.is_valid(raise_exception=True)
@@ -66,29 +80,18 @@ def criar_producao(request):
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
 def detalhe_producao(request, producao_id):
-    try:
-        producao = Producao.objects.get(id=producao_id)
-    except Producao.DoesNotExist:
-        return Response({'error': 'Produção não encontrada.'}, status=status.HTTP_404_NOT_FOUND)
+    producao, erro = _producao_ou_erro(request, producao_id)
+    if erro:
+        return erro
     return Response(ProducaoSerializer(producao).data)
-
-
-def _pode_editar_producao(user, producao):
-    if _pode_gerenciar_geral(user):
-        return True
-    return producao.professor_id == user.id
 
 
 @api_view(['PATCH', 'PUT'])
 @permission_classes([IsAuthenticated])
 def atualizar_producao(request, producao_id):
-    try:
-        producao = Producao.objects.get(id=producao_id)
-    except Producao.DoesNotExist:
-        return Response({'error': 'Produção não encontrada.'}, status=status.HTTP_404_NOT_FOUND)
-
-    if not _pode_editar_producao(request.user, producao):
-        return Response({'error': 'Sem permissão.'}, status=status.HTTP_403_FORBIDDEN)
+    producao, erro = _producao_ou_erro(request, producao_id, editar=True)
+    if erro:
+        return erro
 
     partial = request.method == 'PATCH'
     serializer = ProducaoSerializer(producao, data=request.data, partial=partial)
@@ -100,25 +103,24 @@ def atualizar_producao(request, producao_id):
 @api_view(['DELETE'])
 @permission_classes([IsAuthenticated])
 def deletar_producao(request, producao_id):
-    try:
-        producao = Producao.objects.get(id=producao_id)
-    except Producao.DoesNotExist:
-        return Response({'error': 'Produção não encontrada.'}, status=status.HTTP_404_NOT_FOUND)
-
-    if not _pode_editar_producao(request.user, producao):
-        return Response({'error': 'Sem permissão.'}, status=status.HTTP_403_FORBIDDEN)
+    producao, erro = _producao_ou_erro(request, producao_id, editar=True)
+    if erro:
+        return erro
 
     producao.delete()
     return Response(status=status.HTTP_204_NO_CONTENT)
 
 
+# ---------------------------------------------------------------------------
+# Vínculo produção ↔ aluno
+# ---------------------------------------------------------------------------
+
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
 def listar_alunos_producao(request, producao_id):
-    try:
-        producao = Producao.objects.get(id=producao_id)
-    except Producao.DoesNotExist:
-        return Response({'error': 'Produção não encontrada.'}, status=status.HTTP_404_NOT_FOUND)
+    producao, erro = _producao_ou_erro(request, producao_id)
+    if erro:
+        return erro
 
     vinculos = ProducaoAluno.objects.filter(producao=producao).select_related('aluno')
     return Response(ProducaoAlunoSerializer(vinculos, many=True).data)
@@ -127,49 +129,47 @@ def listar_alunos_producao(request, producao_id):
 @api_view(['POST'])
 @permission_classes([IsAuthenticated])
 def vincular_aluno_producao(request, producao_id):
-    try:
-        producao = Producao.objects.get(id=producao_id)
-    except Producao.DoesNotExist:
-        return Response({'error': 'Produção não encontrada.'}, status=status.HTTP_404_NOT_FOUND)
-
-    if not _pode_editar_producao(request.user, producao):
-        return Response({'error': 'Sem permissão.'}, status=status.HTTP_403_FORBIDDEN)
+    producao, erro = _producao_ou_erro(request, producao_id, editar=True)
+    if erro:
+        return erro
 
     aluno_id = request.data.get('aluno')
     if not aluno_id:
         return Response({'error': 'Campo aluno é obrigatório.'}, status=status.HTTP_400_BAD_REQUEST)
 
-    try:
-        aluno = Aluno.objects.get(id=aluno_id)
-    except Aluno.DoesNotExist:
-        return Response({'error': 'Aluno não encontrado.'}, status=status.HTTP_404_NOT_FOUND)
+    aluno = buscar_no_escopo(Aluno, aluno_id)
+    if aluno is None:
+        return _nao_encontrado('Aluno não encontrado.')
 
-    if str(aluno.turma_id) != str(producao.turma_id):
+    if aluno.turma_id != producao.turma_id:
         return Response({'error': 'O aluno precisa pertencer à mesma turma da produção.'},
-                         status=status.HTTP_400_BAD_REQUEST)
+                        status=status.HTTP_400_BAD_REQUEST)
 
-    vinculo, criado = ProducaoAluno.objects.get_or_create(
-        producao=producao, aluno=aluno,
-        defaults={
-            'legenda': request.data.get('legenda', ''),
-            'destaque': request.data.get('destaque', False),
-            'incluir_relatorio': request.data.get('incluir_relatorio', False),
-        },
-    )
-    status_code = status.HTTP_201_CREATED if criado else status.HTTP_200_OK
-    return Response(ProducaoAlunoSerializer(vinculo).data, status=status_code)
+    existente = ProducaoAluno.objects.filter(producao=producao, aluno=aluno).first()
+    if existente:
+        return Response(ProducaoAlunoSerializer(existente).data, status=status.HTTP_200_OK)
+
+    # Serializer (e não request.data cru) para converter legenda/destaque/
+    # incluir_relatorio: em multipart, "false" chega como string truthy.
+    serializer = ProducaoAlunoSerializer(data=request.data, partial=True)
+    serializer.is_valid(raise_exception=True)
+    vinculo = serializer.save(producao=producao, aluno=aluno)
+    return Response(ProducaoAlunoSerializer(vinculo).data, status=status.HTTP_201_CREATED)
 
 
 @api_view(['PATCH', 'PUT'])
 @permission_classes([IsAuthenticated])
 def atualizar_vinculo_producao_aluno(request, producao_id, vinculo_id):
-    try:
-        vinculo = ProducaoAluno.objects.get(id=vinculo_id, producao_id=producao_id)
-    except ProducaoAluno.DoesNotExist:
-        return Response({'error': 'Vínculo não encontrado.'}, status=status.HTTP_404_NOT_FOUND)
+    producao, erro = _producao_ou_erro(request, producao_id, editar=True)
+    if erro:
+        return erro
 
-    if not _pode_editar_producao(request.user, vinculo.producao):
-        return Response({'error': 'Sem permissão.'}, status=status.HTTP_403_FORBIDDEN)
+    try:
+        vinculo = ProducaoAluno.objects.filter(id=vinculo_id, producao=producao).first()
+    except (ValidationError, ValueError):  # vinculo_id malformado
+        vinculo = None
+    if vinculo is None:
+        return _nao_encontrado('Vínculo não encontrado.')
 
     partial = request.method == 'PATCH'
     serializer = ProducaoAlunoSerializer(vinculo, data=request.data, partial=partial)
@@ -181,16 +181,15 @@ def atualizar_vinculo_producao_aluno(request, producao_id, vinculo_id):
 @api_view(['DELETE'])
 @permission_classes([IsAuthenticated])
 def desvincular_aluno_producao(request, producao_id, aluno_id):
+    producao, erro = _producao_ou_erro(request, producao_id, editar=True)
+    if erro:
+        return erro
+
     try:
-        producao = Producao.objects.get(id=producao_id)
-    except Producao.DoesNotExist:
-        return Response({'error': 'Produção não encontrada.'}, status=status.HTTP_404_NOT_FOUND)
-
-    if not _pode_editar_producao(request.user, producao):
-        return Response({'error': 'Sem permissão.'}, status=status.HTTP_403_FORBIDDEN)
-
-    deletados, _ = ProducaoAluno.objects.filter(producao=producao, aluno_id=aluno_id).delete()
+        deletados, _ = ProducaoAluno.objects.filter(producao=producao, aluno_id=aluno_id).delete()
+    except (ValidationError, ValueError):  # aluno_id malformado
+        deletados = 0
     if not deletados:
-        return Response({'error': 'Vínculo não encontrado.'}, status=status.HTTP_404_NOT_FOUND)
+        return _nao_encontrado('Vínculo não encontrado.')
 
     return Response(status=status.HTTP_204_NO_CONTENT)

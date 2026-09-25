@@ -5,20 +5,64 @@ from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
-from api.escopo import resolver_escopo_criacao
-from api.models import PeriodoAvaliativo, RelatorioTemplate, Relatorio, Aluno, UsuarioTurma
+from api.escopo import (
+    buscar_no_escopo, filtrar_por, pode_gerenciar, professor_vinculado_turma, resolver_escopo_criacao,
+)
+from api.models import PeriodoAvaliativo, RelatorioTemplate, Relatorio, Aluno
 from api.serializers import PeriodoAvaliativoSerializer, RelatorioTemplateSerializer, RelatorioSerializer
 from api.services.relatorio import refresh_img_urls_in_html
-from api.tenancy import is_superadmin as _is_superadmin
 
 
-def _pode_gerenciar_geral(user):
-    return _is_superadmin(user) or user.nivel in ('admin', 'coordenador')
+def _sem_permissao(mensagem='Sem permissão.'):
+    return Response({'error': mensagem}, status=status.HTTP_403_FORBIDDEN)
 
 
-def _professor_vinculado_turma(usuario, turma):
-    return UsuarioTurma.objects.filter(usuario=usuario, turma=turma).exists()
+def _nao_encontrado(mensagem):
+    return Response({'error': mensagem}, status=status.HTTP_404_NOT_FOUND)
 
+
+# ============================================================
+# CRUD de cadastro da escola (período e template)
+# ============================================================
+# PeriodoAvaliativo e RelatorioTemplate têm exatamente as mesmas regras:
+# todos do escopo leem; só gestão cria/edita; escola/instituição vêm de
+# `resolver_escopo_criacao`. Os helpers abaixo evitam repetir isso 2x.
+
+def _criar_cadastro_escola(request, serializer_class):
+    user = request.user
+    if not pode_gerenciar(user):
+        return _sem_permissao()
+
+    escola_id, instituicao_id, erro = resolver_escopo_criacao(user, request.data)
+    if erro:
+        return erro
+
+    serializer = serializer_class(data=request.data)
+    serializer.is_valid(raise_exception=True)
+    obj = serializer.save(escola_id=escola_id, instituicao_id=instituicao_id)
+    return Response(serializer_class(obj).data, status=status.HTTP_201_CREATED)
+
+
+def _detalhe_cadastro_escola(model, serializer_class, obj_id, msg_nao_encontrado):
+    obj = buscar_no_escopo(model, obj_id)
+    if obj is None:
+        return _nao_encontrado(msg_nao_encontrado)
+    return Response(serializer_class(obj).data)
+
+
+def _atualizar_cadastro_escola(request, model, serializer_class, obj_id, msg_nao_encontrado):
+    if not pode_gerenciar(request.user):
+        return _sem_permissao()
+
+    obj = buscar_no_escopo(model, obj_id)
+    if obj is None:
+        return _nao_encontrado(msg_nao_encontrado)
+
+    partial = request.method == 'PATCH'
+    serializer = serializer_class(obj, data=request.data, partial=partial)
+    serializer.is_valid(raise_exception=True)
+    serializer.save()
+    return Response(serializer.data)
 
 
 # ============================================================
@@ -35,46 +79,23 @@ def listar_periodos_avaliativos(request):
 @api_view(['POST'])
 @permission_classes([IsAuthenticated])
 def criar_periodo_avaliativo(request):
-    user = request.user
-    if not _pode_gerenciar_geral(user):
-        return Response({'error': 'Sem permissão.'}, status=status.HTTP_403_FORBIDDEN)
-
-    escola_id, instituicao_id, erro = resolver_escopo_criacao(user, request.data)
-    if erro:
-        return erro
-
-    serializer = PeriodoAvaliativoSerializer(data=request.data)
-    serializer.is_valid(raise_exception=True)
-    periodo = serializer.save(escola_id=escola_id, instituicao_id=instituicao_id)
-    return Response(PeriodoAvaliativoSerializer(periodo).data, status=status.HTTP_201_CREATED)
+    return _criar_cadastro_escola(request, PeriodoAvaliativoSerializer)
 
 
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
 def detalhe_periodo_avaliativo(request, periodo_id):
-    try:
-        periodo = PeriodoAvaliativo.objects.get(id=periodo_id)
-    except PeriodoAvaliativo.DoesNotExist:
-        return Response({'error': 'Período avaliativo não encontrado.'}, status=status.HTTP_404_NOT_FOUND)
-    return Response(PeriodoAvaliativoSerializer(periodo).data)
+    return _detalhe_cadastro_escola(
+        PeriodoAvaliativo, PeriodoAvaliativoSerializer, periodo_id, 'Período avaliativo não encontrado.',
+    )
 
 
 @api_view(['PATCH', 'PUT'])
 @permission_classes([IsAuthenticated])
 def atualizar_periodo_avaliativo(request, periodo_id):
-    if not _pode_gerenciar_geral(request.user):
-        return Response({'error': 'Sem permissão.'}, status=status.HTTP_403_FORBIDDEN)
-
-    try:
-        periodo = PeriodoAvaliativo.objects.get(id=periodo_id)
-    except PeriodoAvaliativo.DoesNotExist:
-        return Response({'error': 'Período avaliativo não encontrado.'}, status=status.HTTP_404_NOT_FOUND)
-
-    partial = request.method == 'PATCH'
-    serializer = PeriodoAvaliativoSerializer(periodo, data=request.data, partial=partial)
-    serializer.is_valid(raise_exception=True)
-    serializer.save()
-    return Response(serializer.data)
+    return _atualizar_cadastro_escola(
+        request, PeriodoAvaliativo, PeriodoAvaliativoSerializer, periodo_id, 'Período avaliativo não encontrado.',
+    )
 
 
 # ============================================================
@@ -91,59 +112,46 @@ def listar_relatorio_templates(request):
 @api_view(['POST'])
 @permission_classes([IsAuthenticated])
 def criar_relatorio_template(request):
-    user = request.user
-    if not _pode_gerenciar_geral(user):
-        return Response({'error': 'Sem permissão.'}, status=status.HTTP_403_FORBIDDEN)
-
-    escola_id, instituicao_id, erro = resolver_escopo_criacao(user, request.data)
-    if erro:
-        return erro
-
-    serializer = RelatorioTemplateSerializer(data=request.data)
-    serializer.is_valid(raise_exception=True)
-    template = serializer.save(escola_id=escola_id, instituicao_id=instituicao_id)
-    return Response(RelatorioTemplateSerializer(template).data, status=status.HTTP_201_CREATED)
+    return _criar_cadastro_escola(request, RelatorioTemplateSerializer)
 
 
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
 def detalhe_relatorio_template(request, template_id):
-    try:
-        template = RelatorioTemplate.objects.get(id=template_id)
-    except RelatorioTemplate.DoesNotExist:
-        return Response({'error': 'Template não encontrado.'}, status=status.HTTP_404_NOT_FOUND)
-    return Response(RelatorioTemplateSerializer(template).data)
+    return _detalhe_cadastro_escola(
+        RelatorioTemplate, RelatorioTemplateSerializer, template_id, 'Template não encontrado.',
+    )
 
 
 @api_view(['PATCH', 'PUT'])
 @permission_classes([IsAuthenticated])
 def atualizar_relatorio_template(request, template_id):
-    if not _pode_gerenciar_geral(request.user):
-        return Response({'error': 'Sem permissão.'}, status=status.HTTP_403_FORBIDDEN)
-
-    try:
-        template = RelatorioTemplate.objects.get(id=template_id)
-    except RelatorioTemplate.DoesNotExist:
-        return Response({'error': 'Template não encontrado.'}, status=status.HTTP_404_NOT_FOUND)
-
-    partial = request.method == 'PATCH'
-    serializer = RelatorioTemplateSerializer(template, data=request.data, partial=partial)
-    serializer.is_valid(raise_exception=True)
-    serializer.save()
-    return Response(serializer.data)
+    return _atualizar_cadastro_escola(
+        request, RelatorioTemplate, RelatorioTemplateSerializer, template_id, 'Template não encontrado.',
+    )
 
 
 # ============================================================
 # Relatorio
 # ============================================================
 
+def _pode_editar_relatorio(user, relatorio):
+    """Gestão edita qualquer um; professor, os de alunos das turmas dele."""
+    return pode_gerenciar(user) or professor_vinculado_turma(user, relatorio.aluno.turma_id)
+
+
+def _relatorio_ou_404(relatorio_id):
+    """Retorna (relatorio, erro)."""
+    relatorio = buscar_no_escopo(Relatorio, relatorio_id)
+    if relatorio is None:
+        return None, _nao_encontrado('Relatório não encontrado.')
+    return relatorio, None
+
+
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
 def listar_relatorios(request):
-    relatorios = Relatorio.objects.all()
-    aluno_id = request.query_params.get('aluno')
-    if aluno_id:
-        relatorios = relatorios.filter(aluno_id=aluno_id)
+    relatorios = filtrar_por(Relatorio.objects.all(), request, 'aluno', Aluno, 'aluno')
     return Response(RelatorioSerializer(relatorios.order_by('-criado_em'), many=True).data)
 
 
@@ -155,14 +163,12 @@ def criar_relatorio(request):
     if not aluno_id:
         return Response({'error': 'Campo aluno é obrigatório.'}, status=status.HTTP_400_BAD_REQUEST)
 
-    try:
-        aluno = Aluno.objects.get(id=aluno_id)
-    except Aluno.DoesNotExist:
-        return Response({'error': 'Aluno não encontrado.'}, status=status.HTTP_404_NOT_FOUND)
+    aluno = buscar_no_escopo(Aluno, aluno_id)
+    if aluno is None:
+        return _nao_encontrado('Aluno não encontrado.')
 
-    if not _pode_gerenciar_geral(user) and not _professor_vinculado_turma(user, aluno.turma):
-        return Response({'error': 'Você não está vinculado à turma desse aluno.'},
-                         status=status.HTTP_403_FORBIDDEN)
+    if not pode_gerenciar(user) and not professor_vinculado_turma(user, aluno.turma_id):
+        return _sem_permissao('Você não está vinculado à turma desse aluno.')
 
     serializer = RelatorioSerializer(data=request.data)
     serializer.is_valid(raise_exception=True)
@@ -175,10 +181,9 @@ def criar_relatorio(request):
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
 def detalhe_relatorio(request, relatorio_id):
-    try:
-        relatorio = Relatorio.objects.get(id=relatorio_id)
-    except Relatorio.DoesNotExist:
-        return Response({'error': 'Relatório não encontrado.'}, status=status.HTTP_404_NOT_FOUND)
+    relatorio, erro = _relatorio_ou_404(relatorio_id)
+    if erro:
+        return erro
     data = dict(RelatorioSerializer(relatorio).data)
     # As <img> do HTML guardam URLs pré-assinadas do S3 que expiram em ~1h.
     # Re-assinar aqui evita fotos quebradas na tela do relatório.
@@ -187,22 +192,14 @@ def detalhe_relatorio(request, relatorio_id):
     return Response(data)
 
 
-def _pode_editar_relatorio(user, relatorio):
-    if _pode_gerenciar_geral(user):
-        return True
-    return _professor_vinculado_turma(user, relatorio.aluno.turma)
-
-
 @api_view(['PATCH', 'PUT'])
 @permission_classes([IsAuthenticated])
 def atualizar_relatorio(request, relatorio_id):
-    try:
-        relatorio = Relatorio.objects.get(id=relatorio_id)
-    except Relatorio.DoesNotExist:
-        return Response({'error': 'Relatório não encontrado.'}, status=status.HTTP_404_NOT_FOUND)
-
+    relatorio, erro = _relatorio_ou_404(relatorio_id)
+    if erro:
+        return erro
     if not _pode_editar_relatorio(request.user, relatorio):
-        return Response({'error': 'Sem permissão.'}, status=status.HTTP_403_FORBIDDEN)
+        return _sem_permissao()
 
     partial = request.method == 'PATCH'
     serializer = RelatorioSerializer(relatorio, data=request.data, partial=partial)
@@ -216,13 +213,12 @@ def atualizar_relatorio(request, relatorio_id):
 def revisar_relatorio(request, relatorio_id):
     """Marca o relatório como revisado pelo usuário atual. Só admin/coordenador/superadmin."""
     user = request.user
-    if not _pode_gerenciar_geral(user):
-        return Response({'error': 'Sem permissão.'}, status=status.HTTP_403_FORBIDDEN)
+    if not pode_gerenciar(user):
+        return _sem_permissao()
 
-    try:
-        relatorio = Relatorio.objects.get(id=relatorio_id)
-    except Relatorio.DoesNotExist:
-        return Response({'error': 'Relatório não encontrado.'}, status=status.HTTP_404_NOT_FOUND)
+    relatorio, erro = _relatorio_ou_404(relatorio_id)
+    if erro:
+        return erro
 
     relatorio.revisado_por = user
     relatorio.save(update_fields=['revisado_por', 'atualizado_em'])
@@ -232,13 +228,11 @@ def revisar_relatorio(request, relatorio_id):
 @api_view(['DELETE'])
 @permission_classes([IsAuthenticated])
 def deletar_relatorio(request, relatorio_id):
-    try:
-        relatorio = Relatorio.objects.get(id=relatorio_id)
-    except Relatorio.DoesNotExist:
-        return Response({'error': 'Relatório não encontrado.'}, status=status.HTTP_404_NOT_FOUND)
-
+    relatorio, erro = _relatorio_ou_404(relatorio_id)
+    if erro:
+        return erro
     if not _pode_editar_relatorio(request.user, relatorio):
-        return Response({'error': 'Sem permissão.'}, status=status.HTTP_403_FORBIDDEN)
+        return _sem_permissao()
 
     relatorio.delete()
     return Response(status=status.HTTP_204_NO_CONTENT)

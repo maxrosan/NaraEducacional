@@ -207,6 +207,24 @@ def buscar_no_escopo(model, pk):
         return None
 
 
+def filtrar_por(qs, request, parametro, model, campo):
+    """Aplica `?<parametro>=<uuid>` como filtro por FK. Id inexistente, fora do
+    escopo ou malformado → queryset vazio (em vez de 500)."""
+    valor = request.query_params.get(parametro)
+    if not valor:
+        return qs
+    obj = buscar_no_escopo(model, valor)
+    return qs.filter(**{campo: obj}) if obj else qs.none()
+
+
+def professor_vinculado_turma(usuario, turma_id) -> bool:
+    """Usuário tem vínculo (UsuarioTurma) com a turma."""
+    if turma_id is None:
+        return False
+    from api.models import UsuarioTurma
+    return UsuarioTurma.objects.filter(usuario=usuario, turma_id=turma_id).exists()
+
+
 # ---------------------------------------------------------------------------
 # Leitura por escola (painéis da coordenação)
 # ---------------------------------------------------------------------------

@@ -6,8 +6,8 @@ from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
-from api.escopo import buscar_no_escopo, pode_gerenciar
-from api.models import MetaPAEE, SessaoEspecialista, SessaoPAEEMeta, TarefaPAEE, Aluno, UsuarioTurma
+from api.escopo import buscar_no_escopo, filtrar_por, pode_gerenciar, professor_vinculado_turma
+from api.models import MetaPAEE, SessaoEspecialista, SessaoPAEEMeta, TarefaPAEE, Aluno
 from api.serializers import (
     MetaPAEESerializer, SessaoEspecialistaSerializer, SessaoPAEEMetaSerializer, TarefaPAEESerializer,
 )
@@ -32,10 +32,6 @@ def _pode_editar_do_especialista(user, obj):
     return pode_gerenciar(user) or obj.usuario_especialista_id == user.id
 
 
-def _professor_vinculado_turma(usuario, turma_id):
-    return turma_id is not None and UsuarioTurma.objects.filter(usuario=usuario, turma_id=turma_id).exists()
-
-
 # ---------------------------------------------------------------------------
 # Respostas comuns
 # ---------------------------------------------------------------------------
@@ -50,16 +46,6 @@ def _nao_encontrado(mensagem):
 
 def _obrigatorio(campo):
     return Response({'error': f'Campo {campo} é obrigatório.'}, status=status.HTTP_400_BAD_REQUEST)
-
-
-def _filtrar_por(qs, request, parametro, model, campo):
-    """Aplica ?<parametro>=<uuid> como filtro por FK. Id inexistente, fora do
-    escopo ou malformado → queryset vazio (em vez de 500)."""
-    valor = request.query_params.get(parametro)
-    if not valor:
-        return qs
-    obj = buscar_no_escopo(model, valor)
-    return qs.filter(**{campo: obj}) if obj else qs.none()
 
 
 def _aluno_do_body(request):
@@ -80,7 +66,7 @@ def _aluno_do_body(request):
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
 def listar_metas_paee(request):
-    metas = _filtrar_por(MetaPAEE.objects.all(), request, 'aluno', Aluno, 'aluno')
+    metas = filtrar_por(MetaPAEE.objects.all(), request, 'aluno', Aluno, 'aluno')
     return Response(MetaPAEESerializer(metas.order_by('-criado_em'), many=True).data)
 
 
@@ -136,7 +122,7 @@ def atualizar_meta_paee(request, meta_id):
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
 def listar_sessoes_especialista(request):
-    sessoes = _filtrar_por(SessaoEspecialista.objects.all(), request, 'aluno', Aluno, 'aluno')
+    sessoes = filtrar_por(SessaoEspecialista.objects.all(), request, 'aluno', Aluno, 'aluno')
     return Response(SessaoEspecialistaSerializer(sessoes.order_by('-data_atendimento'), many=True).data)
 
 
@@ -251,7 +237,7 @@ def desvincular_meta_sessao(request, sessao_id, meta_id):
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
 def listar_tarefas_paee(request):
-    tarefas = _filtrar_por(TarefaPAEE.objects.all(), request, 'meta_paee', MetaPAEE, 'meta_paee')
+    tarefas = filtrar_por(TarefaPAEE.objects.all(), request, 'meta_paee', MetaPAEE, 'meta_paee')
     return Response(TarefaPAEESerializer(tarefas.order_by('-criado_em'), many=True).data)
 
 
@@ -298,7 +284,7 @@ def atualizar_tarefa_paee(request, tarefa_id):
         return _nao_encontrado('Tarefa não encontrada.')
 
     gerencia_paee = _pode_criar_paee(user)
-    if not gerencia_paee and not _professor_vinculado_turma(user, tarefa.meta_paee.aluno.turma_id):
+    if not gerencia_paee and not professor_vinculado_turma(user, tarefa.meta_paee.aluno.turma_id):
         return _sem_permissao()
 
     if gerencia_paee:

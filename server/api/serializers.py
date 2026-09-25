@@ -203,7 +203,7 @@ class ProducaoSerializer(serializers.ModelSerializer):
             'escola', 'instituicao', 'criado_em', 'atualizado_em',
         ]
         read_only_fields = [
-            'id', 'professor', 'escola', 'instituicao', 'criado_em', 'atualizado_em',
+            'id', 'professor', 'turma', 'escola', 'instituicao', 'criado_em', 'atualizado_em',
         ]
 
 
@@ -216,7 +216,7 @@ class ProducaoAlunoSerializer(serializers.ModelSerializer):
             'id', 'legenda', 'legenda_ia', 'destaque', 'incluir_relatorio',
             'producao', 'aluno', 'aluno_nome', 'criado_em', 'atualizado_em',
         ]
-        read_only_fields = ['id', 'producao', 'criado_em', 'atualizado_em']
+        read_only_fields = ['id', 'producao', 'aluno', 'criado_em', 'atualizado_em']
 
 
 class RegistroEscritaSerializer(serializers.ModelSerializer):
@@ -412,7 +412,7 @@ class RelatorioSerializer(serializers.ModelSerializer):
             'escola', 'instituicao', 'criado_em', 'atualizado_em',
         ]
         read_only_fields = [
-            'id', 'aluno', 'revisado_por', 'escola', 'instituicao', 'criado_em', 'atualizado_em',
+            'id', 'aluno', 'pdf_url', 'revisado_por', 'escola', 'instituicao', 'criado_em', 'atualizado_em',
         ]
 
 
