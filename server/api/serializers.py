@@ -607,11 +607,10 @@ class PromptTemplateSerializer(serializers.ModelSerializer):
 
 class PromptCategoriaSerializer(serializers.ModelSerializer):
     """
-    `template_resolvido` usa o `instituicao_id` do contexto (o da instituição
-    do usuário logado) pra mostrar, na tela de admin, qual texto está
-    valendo de fato pra ela agora — o mesmo critério de `resolver_prompt`
-    (personalizado da instituição > global > vazio), sem o fallback pra
-    arquivo .txt, que não faz sentido nessa tela.
+    `template_resolvido` usa o `escola_id` do contexto (a escola escolhida
+    na tela) pra mostrar qual texto está valendo de fato para ela agora — o
+    mesmo critério de `resolver_prompt` (personalizado da escola > global >
+    vazio), sem o fallback pra arquivo .txt, que não faz sentido nessa tela.
     """
     template_resolvido = serializers.SerializerMethodField()
 
@@ -621,17 +620,17 @@ class PromptCategoriaSerializer(serializers.ModelSerializer):
         read_only_fields = ['id', 'criado_em', 'atualizado_em']
 
     def get_template_resolvido(self, categoria):
-        instituicao_id = self.context.get('instituicao_id')
+        escola_id = self.context.get('escola_id')
         templates = list(categoria.templates.all())
 
-        if instituicao_id:
+        if escola_id:
             personalizado = next(
-                (t for t in templates if str(t.instituicao_id) == str(instituicao_id)), None,
+                (t for t in templates if str(t.escola_id) == str(escola_id)), None,
             )
             if personalizado and personalizado.personalizado.strip():
                 return {'origem': 'personalizado', 'texto': personalizado.personalizado}
 
-        global_tpl = next((t for t in templates if t.instituicao_id is None), None)
+        global_tpl = next((t for t in templates if t.escola_id is None and t.instituicao_id is None), None)
         if global_tpl and global_tpl.prompt_global.strip():
             return {'origem': 'global', 'texto': global_tpl.prompt_global}
 

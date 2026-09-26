@@ -513,7 +513,7 @@ def _calcular_datas_periodo(periodo):
     return data_inicio, data_fim
 
 
-def _gerar_secao_atividades(info_crianca, periodo, nome_crianca, usuario=None, cliente_id=None):
+def _gerar_secao_atividades(info_crianca, periodo, nome_crianca, usuario=None, escola_id=None):
     """Seção 1: O que vivemos juntos — busca planejamentos e gera narrativa via IA."""
     o_que_vivemos_juntos = ""
     tem_atividade = False
@@ -579,7 +579,7 @@ def _gerar_secao_atividades(info_crianca, periodo, nome_crianca, usuario=None, c
         # ── Categoria específica para atividades ──────────────────
         prompt_template = resolver_prompt(
             "Relatórios - Atividades",
-            cliente_id=cliente_id,
+            escola_id=escola_id,
             fallback_arquivo="relatorio_atividades.txt",
         )
 
@@ -624,7 +624,7 @@ def _gerar_secao_atividades(info_crianca, periodo, nome_crianca, usuario=None, c
         return f"<p>{o_que_vivemos_juntos}</p>" if o_que_vivemos_juntos else "<p>Diversas experiências de aprendizagem foram vivenciadas durante este período.</p>"
 
 
-def _gerar_secao_relatos(nome_crianca, periodo, info_crianca, usuario=None, cliente_id=None):
+def _gerar_secao_relatos(nome_crianca, periodo, info_crianca, usuario=None, escola_id=None):
     """Seção 2: Relatos individuais — busca observações e gera narrativa via IA."""
     relatos_individuais = buscar_relatos_individuais_crianca(
         nome_crianca, periodo, aluno_id=info_crianca.get('id'),
@@ -648,7 +648,7 @@ def _gerar_secao_relatos(nome_crianca, periodo, info_crianca, usuario=None, clie
         # ── Categoria específica para relato individual ────────────
         prompt_template = resolver_prompt(
             "Relatórios - Relato Individual",
-            cliente_id=cliente_id,
+            escola_id=escola_id,
             fallback_arquivo="relatorio_relato_individual.txt",
         )
         prompt = (
@@ -711,7 +711,7 @@ _SCHEMA_PRODUCOES = {
 }
 
 
-def _gerar_secao_producoes(nome_crianca, aluno_id, periodo=None, usuario=None, cliente_id=None):
+def _gerar_secao_producoes(nome_crianca, aluno_id, periodo=None, usuario=None, escola_id=None):
     """Seção 3: Produções — busca registros de escrita/desenho e gera narrativa via IA.
 
     Uma única chamada à OpenAI (categoria "Relatórios - Produções" preservada),
@@ -781,7 +781,7 @@ def _gerar_secao_producoes(nome_crianca, aluno_id, periodo=None, usuario=None, c
         prompts_producoes = (
             resolver_prompt(
                 "Relatórios - Produções",
-                cliente_id=cliente_id,
+                escola_id=escola_id,
                 fallback_arquivo="relatorio_producoes.txt",
             )
             .replace("{nome_crianca}", nome_crianca)
@@ -953,7 +953,7 @@ def _montar_assinatura_html(nome_professora):
 
 def _gerar_secao_conclusao(
     nome_crianca, secao_relatos, secao_producoes, secao_registros_observacao,
-    analise_completa, turma_nome, nome_professora, idade, usuario=None, cliente_id=None,
+    analise_completa, turma_nome, nome_professora, idade, usuario=None, escola_id=None,
 ):
     """Seção final: Conclusão da Professora — carta à família via IA.
 
@@ -963,7 +963,7 @@ def _gerar_secao_conclusao(
     # ── Categoria específica para conclusão ────────────────────────
     template_prompt = resolver_prompt(
         "Relatórios - Conclusão",
-        cliente_id=cliente_id,
+        escola_id=escola_id,
         fallback_arquivo="relatorio_conclusao.txt",
     )
 
@@ -1093,8 +1093,7 @@ def gerar_relatorio_com_ia(nome_crianca, dados_estudante, periodo, crianca_id, n
     Sem template ativo (ou instituição não resolvida), usa a capa 'classico'
     e todos os valores padrão do sistema.
     """
-    # Resolve instituição do usuário autenticado (usada tanto para os prompts
-    # customizados — cliente_id — quanto para o template de relatório ativo).
+    # Resolve a instituição (usada para o template de relatório ativo).
     # A instituição vem do ALUNO (não do usuário): perfis globais (superadmin,
     # suporte) não têm instituição, e mesmo assim o relatório precisa usar o
     # template e os prompts da instituição da criança.
@@ -1102,7 +1101,8 @@ def gerar_relatorio_com_ia(nome_crianca, dados_estudante, periodo, crianca_id, n
     inst_aluno = info_crianca.get('instituicao_id')
     inst_usuario = getattr(usuario, 'instituicao_id', None) if usuario else None
     instituicao_id = str(inst_aluno or inst_usuario) if (inst_aluno or inst_usuario) else None
-    cliente_id = instituicao_id
+    # Prompt personalizado é POR ESCOLA — a do aluno.
+    escola_id = str(info_crianca['escola_id']) if info_crianca.get('escola_id') else None
 
     # RelatorioTemplate pertence a uma ESCOLA (unique escola+modelo). Filtrar só
     # por instituição devolvia o template ativo de qualquer escola da rede —
@@ -1165,13 +1165,13 @@ def gerar_relatorio_com_ia(nome_crianca, dados_estudante, periodo, crianca_id, n
     # ocultado alguma no template — a conclusão usa o texto de todas como
     # contexto (secao_relatos, producoes, secao_registros_observacao), então
     # ocultar uma seção não deve empobrecer a análise das outras.
-    analise_completa = _gerar_secao_atividades(info_crianca, periodo, nome_crianca, usuario=usuario, cliente_id=cliente_id)
-    secao_relatos = _gerar_secao_relatos(nome_crianca, periodo, info_crianca, usuario=usuario, cliente_id=cliente_id)
-    producoes = _gerar_secao_producoes(nome_crianca, crianca_id, periodo=periodo, usuario=usuario, cliente_id=cliente_id)
+    analise_completa = _gerar_secao_atividades(info_crianca, periodo, nome_crianca, usuario=usuario, escola_id=escola_id)
+    secao_relatos = _gerar_secao_relatos(nome_crianca, periodo, info_crianca, usuario=usuario, escola_id=escola_id)
+    producoes = _gerar_secao_producoes(nome_crianca, crianca_id, periodo=periodo, usuario=usuario, escola_id=escola_id)
     secao_registros_observacao, secao_bncc = _gerar_secao_bncc(crianca_id, periodo, escola_id=info_crianca.get('escola_id'))
     secao_conclusao = _gerar_secao_conclusao(
         nome_crianca, secao_relatos, producoes['texto_conclusao'], secao_registros_observacao,
-        analise_completa, turma_nome, nome_professora, idade or 'Não informada', usuario=usuario, cliente_id=cliente_id,
+        analise_completa, turma_nome, nome_professora, idade or 'Não informada', usuario=usuario, escola_id=escola_id,
     )
     secao_portfolio = _formatar_secao_portfolio_html(dados_estudante.get('producoes', []))
     data_geracao = timezone.now().strftime('%d/%m/%Y')

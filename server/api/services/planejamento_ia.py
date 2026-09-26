@@ -5,8 +5,8 @@ Funções puras chamadas pelas views REST:
 - extrair_texto_arquivo(uploaded_file) -> str
 - salvar_arquivo_planejamento(uploaded_file, turma_id, dia_semana) -> dict
 - sugerir_atividades_a_partir_de_arquivo(texto) -> str
-- sugerir_atividades_a_partir_de_prompt(prompt, contexto_turma, cliente_id) -> str
-- sugerir_habilidades_bncc(atividades_texto, ano_serie, limite, cliente_id) -> dict
+- sugerir_atividades_a_partir_de_prompt(prompt, contexto_turma, escola_id) -> str
+- sugerir_habilidades_bncc(atividades_texto, ano_serie, limite, escola_id) -> dict
 """
 
 from __future__ import annotations
@@ -711,7 +711,7 @@ def detectar_data_planejamento(texto_extraido: str) -> Optional[dict]:
 def sugerir_atividades_a_partir_de_prompt(
     prompt: str,
     contexto_turma: str = "",
-    cliente_id: str = None,
+    escola_id: str = None,
 ) -> str:
     """
     Assistente IA livre — gera sugestão a partir de descrição da professora.
@@ -723,7 +723,7 @@ def sugerir_atividades_a_partir_de_prompt(
         raise ValueError("Descreva o objetivo/tema com pelo menos 10 caracteres.")
 
     system_prompt = (
-        resolver_prompt("Planejamento", cliente_id=cliente_id)
+        resolver_prompt("Planejamento", escola_id=escola_id)
         or _PROMPT_PLANEJAMENTO_ATIVIDADES_FALLBACK
     )
 
@@ -802,7 +802,7 @@ def sugerir_habilidades_bncc(
     atividades_texto: str,
     ano_serie: str = "",
     limite: int = 6,
-    cliente_id: str = None,
+    escola_id: str = None,
 ) -> dict:
     """
     Devolve {habilidades, origem, mensagem?}.
@@ -840,7 +840,7 @@ def sugerir_habilidades_bncc(
     ]
 
     system_prompt = (
-        resolver_prompt("Planejamento", cliente_id=cliente_id)
+        resolver_prompt("Planejamento", escola_id=escola_id)
         or _PROMPT_PLANEJAMENTO_BNCC_FALLBACK
     )
 

@@ -10,6 +10,7 @@ from .base import CenarioMultiTenant
 
 
 class PromptTests(CenarioMultiTenant):
+    """Prompt global (superadmin) + personalizado POR ESCOLA."""
 
     @classmethod
     def setUpTestData(cls):
@@ -22,22 +23,45 @@ class PromptTests(CenarioMultiTenant):
     def _salvar(self, **campos):
         return self.client.post('/api/prompts/salvar/', {'categoria': str(self.categoria.id), **campos}, format='json')
 
-    def test_admin_nao_altera_o_prompt_global(self):
+    def _personalizado_da(self, escola):
+        return PromptTemplate._base_manager.filter(categoria=self.categoria, escola=escola).first()
+
+    def test_coordenador_nao_altera_o_prompt_global(self):
         """Falha crítica: salvar sobrescrevia o registro mais recente da
-        categoria — admin de uma rede mudava o prompt de todas."""
-        self.entrar(self.admin_a)
-        r = self._salvar(prompt_global='HACK', personalizado='Da rede A')
+        categoria — qualquer rede mudava o prompt de todas."""
+        self.entrar(self.coord_a1)
+        r = self._salvar(prompt_global='HACK', personalizado='Da A1')
         self.assertEqual(r.status_code, 200, r.content)
         self.tpl_global.refresh_from_db()
-        self.assertEqual((self.tpl_global.prompt_global, self.tpl_global.instituicao_id), ('GLOBAL', None))
-        proprio = PromptTemplate._base_manager.get(categoria=self.categoria, instituicao=self.rede_a)
-        self.assertEqual(proprio.personalizado, 'Da rede A')
+        self.assertEqual(self.tpl_global.prompt_global, 'GLOBAL')
+        self.assertEqual(self._personalizado_da(self.a1).personalizado, 'Da A1')
 
-    def test_personalizado_vale_so_para_a_propria_rede(self):
+    def test_personalizado_vale_so_para_a_propria_escola(self):
+        """Regra de negócio: o prompt é por ESCOLA, não por rede — A2, da
+        mesma rede, continua usando o global."""
+        self.entrar(self.coord_a1)
+        self._salvar(personalizado='Da A1')
+        self.assertEqual(resolver_prompt('Escrita', escola_id=self.a1.id), 'Da A1')
+        self.assertEqual(resolver_prompt('Escrita', escola_id=self.a2.id), 'GLOBAL')
+        self.assertEqual(resolver_prompt('Escrita', escola_id=self.b1.id), 'GLOBAL')
+
+    def test_coordenador_so_personaliza_a_propria_escola(self):
+        self.entrar(self.coord_a1)
+        self.assertEqual(self._salvar(personalizado='Tentando A2', escola=str(self.a2.id)).status_code, 200)
+        self.assertIsNone(self._personalizado_da(self.a2))
+        self.assertEqual(self._personalizado_da(self.a1).personalizado, 'Tentando A2')
+
+    def test_admin_personaliza_escola_da_rede_informando_a_escola(self):
         self.entrar(self.admin_a)
-        self._salvar(personalizado='Da rede A')
-        self.assertEqual(resolver_prompt('Escrita', cliente_id=str(self.rede_a.id)), 'Da rede A')
-        self.assertEqual(resolver_prompt('Escrita', cliente_id=str(self.rede_b.id)), 'GLOBAL')
+        self.assertEqual(self._salvar(personalizado='Sem escola').status_code, 400)
+        r = self._salvar(personalizado='Da A2', escola=str(self.a2.id))
+        self.assertEqual(r.status_code, 200, r.content)
+        self.assertEqual(self._personalizado_da(self.a2).personalizado, 'Da A2')
+
+    def test_admin_nao_personaliza_escola_de_outra_rede(self):
+        self.entrar(self.admin_a)
+        self.assertEqual(self._salvar(personalizado='Invasão', escola=str(self.b1.id)).status_code, 404)
+        self.assertIsNone(self._personalizado_da(self.b1))
 
     def test_superadmin_altera_o_prompt_global(self):
         self.entrar(self.superadmin)
@@ -50,16 +74,21 @@ class PromptTests(CenarioMultiTenant):
         TenantManager escondia o template global e tudo caía no .txt."""
         set_current_tenant(('escola', self.a1.id))
         try:
-            self.assertEqual(resolver_prompt('Escrita', cliente_id=str(self.rede_a.id)), 'GLOBAL')
+            self.assertEqual(resolver_prompt('Escrita', escola_id=self.a1.id), 'GLOBAL')
         finally:
             clear_current_tenant()
 
-    def test_tela_do_coordenador_mostra_o_global(self):
+    def test_tela_do_coordenador_mostra_o_que_vale_para_a_escola(self):
         self.entrar(self.coord_a1)
-        r = self.client.get('/api/prompts/categorias/')
-        self.assertEqual(r.status_code, 200, r.content)
-        item = next(c for c in r.data if c['id'] == str(self.categoria.id))
-        self.assertEqual(item['template_resolvido']['origem'], 'global')
+
+        def origem():
+            r = self.client.get('/api/prompts/categorias/')
+            self.assertEqual(r.status_code, 200, r.content)
+            return next(c for c in r.data if c['id'] == str(self.categoria.id))['template_resolvido']['origem']
+
+        self.assertEqual(origem(), 'global')
+        self._salvar(personalizado='Da A1')
+        self.assertEqual(origem(), 'personalizado')
 
 
 class TicketTests(CenarioMultiTenant):

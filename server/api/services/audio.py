@@ -190,7 +190,7 @@ def modelo_transcricao_ativo() -> str:
     return getattr(get_transcription_backend(), "model", "") or "faster-whisper (local)"
 
 
-def extrair_observacoes(transcricao: str, cliente_id: str = None) -> dict:
+def extrair_observacoes(transcricao: str, escola_id: str = None) -> dict:
     """
     Usa GPT para extrair nomes de alunos e observações da transcrição.
     O prompt é resolvido pelo banco (categoria "Voz"), com fallback para o
@@ -201,7 +201,7 @@ def extrair_observacoes(transcricao: str, cliente_id: str = None) -> dict:
         raise ValueError("Transcrição vazia ou muito curta para extrair observações.")
 
     # Resolve prompt do banco com fallback para o padrão
-    prompt_template = resolver_prompt("Voz", cliente_id=cliente_id) or _PROMPT_VOZ_FALLBACK
+    prompt_template = resolver_prompt("Voz", escola_id=escola_id) or _PROMPT_VOZ_FALLBACK
     prompt = prompt_template.replace("{transcricao}", transcricao)
 
     openai_client = get_openai_client()

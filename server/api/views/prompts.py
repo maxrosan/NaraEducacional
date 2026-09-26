@@ -2,13 +2,16 @@
 
 Modelo de dados (o mesmo que `services/prompt_resolver.resolver_prompt` lê):
 
-* **Global** — 1 PromptTemplate por categoria com `instituicao` e `escola`
-  nulas; o texto está em `prompt_global`. Vale para todas as instituições.
-  Só o superadmin edita.
-* **Personalizado** — 1 PromptTemplate por (categoria, instituição), com
-  `escola` nula (vale para a rede inteira); o texto está em `personalizado`.
-  Quando preenchido, tem prioridade sobre o global PARA AQUELA instituição.
-  Admin/coordenador editam o da própria instituição.
+* **Global** — 1 PromptTemplate por categoria com `escola` e `instituicao`
+  nulas; o texto está em `prompt_global`. Vale para todas as escolas que não
+  personalizaram. Só o superadmin edita.
+* **Personalizado** — 1 PromptTemplate por (categoria, ESCOLA); o texto está
+  em `personalizado` (a `instituicao` é a da escola, só para o recorte de
+  tenant). Quando preenchido, tem prioridade sobre o global PARA AQUELA escola.
+
+Qual escola: o coordenador sempre edita/vê a própria; admin e superadmin
+informam a escola (`escola` no body / `?escola_id=`), e o admin só as da
+própria rede.
 
 Todas as consultas usam `PromptTemplate._base_manager`: o TenantManager
 esconderia o global (sem escola) de quem tem escopo de escola.
@@ -20,8 +23,8 @@ from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
-from api.escopo import buscar_no_escopo, pode_gerenciar
-from api.models import PromptCategoria, PromptTemplate
+from api.escopo import buscar_no_escopo, pode_gerenciar, pode_ver_escola
+from api.models import Escola, PromptCategoria, PromptTemplate
 from api.serializers import PromptCategoriaSerializer, PromptTemplateSerializer
 from api.tenancy import is_superadmin
 
@@ -52,17 +55,41 @@ def _titulo_invalido(titulo, ignorar_id=None):
     return None
 
 
-def _template_de(categoria, instituicao_id, criar=False):
-    """Template mais recente da categoria para a instituição (None = global)."""
-    tpl = (
-        PromptTemplate._base_manager
-        .filter(categoria=categoria, instituicao_id=instituicao_id)
-        .order_by('-criado_em')
-        .first()
-    )
+_GLOBAL = Q(escola__isnull=True, instituicao__isnull=True)
+
+
+def _escola_do_contexto(user, escola_informada):
+    """Escola cujo prompt personalizado se lê/edita. Retorna (escola, erro).
+
+    Coordenador: sempre a própria (o informado é ignorado). Admin/superadmin:
+    a informada, que o admin só pode usar se for da rede dele. Nada informado
+    → (None, None): só o global.
+    """
+    if user.nivel == 'coordenador':
+        return user.escola, None
+    if not escola_informada:
+        return None, None
+    escola = buscar_no_escopo(Escola, escola_informada)
+    if escola is None or not pode_ver_escola(user, escola):
+        return None, Response({'error': 'Escola não encontrada.'}, status=status.HTTP_404_NOT_FOUND)
+    return escola, None
+
+
+def _template_global(categoria, criar=False):
+    tpl = PromptTemplate._base_manager.filter(_GLOBAL, categoria=categoria).order_by('-criado_em').first()
     if tpl is None and criar:
+        tpl = PromptTemplate._base_manager.create(categoria=categoria, prompt_global='', personalizado='')
+    return tpl
+
+
+def _template_da_escola(categoria, escola):
+    tpl = (
+        PromptTemplate._base_manager.filter(categoria=categoria, escola=escola)
+        .order_by('-criado_em').first()
+    )
+    if tpl is None:
         tpl = PromptTemplate._base_manager.create(
-            categoria=categoria, instituicao_id=instituicao_id, escola_id=None,
+            categoria=categoria, escola=escola, instituicao_id=escola.instituicao_id,
             prompt_global='', personalizado='',
         )
     return tpl
@@ -75,16 +102,21 @@ def _template_de(categoria, instituicao_id, criar=False):
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
 def listar_prompt_categorias(request):
-    """?todas=1 inclui categorias inativas (tela de admin)."""
+    """?todas=1 inclui categorias inativas (tela de admin).
+    ?escola_id= (admin/superadmin): mostra o que vale para aquela escola."""
     user = request.user
     if not pode_gerenciar(user):
         return _sem_permissao()
 
-    # Só o global e o da instituição do usuário — o serializer não precisa
-    # (nem deve) receber os personalizados das outras redes.
-    visiveis = Q(instituicao__isnull=True)
-    if user.instituicao_id:
-        visiveis |= Q(instituicao_id=user.instituicao_id)
+    escola, erro = _escola_do_contexto(user, request.GET.get('escola_id'))
+    if erro:
+        return erro
+
+    # Só o global e o da escola do contexto — o serializer não precisa (nem
+    # deve) receber os personalizados das outras escolas.
+    visiveis = _GLOBAL
+    if escola is not None:
+        visiveis |= Q(escola=escola)
 
     qs = PromptCategoria.objects.prefetch_related(
         Prefetch('templates', queryset=PromptTemplate._base_manager.filter(visiveis).order_by('-criado_em')),
@@ -92,20 +124,21 @@ def listar_prompt_categorias(request):
     if request.GET.get('todas') != '1':
         qs = qs.filter(ativo=True)
 
-    data = PromptCategoriaSerializer(qs, many=True, context={'instituicao_id': user.instituicao_id}).data
-    return Response(data)
+    contexto = {'escola_id': escola.id if escola else None}
+    return Response(PromptCategoriaSerializer(qs, many=True, context=contexto).data)
 
 
 @api_view(['POST'])
 @permission_classes([IsAuthenticated])
 def salvar_prompt_template(request):
     """
-    Body: {categoria, prompt_global, personalizado}.
+    Body: {categoria, prompt_global, personalizado, escola?}.
 
     O frontend manda os dois textos juntos. Cada um vai para o SEU registro:
     * `prompt_global` → template global da categoria — só se quem salva é
       superadmin (dos demais, o campo é ignorado);
-    * `personalizado` → template da instituição do usuário (se ele tiver uma).
+    * `personalizado` → template da escola do contexto (`_escola_do_contexto`).
+      Admin precisa informar `escola`; superadmin sem `escola` só edita o global.
 
     A resposta mantém o formato de antes (um PromptTemplate), com o
     `prompt_global` sempre vindo do registro global.
@@ -122,15 +155,21 @@ def salvar_prompt_template(request):
     if erro:
         return erro
 
-    global_tpl = _template_de(categoria, None)
+    escola, erro = _escola_do_contexto(user, request.data.get('escola'))
+    if erro:
+        return erro
+    if 'personalizado' in request.data and escola is None and not is_superadmin(user):
+        return Response({'error': 'Informe a escola do prompt personalizado.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    global_tpl = _template_global(categoria)
     if is_superadmin(user) and 'prompt_global' in request.data:
-        global_tpl = global_tpl or _template_de(categoria, None, criar=True)
+        global_tpl = global_tpl or _template_global(categoria, criar=True)
         global_tpl.prompt_global = request.data.get('prompt_global') or ''
         global_tpl.save(update_fields=['prompt_global', 'atualizado_em'])
 
     proprio_tpl = None
-    if user.instituicao_id and 'personalizado' in request.data:
-        proprio_tpl = _template_de(categoria, user.instituicao_id, criar=True)
+    if escola is not None and 'personalizado' in request.data:
+        proprio_tpl = _template_da_escola(categoria, escola)
         proprio_tpl.personalizado = request.data.get('personalizado') or ''
         proprio_tpl.save(update_fields=['personalizado', 'atualizado_em'])
 

@@ -201,9 +201,9 @@ def processar_audio(audio: AudioDispositivo) -> AudioDispositivo:
 
         turma = _resolver_turma(audio, transcricao)
 
-        cliente_id = str(audio.instituicao_id) if audio.instituicao_id else None
+        escola_id = str(audio.escola_id) if audio.escola_id else None
         try:
-            extraido = extrair_observacoes(transcricao, cliente_id=cliente_id)
+            extraido = extrair_observacoes(transcricao, escola_id=escola_id)
         except ValueError as exc:
             # Nenhum nome citado. Se ela ANUNCIOU a turma, isso não é erro: é uma
             # gravação só para trocar de sala ("estou na turma Nível 3A"), que é

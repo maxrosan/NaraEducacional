@@ -328,15 +328,6 @@ def aluno_do_body(request, campo='aluno', exigir_vinculo=True):
     return aluno_com_vinculo(request.user, aluno_id, exigir_vinculo)
 
 
-def cliente_id_do_usuario(user):
-    """`cliente_id` usado pelo `prompt_resolver` (a instituição do usuário, em
-    str). Perfis de escola sem `instituicao_id` no cadastro usam a da escola."""
-    instituicao_id = getattr(user, 'instituicao_id', None)
-    if not instituicao_id and getattr(user, 'escola_id', None):
-        instituicao_id = user.escola.instituicao_id
-    return str(instituicao_id) if instituicao_id else None
-
-
 # ---------------------------------------------------------------------------
 # Leitura por escola (painéis da coordenação)
 # ---------------------------------------------------------------------------

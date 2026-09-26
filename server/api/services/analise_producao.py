@@ -47,8 +47,8 @@ def _extrair_primeiro_nome(nome: str) -> str:
     return partes[0] if partes else ""
 
 
-def _montar_prompt(tipo: str, fallback_arquivo: str, nome_aluno: str, idade: str, cliente_id: str | None) -> str:
-    template = resolver_prompt(tipo, cliente_id=cliente_id, fallback_arquivo=fallback_arquivo)
+def _montar_prompt(tipo: str, fallback_arquivo: str, nome_aluno: str, idade: str, escola_id: str | None) -> str:
+    template = resolver_prompt(tipo, escola_id=escola_id, fallback_arquivo=fallback_arquivo)
     primeiro_nome = _extrair_primeiro_nome(nome_aluno)
     return (
         template
@@ -215,7 +215,7 @@ def _falha_analise(exc: Exception, producao: str) -> tuple[str, str]:
     )
 
 
-def analisar_escrita(nome_aluno: str, imagem_base64: str, idade: str = "Não informada", usuario=None, cliente_id: str = None) -> tuple[str, str]:
+def analisar_escrita(nome_aluno: str, imagem_base64: str, idade: str = "Não informada", usuario=None, escola_id: str = None) -> tuple[str, str]:
     """
     Analisa imagem de escrita infantil via IA.
     Retorna (analise_completa, etapa_detectada).
@@ -223,7 +223,7 @@ def analisar_escrita(nome_aluno: str, imagem_base64: str, idade: str = "Não inf
     logger.info("[OPENAI] Enviando prompt para análise da escrita de %s", nome_aluno)
     try:
         raw = _chamar_openai_com_imagem(
-            _montar_prompt("Escrita", "escrita.txt", nome_aluno, idade, cliente_id),
+            _montar_prompt("Escrita", "escrita.txt", nome_aluno, idade, escola_id),
             imagem_base64,
             usuario=usuario,
             response_format=_schema_analise("analise_escrita", FASES_ESCRITA),
@@ -244,7 +244,7 @@ def analisar_escrita(nome_aluno: str, imagem_base64: str, idade: str = "Não inf
     return raw, etapa
 
 
-def analisar_desenho(nome_aluno: str, imagem_base64: str, idade: str = "Não informada", usuario=None, cliente_id: str = None) -> tuple[str, str, list]:
+def analisar_desenho(nome_aluno: str, imagem_base64: str, idade: str = "Não informada", usuario=None, escola_id: str = None) -> tuple[str, str, list]:
     """
     Analisa imagem de desenho infantil via IA.
     Retorna (analise_completa, fase_desenho, elementos_detectados).
@@ -252,7 +252,7 @@ def analisar_desenho(nome_aluno: str, imagem_base64: str, idade: str = "Não inf
     logger.info("[OPENAI] Enviando prompt para análise do desenho de %s", nome_aluno)
     try:
         raw = _chamar_openai_com_imagem(
-            _montar_prompt("Desenho", "desenho.txt", nome_aluno, idade, cliente_id),
+            _montar_prompt("Desenho", "desenho.txt", nome_aluno, idade, escola_id),
             imagem_base64,
             usuario=usuario,
             response_format=_schema_analise("analise_desenho", FASES_DESENHO, com_elementos=True),

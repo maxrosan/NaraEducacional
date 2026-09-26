@@ -3,8 +3,8 @@ prompt_resolver.py
 Resolve prompts do banco de dados com fallback para arquivos .txt.
 
 Prioridade:
-  1. Personalizado mais recente da instituição
-  2. Global mais recente do banco
+  1. Personalizado mais recente da ESCOLA
+  2. Global mais recente do banco (sem escola e sem instituição)
   3. Arquivo .txt em /prompts/
   4. String vazia
 """
@@ -16,32 +16,33 @@ logger = logging.getLogger(__name__)
 _PROMPTS_DIR = Path(__file__).resolve().parent.parent / "prompts"
 
 
-def resolver_prompt(titulo_categoria: str, cliente_id: str = None, fallback_arquivo: str = None) -> str:
+def resolver_prompt(titulo_categoria: str, escola_id=None, fallback_arquivo: str = None) -> str:
     """
     Retorna o prompt resolvido para uma categoria.
 
     Prioridade:
-      1. Personalizado mais recente da instituição (se cliente_id fornecido)
-      2. Global mais recente do banco (instituicao=None)
+      1. Personalizado mais recente da escola (se `escola_id` fornecido)
+      2. Global mais recente do banco (escola e instituição nulas)
       3. Arquivo .txt em /prompts/ (fallback_arquivo)
       4. String vazia
 
-    "Mais recente" é determinado por `-criado_em` (não por `-id`: no schema
-    novo os ids são UUID, sem relação nenhuma com ordem de criação —
-    ordenar por `-id` daria resultado essencialmente aleatório). Garante
-    comportamento previsível mesmo se existir mais de um registro para a
-    mesma categoria/instituição (cenário de dados legados/duplicados).
+    A personalização é POR ESCOLA: cada escola pode ter o seu texto; as que
+    não personalizaram usam o global. `escola_id` deve ser a escola do
+    contexto do prompt (a do aluno, da turma ou do áudio) — não a do usuário,
+    que pode nem ter escola (admin, superadmin, suporte).
+
+    "Mais recente" é determinado por `-criado_em` (os ids são UUID, sem
+    relação com ordem de criação). Garante comportamento previsível mesmo se
+    existir mais de um registro para a mesma categoria/escola.
 
     Usa `_base_manager` (sem tenant) de propósito: esta função roda DENTRO de
     requisições (análise de produção, relatório, planejamento, áudio). Com o
-    `TenantManager`, um professor/coordenador só enxergaria templates com
-    `escola_id` = a escola dele — o global (sem escola) sumiria e todo mundo
-    cairia no .txt. O recorte correto aqui é por instituição, feito à mão.
+    `TenantManager`, quem tem escopo de escola não enxergaria o global (sem
+    escola) e todo mundo cairia no .txt. O recorte aqui é feito à mão.
 
     Args:
         titulo_categoria: Título exato da PromptCategoria no banco.
-        cliente_id:       instituicao_id do usuário (str ou None). Nome mantido
-                          por compatibilidade com quem já chama esta função.
+        escola_id:        Escola do contexto (UUID ou str) ou None.
         fallback_arquivo: Nome do arquivo .txt usado antes do banco existir.
     """
     try:
@@ -49,28 +50,24 @@ def resolver_prompt(titulo_categoria: str, cliente_id: str = None, fallback_arqu
 
         categoria = PromptCategoria.objects.filter(titulo=titulo_categoria, ativo=True).first()
         if categoria:
-            # 1. Personalizado mais recente da instituição
-            if cliente_id:
+            # 1. Personalizado mais recente da escola
+            if escola_id:
                 tpl = (
-                    PromptTemplate._base_manager.filter(
-                        categoria=categoria,
-                        instituicao_id=cliente_id,
-                    )
+                    PromptTemplate._base_manager.filter(categoria=categoria, escola_id=escola_id)
                     .order_by('-criado_em')
                     .first()
                 )
                 if tpl and tpl.personalizado.strip():
                     logger.debug(
-                        "[prompt_resolver] Usando personalizado instituicao=%s categoria=%s (id=%s)",
-                        cliente_id, titulo_categoria, tpl.id,
+                        "[prompt_resolver] Usando personalizado escola=%s categoria=%s (id=%s)",
+                        escola_id, titulo_categoria, tpl.id,
                     )
                     return tpl.personalizado.strip()
 
             # 2. Global mais recente do banco
             tpl_global = (
                 PromptTemplate._base_manager.filter(
-                    categoria=categoria,
-                    instituicao__isnull=True,
+                    categoria=categoria, escola__isnull=True, instituicao__isnull=True,
                 )
                 .order_by('-criado_em')
                 .first()

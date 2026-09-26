@@ -38,7 +38,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
 from api.escopo import (
-    buscar_no_escopo, cliente_id_do_usuario, dono_ou_gestao, pode_gerenciar, professor_vinculado_turma,
+    buscar_no_escopo, dono_ou_gestao, pode_gerenciar, professor_vinculado_turma,
 )
 from api.models import PlanejamentoDiario, PlanejamentoHabilidade, PlanejamentoSemanal, Turma, Usuario
 from api.serializers import PlanejamentoSemanalSerializer
@@ -91,6 +91,18 @@ def _professor_do_planejamento(user, turma, professor_id):
     if professor is None or professor.escola_id != turma.escola_id:
         return None, _erro("Professor não encontrado na escola da turma.")
     return professor.id, None
+
+
+def _escola_do_prompt(request):
+    """Escola cujo prompt personalizado vale na sugestão de IA: a da turma
+    (`turma_id` opcional no body — necessário para admin/superadmin, que não
+    têm escola) ou, sem turma, a escola do próprio usuário."""
+    turma_id = (request.data or {}).get("turma_id")
+    if turma_id:
+        turma = buscar_no_escopo(Turma, turma_id)
+        if turma is not None:
+            return turma.escola_id
+    return getattr(request.user, "escola_id", None)
 
 
 def _chave_invalida(turma, chave):
@@ -279,9 +291,9 @@ def processar_arquivo_planejamento(request):
 @permission_classes([IsAuthenticated])
 def sugerir_atividades_planejamento(request):
     """
-    Assistente de IA livre. Recebe ``{prompt, ano_serie?, contexto?}`` e
-    devolve ``{atividades_sugeridas}``.
-    O prompt é resolvido do banco (categoria "Planejamento") via instituicao_id.
+    Assistente de IA livre. Recebe ``{prompt, ano_serie?, contexto?, turma_id?}``
+    e devolve ``{atividades_sugeridas}``.
+    O prompt é resolvido do banco (categoria "Planejamento") pela escola.
     """
     payload = request.data or {}
     prompt = (payload.get("prompt") or "").strip()
@@ -293,7 +305,7 @@ def sugerir_atividades_planejamento(request):
         contexto,
     ]))
 
-    cliente_id = cliente_id_do_usuario(request.user)
+    escola_id = _escola_do_prompt(request)
 
     try:
         atividades_sugeridas = run_with_timeout(
@@ -301,7 +313,7 @@ def sugerir_atividades_planejamento(request):
             IA_REQUEST_TIMEOUT_SECONDS,
             prompt,
             contexto_turma,
-            cliente_id,
+            escola_id,
         )
     except ValueError as exc:
         return Response({"error": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
@@ -327,7 +339,7 @@ def sugerir_atividades_planejamento(request):
 @permission_classes([IsAuthenticated])
 def sugerir_bncc_planejamento(request):
     """
-    Recebe ``{atividades_texto, ano_serie?, limite?}`` e devolve as
+    Recebe ``{atividades_texto, ano_serie?, limite?, turma_id?}`` e devolve as
     habilidades BNCC sugeridas, com origem ('ia' ou 'fallback'), buscadas
     no catálogo `HabilidadeBNCC`.
     """
@@ -339,7 +351,7 @@ def sugerir_bncc_planejamento(request):
     except (TypeError, ValueError):
         limite = 6
 
-    cliente_id = cliente_id_do_usuario(request.user)
+    escola_id = _escola_do_prompt(request)
 
     try:
         resultado = run_with_timeout(
@@ -348,7 +360,7 @@ def sugerir_bncc_planejamento(request):
             atividades_texto,
             ano_serie,
             limite,
-            cliente_id,
+            escola_id,
         )
     except ValueError as exc:
         return Response({"error": str(exc)}, status=status.HTTP_400_BAD_REQUEST)

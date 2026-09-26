@@ -22,7 +22,7 @@ from rest_framework.decorators import api_view, permission_classes, throttle_cla
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
-from api.escopo import aluno_do_body, cliente_id_do_usuario, dono_ou_gestao
+from api.escopo import aluno_do_body, dono_ou_gestao
 from api.ia_utils import (
     ALLOWED_IMAGE_EXTENSIONS,
     ALLOWED_IMAGE_MIME_TYPES,
@@ -183,7 +183,7 @@ def upload_e_analise_escrita(request):
             base64.b64encode(ctx['file_bytes']).decode("utf-8"),
             idade=idade_do_aluno(aluno),
             usuario=request.user,
-            cliente_id=cliente_id_do_usuario(request.user),
+            escola_id=aluno.escola_id,  # prompt personalizado é por escola
         )
         descricao = f"ANÁLISE TÉCNICA:\n{analise_completa}"
 
@@ -231,7 +231,7 @@ def upload_e_analise_desenho(request):
             base64.b64encode(ctx['file_bytes']).decode("utf-8"),
             idade=idade_do_aluno(aluno),
             usuario=request.user,
-            cliente_id=cliente_id_do_usuario(request.user),
+            escola_id=aluno.escola_id,  # prompt personalizado é por escola
         )
 
         salvar_registro_desenho(
