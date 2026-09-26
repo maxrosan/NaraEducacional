@@ -145,3 +145,4 @@ uploads/*
 # NARA - Arquivos de teste
 test_*.html
 test_*.py
+!api/tests/test_*.py
