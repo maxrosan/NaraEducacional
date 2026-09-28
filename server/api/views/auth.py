@@ -3,9 +3,11 @@
 import logging
 
 from rest_framework import status
-from rest_framework.decorators import api_view, permission_classes
+from rest_framework.decorators import api_view, authentication_classes, permission_classes
 from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework.response import Response
+from rest_framework_simplejwt.exceptions import TokenError
+from rest_framework_simplejwt.tokens import RefreshToken
 from rest_framework_simplejwt.views import TokenObtainPairView
 
 from api.services.password_reset import (
@@ -21,6 +23,40 @@ logger = logging.getLogger(__name__)
 class LoginView(TokenObtainPairView):
     """Login: devolve access/refresh token + dados do usuário logado."""
     serializer_class = LoginSerializer
+
+
+@api_view(['POST'])
+@authentication_classes([])
+@permission_classes([AllowAny])
+def logout(request):
+    """Encerra a sessão: coloca o refresh token na blacklist.
+
+    Body: {"refresh": "<refresh token>"}
+
+    Sem autenticação de propósito. O access token pode já ter expirado quando o
+    usuário clica em "sair", e o JWTAuthentication responderia 401 a um Bearer
+    vencido antes de chegar aqui. A credencial é o próprio refresh token: quem o
+    tem só consegue invalidá-lo, nada mais.
+
+    Idempotente: token já invalidado, expirado ou malformado também responde 200,
+    porque o objetivo (esse token não servir mais) já está cumprido.
+
+    Limite: o access token é stateless e continua válido até expirar
+    (ACCESS_TOKEN_LIFETIME, 1h). O front deve descartá-lo junto.
+    """
+    refresh = request.data.get('refresh')
+    if not refresh:
+        return Response({'error': 'Campo refresh é obrigatório.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    try:
+        token = RefreshToken(refresh)
+        token.blacklist()
+        logger.info('Logout: refresh token invalidado (user_id=%s).', token.get('user_id'))
+    except TokenError:
+        # Já na blacklist, expirado ou inválido: não há o que invalidar.
+        pass
+
+    return Response({'message': 'Sessão encerrada.'})
 
 
 @api_view(['GET'])

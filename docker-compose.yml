@@ -63,6 +63,11 @@ services:
       DJANGO_DEBUG: ${DJANGO_DEBUG:-true}
       DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY:-change-me}
       DJANGO_ALLOWED_HOSTS: ${DJANGO_ALLOWED_HOSTS:-localhost,127.0.0.1,backend}
+      # Origens do front que podem chamar a API pelo navegador. O front desta
+      # stack roda na 5174 (a 5173 é do nara original), e o settings.py só
+      # libera 3000/5173/5178 por padrão. localhost e 127.0.0.1 são origens
+      # diferentes para o navegador, por isso as duas.
+      DJANGO_CORS_ALLOWED_ORIGINS: ${DJANGO_CORS_ALLOWED_ORIGINS:-http://localhost:5174,http://127.0.0.1:5174}
 
       # PostgreSQL
       POSTGRES_HOST: postgres
