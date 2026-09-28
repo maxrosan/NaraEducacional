@@ -9,13 +9,13 @@ import {
 import { useNavigate, useParams, useLocation } from 'react-router-dom';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
-  InstituicaoTab, TurmasTab, UsuariosTab, PeriodosTab,
+  TurmasTab, UsuariosTab, PeriodosTab,
   RegistrosTab, RelatoriosConfigTab, PerguntasTab,
   AlunosTab, SeriesTab, PromptsTab, CategoriasPromptTab,
   DispositivosTab
 } from '@/components/admin';
 import DisciplinasTab from '@/components/admin/disciplinas/DisciplinasTab';
-import EscolasResumo from '@/components/admin/EscolasResumo';
+import EscolasTab from '@/components/admin/EscolasTab';
 import { useAuth } from '@/contexts/AuthContext';
 import OpenAIUsagePage from '@/pages/OpenAIUsagePage';
 
@@ -23,7 +23,6 @@ import OpenAIUsagePage from '@/pages/OpenAIUsagePage';
 
 const NAV_ITEMS = [
   { label: "Dashboard", tab: "dashboard" },
-  { label: "Instituição", tab: "instituicoes" },
   {
     label: "Cadastros",
     children: [
@@ -406,8 +405,10 @@ const AdminPage = () => {
   const initialTab = tab || (turmaId ? 'alunos' : 'dashboard');
 
   // Garante a URL /admin/dashboard (e não só /admin) ao entrar no painel.
+  // /admin/instituicoes era a antiga página inicial: links e favoritos antigos
+  // passam a cair no dashboard.
   useEffect(() => {
-    if (!tab && !turmaId) navigate('/admin/dashboard', { replace: true });
+    if ((!tab && !turmaId) || tab === 'instituicoes') navigate('/admin/dashboard', { replace: true });
   }, [tab, turmaId, navigate]);
 
   function handleTabChange(value) {
@@ -436,7 +437,6 @@ const AdminPage = () => {
           <Tabs defaultValue={initialTab} onValueChange={handleTabChange} value={initialTab} className="w-full">
             <TabsList className="hidden">
               <TabsTrigger value="dashboard">Dashboard</TabsTrigger>
-              <TabsTrigger value="instituicoes">Instituição</TabsTrigger>
               <TabsTrigger value="series">Séries</TabsTrigger>
               <TabsTrigger value="turmas">Turmas</TabsTrigger>
               <TabsTrigger value="alunos">Alunos</TabsTrigger>
@@ -460,8 +460,7 @@ const AdminPage = () => {
                 transition={{ duration: 0.2 }}
                 className="mt-6"
               >
-                <TabsContent value="dashboard"><EscolasResumo /></TabsContent>
-                <TabsContent value="instituicoes"><InstituicaoTab /></TabsContent>
+                <TabsContent value="dashboard"><EscolasTab /></TabsContent>
                 <TabsContent value="series"><SeriesTab /></TabsContent>
                 <TabsContent value="turmas"><TurmasTab /></TabsContent>
                 <TabsContent value="alunos"><AlunosTab /></TabsContent>

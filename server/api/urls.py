@@ -11,6 +11,7 @@ from .views.instituicao import (
 )
 from .views.escola import (
     listar_escolas,
+    resumo_escolas,
     criar_escola,
     detalhe_escola,
     atualizar_escola,
@@ -255,6 +256,8 @@ urlpatterns = [
 
     # Escolas
     path('escolas/', listar_escolas, name='listar_escolas'),
+    # Dashboard do admin (/admin/dashboard no front): escolas da rede com os totais.
+    path('admin/dashboard/', resumo_escolas, name='admin_dashboard'),
     path('escolas/criar/', criar_escola, name='criar_escola'),
     path('escolas/<uuid:escola_id>/', detalhe_escola, name='detalhe_escola'),
     path('escolas/<uuid:escola_id>/atualizar/', atualizar_escola, name='atualizar_escola'),

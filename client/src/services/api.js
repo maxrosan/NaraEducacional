@@ -1123,6 +1123,19 @@ export async function uploadLogoInstituicao() {
 }
 
 // =============================================================================
+// ESCOLAS
+// =============================================================================
+
+/**
+ * Escolas do escopo do usuário com os totais para os cards do painel do admin:
+ * [{ id, nome, tipo_unidade, cidade, estado, ativa, totais: { turmas, alunos, professores, coordenadores } }]
+ * Só gestão (admin, coordenador, superadmin).
+ */
+export async function listarResumoEscolas() {
+  return getJson('/admin/dashboard/', 'carregar o dashboard do admin');
+}
+
+// =============================================================================
 // USUÁRIOS
 // =============================================================================
 
