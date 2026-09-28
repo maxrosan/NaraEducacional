@@ -1020,6 +1020,38 @@ export async function buscarTurma(turmaId) {
   return getJson(`/turmas/${turmaId}/`, 'buscar turma');
 }
 
+/**
+ * Cria turma. Admin/superadmin: `escola` é obrigatória (a instituição vem dela).
+ * Coordenador: a escola é sempre a dele (o backend ignora a do body).
+ */
+export async function criarTurma(dados) {
+  return enviarJson('/turmas/criar/', 'POST', dados, 'criar turma');
+}
+
+/** Atualiza turma (PATCH parcial). `escola` e `instituicao` não mudam. Desativar: { ativa: false }. */
+export async function atualizarTurma(turmaId, dados) {
+  return enviarJson(`/turmas/${turmaId}/atualizar/`, 'PATCH', dados, 'atualizar turma');
+}
+
+/** Vínculos da turma: [{ id, usuario, usuario_nome, usuario_email, usuario_nivel, turma, data_vinculo }]. */
+export async function listarProfessoresTurma(turmaId) {
+  return getJson(`/turmas/${turmaId}/professores/`, 'listar professores da turma');
+}
+
+/** Vincula usuário à turma. O backend exige que ele seja da mesma escola da turma. */
+export async function vincularProfessorTurma(turmaId, usuarioId) {
+  return enviarJson(`/turmas/${turmaId}/professores/vincular/`, 'POST', { usuario: usuarioId }, 'vincular professor à turma');
+}
+
+/** Desfaz o vínculo (o backend responde 204, sem corpo). */
+export async function desvincularProfessorTurma(turmaId, usuarioId) {
+  const response = await authFetch(
+    `${API_BASE_URL}/turmas/${turmaId}/professores/${usuarioId}/desvincular/`,
+    { method: 'DELETE' },
+  );
+  return parseJsonOrThrow(response, 'desvincular professor da turma');
+}
+
 // =============================================================================
 // PRODUÇÕES — ALTERADO: /producoes-criancas/ → /producoes/
 // =============================================================================
@@ -1125,6 +1157,11 @@ export async function uploadLogoInstituicao() {
 // =============================================================================
 // ESCOLAS
 // =============================================================================
+
+/** Escolas do escopo: admin → as da rede; coordenador → a dele; superadmin → todas. */
+export async function listarEscolas() {
+  return getJson('/escolas/', 'listar escolas');
+}
 
 /**
  * Escolas do escopo do usuário com os totais para os cards do painel do admin:

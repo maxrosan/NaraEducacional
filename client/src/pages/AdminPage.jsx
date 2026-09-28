@@ -11,7 +11,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   TurmasTab, UsuariosTab, PeriodosTab,
   RegistrosTab, RelatoriosConfigTab, PerguntasTab,
-  AlunosTab, SeriesTab, PromptsTab, CategoriasPromptTab,
+  AlunosTab, PromptsTab, CategoriasPromptTab,
   DispositivosTab
 } from '@/components/admin';
 import DisciplinasTab from '@/components/admin/disciplinas/DisciplinasTab';
@@ -26,7 +26,6 @@ const NAV_ITEMS = [
   {
     label: "Cadastros",
     children: [
-      { label: "Séries", tab: "series" },
       { label: "Turmas", tab: "turmas" },
       { label: "Alunos", tab: "alunos" },
       { label: "Disciplinas", tab: "disciplinas" },
@@ -391,6 +390,12 @@ function Navbar({ onTabChange, tabAtiva }) {
 
 // ─── AdminPage ────────────────────────────────────────────────────────────────
 
+// Aba removida → aba que a substitui.
+//   instituicoes: era a página inicial antiga; hoje é o dashboard.
+//   series: o banco multi-tenant não tem séries; etapa, faixa etária, idades e
+//           ordem são campos da própria turma.
+const ABAS_REMOVIDAS = { instituicoes: 'dashboard', series: 'turmas' };
+
 function useQuery() {
   return new URLSearchParams(useLocation().search);
 }
@@ -404,11 +409,11 @@ const AdminPage = () => {
   // /admin sem aba abre o dashboard; /admin?turma_id=... continua abrindo Alunos.
   const initialTab = tab || (turmaId ? 'alunos' : 'dashboard');
 
-  // Garante a URL /admin/dashboard (e não só /admin) ao entrar no painel.
-  // /admin/instituicoes era a antiga página inicial: links e favoritos antigos
-  // passam a cair no dashboard.
+  // Garante a URL /admin/dashboard (e não só /admin) ao entrar no painel e
+  // redireciona abas que deixaram de existir (links e favoritos antigos).
   useEffect(() => {
-    if ((!tab && !turmaId) || tab === 'instituicoes') navigate('/admin/dashboard', { replace: true });
+    if (!tab && !turmaId) navigate('/admin/dashboard', { replace: true });
+    else if (ABAS_REMOVIDAS[tab]) navigate(`/admin/${ABAS_REMOVIDAS[tab]}`, { replace: true });
   }, [tab, turmaId, navigate]);
 
   function handleTabChange(value) {
@@ -437,7 +442,6 @@ const AdminPage = () => {
           <Tabs defaultValue={initialTab} onValueChange={handleTabChange} value={initialTab} className="w-full">
             <TabsList className="hidden">
               <TabsTrigger value="dashboard">Dashboard</TabsTrigger>
-              <TabsTrigger value="series">Séries</TabsTrigger>
               <TabsTrigger value="turmas">Turmas</TabsTrigger>
               <TabsTrigger value="alunos">Alunos</TabsTrigger>
               <TabsTrigger value="disciplinas">Disciplinas</TabsTrigger>
@@ -461,7 +465,6 @@ const AdminPage = () => {
                 className="mt-6"
               >
                 <TabsContent value="dashboard"><EscolasTab /></TabsContent>
-                <TabsContent value="series"><SeriesTab /></TabsContent>
                 <TabsContent value="turmas"><TurmasTab /></TabsContent>
                 <TabsContent value="alunos"><AlunosTab /></TabsContent>
                 <TabsContent value="disciplinas"><DisciplinasTab /></TabsContent>

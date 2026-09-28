@@ -6,7 +6,6 @@ import RegistrosTab from './RegistrosTab';
 import RelatoriosConfigTab from './RelatoriosConfigTab';
 import PerguntasTab from './PerguntasTab';
 import AlunosTab from './AlunosTab';
-import SeriesTab from './SeriesTab';
 import EscolasTab from './EscolasTab';
 import EscolasSection from './EscolasSection';
 import CategoriasPromptTab from './CategoriasPromptTab';
@@ -22,7 +21,6 @@ export {
     RelatoriosConfigTab,
     PerguntasTab,
     AlunosTab,
-    SeriesTab,
     EscolasTab,
     EscolasSection,
     CategoriasPromptTab,
