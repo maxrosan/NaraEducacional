@@ -1,6 +1,7 @@
 """Endpoints de Instituicao (topo da hierarquia multi-tenant).
 
-* listar/criar: só superadmin;
+* listar: superadmin vê todas; os demais, só a própria (lista com 0 ou 1 item);
+* criar: só superadmin;
 * detalhe: superadmin, ou qualquer usuário da própria instituição;
 * editar: superadmin, ou o ADMIN da própria instituição — e o admin não mexe
   em `ativa` (ativar/desativar uma rede é decisão da plataforma).
@@ -42,12 +43,22 @@ def _instituicao_ou_erro(user, instituicao_id, editar=False):
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
 def listar_instituicoes(request):
-    """Lista todas as instituições. Só superadmin."""
-    if not is_superadmin(request.user):
-        return _sem_permissao()
+    """Superadmin: todas as instituições. Demais: só a própria.
 
-    instituicoes = Instituicao.objects.all().order_by('nome')
-    return Response(InstituicaoSerializer(instituicoes, many=True).data)
+    Antes respondia 403 para quem não era superadmin, e o front do admin da rede
+    (que lista instituições para mostrar a própria rede) quebrava com "Sem
+    permissão". Devolver só a própria instituição não expõe nada além do que o
+    detalhe (`instituicoes/<id>/`) já permite a qualquer usuário da rede.
+    Usuário sem instituição (suporte, vendedor) recebe lista vazia.
+    """
+    user = request.user
+    if is_superadmin(user):
+        instituicoes = Instituicao.objects.all()
+    elif user.instituicao_id:
+        instituicoes = Instituicao.objects.filter(pk=user.instituicao_id)
+    else:
+        instituicoes = Instituicao.objects.none()
+    return Response(InstituicaoSerializer(instituicoes.order_by('nome'), many=True).data)
 
 
 @api_view(['POST'])

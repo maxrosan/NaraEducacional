@@ -15,12 +15,14 @@ import {
   DispositivosTab
 } from '@/components/admin';
 import DisciplinasTab from '@/components/admin/disciplinas/DisciplinasTab';
+import EscolasResumo from '@/components/admin/EscolasResumo';
 import { useAuth } from '@/contexts/AuthContext';
 import OpenAIUsagePage from '@/pages/OpenAIUsagePage';
 
 // ─── Nav items ────────────────────────────────────────────────────────────────
 
 const NAV_ITEMS = [
+  { label: "Dashboard", tab: "dashboard" },
   { label: "Instituição", tab: "instituicoes" },
   {
     label: "Cadastros",
@@ -400,7 +402,13 @@ const AdminPage = () => {
   const query    = useQuery();
   const turmaId  = query.get('turma_id');
 
-  const initialTab = tab || (turmaId ? 'alunos' : 'instituicoes');
+  // /admin sem aba abre o dashboard; /admin?turma_id=... continua abrindo Alunos.
+  const initialTab = tab || (turmaId ? 'alunos' : 'dashboard');
+
+  // Garante a URL /admin/dashboard (e não só /admin) ao entrar no painel.
+  useEffect(() => {
+    if (!tab && !turmaId) navigate('/admin/dashboard', { replace: true });
+  }, [tab, turmaId, navigate]);
 
   function handleTabChange(value) {
     navigate(`/admin/${value}`);
@@ -427,6 +435,7 @@ const AdminPage = () => {
 
           <Tabs defaultValue={initialTab} onValueChange={handleTabChange} value={initialTab} className="w-full">
             <TabsList className="hidden">
+              <TabsTrigger value="dashboard">Dashboard</TabsTrigger>
               <TabsTrigger value="instituicoes">Instituição</TabsTrigger>
               <TabsTrigger value="series">Séries</TabsTrigger>
               <TabsTrigger value="turmas">Turmas</TabsTrigger>
@@ -451,6 +460,7 @@ const AdminPage = () => {
                 transition={{ duration: 0.2 }}
                 className="mt-6"
               >
+                <TabsContent value="dashboard"><EscolasResumo /></TabsContent>
                 <TabsContent value="instituicoes"><InstituicaoTab /></TabsContent>
                 <TabsContent value="series"><SeriesTab /></TabsContent>
                 <TabsContent value="turmas"><TurmasTab /></TabsContent>

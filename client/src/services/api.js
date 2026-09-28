@@ -466,11 +466,18 @@ export const apiService = {
   // ── Alertas → Notificações ──────────────────────────────────────────
 
   /**
-   * ALTERADO / VERIFICAR: alertas/ virou notificacoes/ (inbox do usuário logado).
-   * Retorna um array de notificações não lidas; o formato difere do antigo.
+   * Notificações do usuário logado (substituem mensagens da coordenação e alertas).
+   * Cada destinatário tem a própria cópia; `lido_em` nulo = não lida.
+   * @param {{ apenasNaoLidas?: boolean }} [opcoes]
+   * @returns {Promise<Array<{id, tipo, titulo, conteudo, lido_em, remetente, remetente_nome, criado_em}>>}
    */
+  async listarNotificacoes({ apenasNaoLidas = true } = {}) {
+    return getJson(apenasNaoLidas ? '/notificacoes/?lidas=false' : '/notificacoes/', 'listar notificações');
+  },
+
+  /** ALTERADO: alertas/ virou notificacoes/. Mantido como alias de listarNotificacoes. */
   async listarAlertas() {
-    return getJson('/notificacoes/?lidas=false', 'listar notificações');
+    return apiService.listarNotificacoes({ apenasNaoLidas: true });
   },
 
   /** REMOVIDO: alertas/detalhe/. As notificações já vêm completas na listagem. */
@@ -778,6 +785,8 @@ export const testarConexao = apiService.testarConexao;
 export const healthCheck = apiService.healthCheck;
 export const salvarAnotacoesProfessora = apiService.salvarAnotacoesProfessora;
 export const listarRegistrosEscrita = apiService.listarRegistrosEscrita;
+export const listarNotificacoes = apiService.listarNotificacoes;
+export const marcarNotificacaoLida = apiService.marcarNotificacaoLida;
 export const buscarRegistrosPorAluno = apiService.buscarRegistrosPorAluno;
 
 // Planejamento, funções relacionadas

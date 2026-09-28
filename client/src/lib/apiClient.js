@@ -45,6 +45,11 @@ const TABELAS = {
   portfolios: 'producoes',
   registros_observacao: 'registros-observacao',
   observacoes: 'registros-observacao',
+  // A rota do backend é no singular (planejamento/); a tabela é planejamentos_semanais.
+  planejamentos: 'planejamento',
+  planejamentos_semanais: 'planejamento',
+  'planejamentos-semanais': 'planejamento',
+  planejamento_semanal: 'planejamento',
   // VERIFICAR: atendimentos viraram sessões do especialista no backend novo.
   atendimentos_especialistas: 'sessoes-especialista',
   'atendimentos-especialistas': 'sessoes-especialista',

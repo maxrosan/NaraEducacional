@@ -1,14 +1,36 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { apiClient } from '@/lib/apiClient';
-import { apiService } from '@/services/api';
+import { listarNotificacoes, marcarNotificacaoLida } from '@/services/api';
 import { useAuth } from '@/contexts/AuthContext';
 import { Card, CardContent, CardHeader } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { MessageSquare, CheckCircle, AlertTriangle, AlertCircle, Loader2 } from 'lucide-react';
 import { useToast } from '@/components/ui/use-toast';
 
-const AlertCard = ({ alert, onDismiss }) => {
+/*
+ * ALTERADO: mensagens da coordenação e alertas do sistema vêm agora da mesma
+ * fonte, a tabela `notificacoes` (GET notificacoes/?lidas=false). Cada usuário
+ * tem a própria cópia de cada notificação; "Ok, entendido" preenche `lido_em`
+ * (POST notificacoes/<id>/marcar-lida/). As tabelas mensagens_coordenacao,
+ * mensagens_lidas e alertas_lidos não existem no backend multi-tenant.
+ */
+
+/** Tipos de notificação exibidos como alerta (vermelho). Os demais são mensagem. */
+const TIPOS_ALERTA = new Set(['alerta', 'sem_registro', 'no-record']);
+
+function paraCartao(n) {
+  const ehAlerta = TIPOS_ALERTA.has((n.tipo || '').toLowerCase());
+  return {
+    id: n.id,
+    type: ehAlerta ? 'no-record' : 'message',
+    title: n.titulo || (ehAlerta ? 'Alerta' : 'Mensagem da Coordenação'),
+    subtitle: n.remetente_nome ? `Enviado por ${n.remetente_nome}` : 'Aviso do sistema',
+    content: n.conteudo,
+    createdAt: n.criado_em,
+  };
+}
+
+const AlertCard = ({ alert, onDismiss, dismissing }) => {
   const icons = {
     'no-record': <AlertTriangle className="h-5 w-5 text-red-500" />,
     message: <MessageSquare className="h-5 w-5 text-roxo-principal" />,
@@ -18,7 +40,7 @@ const AlertCard = ({ alert, onDismiss }) => {
     'no-record': 'border-red-200 bg-red-50',
     message: 'border-lavanda bg-lavanda-claro',
     default: 'border-yellow-200 bg-yellow-50',
-  }
+  };
 
   const icon = icons[alert.type] || icons.default;
   const cardClass = colors[alert.type] || colors.default;
@@ -32,26 +54,29 @@ const AlertCard = ({ alert, onDismiss }) => {
       transition={{ duration: 0.3, ease: 'easeInOut' }}
       className="mb-4"
     >
-      <Card className={`${cardClass} shadow-sm overflow-hidde mb-4`}>
+      <Card className={`${cardClass} shadow-sm overflow-hidden mb-4`}>
         <CardHeader className="pb-3">
           <div className="flex justify-between items-start">
             <div className="flex items-center gap-3">
-               <div className="p-2 bg-white rounded-full">{icon}</div>
-               <div>
+              <div className="p-2 bg-white rounded-full">{icon}</div>
+              <div>
                 <p className="text-sm font-semibold text-texto-escuro">{alert.title}</p>
                 <p className="text-xs text-texto-medio">{alert.subtitle}</p>
-               </div>
+              </div>
             </div>
           </div>
         </CardHeader>
         <CardContent>
-          <p className="text-sm text-texto-escuro mb-4">{alert.content}</p>
+          <p className="text-sm text-texto-escuro mb-4 whitespace-pre-line">{alert.content}</p>
           <Button
             onClick={() => onDismiss(alert)}
+            disabled={dismissing}
             className="w-full bg-roxo-principal hover:bg-roxo-principal/90"
             size="sm"
           >
-            <CheckCircle className="mr-2 h-4 w-4" />
+            {dismissing
+              ? <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              : <CheckCircle className="mr-2 h-4 w-4" />}
             Ok, entendido
           </Button>
         </CardContent>
@@ -65,68 +90,21 @@ const AlertsAndMessagesCenter = () => {
   const { toast } = useToast();
   const [alerts, setAlerts] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [dismissingId, setDismissingId] = useState(null);
 
   const fetchAlertsAndMessages = useCallback(async () => {
     if (!user) {
       setLoading(false);
       return;
     }
-
     try {
       setLoading(true);
-      const allAlerts = [];
-
-      // 1. Fetch Coordination Messages
-      const { data: readMessages, error: readError } = await apiClient
-        .from('mensagens_lidas').select('mensagem_id').eq('usuario_id', user.id);
-      if (readError) throw readError;
-      const readMessageIds = readMessages.map(m => m.mensagem_id);
-
-      let query = apiClient.from('mensagens_coordenacao').select('*');
-      if (readMessageIds.length > 0) {
-        query = query.not('id', 'in', `(${readMessageIds.join(',')})`);
-      }
-      query = query.order('created_at', { ascending: false });
-
-      const { data: unreadMessages, error: msgError } = await query;
-      if (msgError) throw msgError;
-
-      if (unreadMessages) {
-        allAlerts.push(...unreadMessages.map(msg => ({
-          id: `msg-${msg.id}`,
-          type: 'message',
-          title: msg.titulo || "Mensagem da Coordena\u00e7\u00e3o",
-          subtitle: `Enviado por ${msg.remetente}`,
-          content: msg.conteudo,
-          createdAt: msg.created_at,
-          originalId: msg.id,
-        })));
-      }
-
-      // 2. Fetch system alerts from backend (frequency-based per-child alerts)
-      try {
-        const backendAlerts = await apiService.listarAlertas();
-        if (Array.isArray(backendAlerts)) {
-          allAlerts.push(...backendAlerts.map(alert => ({
-            id: alert.id,
-            type: 'no-record',
-            title: alert.titulo,
-            subtitle: alert.resumo,
-            content: alert.conteudo,
-            createdAt: alert.criado_em,
-            originalId: alert.id,
-            alertType: alert.tipo,
-          })));
-        }
-      } catch (alertErr) {
-        console.error('Erro ao buscar alertas do sistema:', alertErr);
-      }
-
-      allAlerts.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
-      setAlerts(allAlerts);
-
+      const notificacoes = await listarNotificacoes({ apenasNaoLidas: true });
+      const cartoes = (notificacoes || []).map(paraCartao);
+      cartoes.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+      setAlerts(cartoes);
     } catch (error) {
-      toast({ variant: "destructive", title: "Erro ao buscar alertas", description: error.message });
+      toast({ variant: 'destructive', title: 'Erro ao buscar alertas', description: error.message });
     } finally {
       setLoading(false);
     }
@@ -138,22 +116,15 @@ const AlertsAndMessagesCenter = () => {
 
   const handleDismiss = async (alert) => {
     if (!user) return;
+    setDismissingId(alert.id);
     try {
-      if (alert.type === 'message') {
-        const { error } = await apiClient.from('mensagens_lidas').insert({ mensagem_id: alert.originalId, usuario_id: user.id });
-        if (error) throw error;
-      } else {
-        const { error } = await apiClient.from('alertas_lidos').insert({
-            usuario_id: user.id,
-            alerta_tipo: alert.alertType || alert.type,
-            alerta_chave: alert.originalId
-        });
-        if (error) throw error;
-      }
-      setAlerts(prevAlerts => prevAlerts.filter(a => a.id !== alert.id));
-      toast({ title: "Notifica\u00e7\u00e3o marcada como lida!" });
+      await marcarNotificacaoLida(alert.id);
+      setAlerts((prev) => prev.filter((a) => a.id !== alert.id));
+      toast({ title: 'Notificação marcada como lida!' });
     } catch (error) {
-      toast({ variant: "destructive", title: "Erro ao marcar como lido", description: error.message });
+      toast({ variant: 'destructive', title: 'Erro ao marcar como lido', description: error.message });
+    } finally {
+      setDismissingId(null);
     }
   };
 
@@ -165,7 +136,7 @@ const AlertsAndMessagesCenter = () => {
     );
   }
 
-  if (!alerts || alerts.length === 0) {
+  if (alerts.length === 0) {
     return (
       <div className="mt-10 text-center p-6 bg-white rounded-2xl shadow-sm border border-gray-100">
         <CheckCircle className="h-12 w-12 text-green-500 mx-auto mb-4" />
@@ -180,8 +151,13 @@ const AlertsAndMessagesCenter = () => {
       <h2 className="text-xl font-bold text-gray-800 mb-4">Alertas e Mensagens</h2>
       <div className="space-y-0">
         <AnimatePresence>
-          {alerts.map(alert => (
-            <AlertCard key={alert.id} alert={alert} onDismiss={handleDismiss} />
+          {alerts.map((alert) => (
+            <AlertCard
+              key={alert.id}
+              alert={alert}
+              onDismiss={handleDismiss}
+              dismissing={dismissingId === alert.id}
+            />
           ))}
         </AnimatePresence>
       </div>
