@@ -1,34 +1,41 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
-import { PlusCircle, Edit, Power, RotateCcw, UserPlus } from 'lucide-react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { PlusCircle, Edit, Power, RotateCcw, UserPlus, ChevronLeft, ChevronRight } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { toast } from '@/components/ui/use-toast';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { Card, CardHeader, CardTitle, CardContent, CardDescription } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogClose, DialogDescription } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
 import {
-    listarTurmas, listarEscolas, listarUsuarios,
+    listarTurmasPaginado, listarEscolas, listarUsuarios,
     criarTurma, atualizarTurma,
-    listarProfessoresTurma, vincularProfessorTurma, desvincularProfessorTurma,
+    vincularProfessorTurma, desvincularProfessorTurma,
 } from '@/services/api';
 
 /*
- * Cadastro de turmas (backend: /turmas/).
+ * Cadastro de turmas (backend: /turmas/?page=).
  *
  * No banco multi-tenant não existe cadastro de séries: etapa, faixa etária,
  * idades e ordem são campos da própria turma e são editados aqui.
  *
  * O backend já devolve só as turmas do escopo do usuário: o admin vê as de
- * todas as escolas da rede; o coordenador, só as da escola dele. Por isso não
- * há mais busca de "instituição" nem filtro por instituicao_id.
+ * todas as escolas da rede; o coordenador, só as da escola dele.
+ *
+ * Carregamento leve:
+ *   - a lista vem paginada (10 por página) e filtrada no servidor pela aba
+ *     (ativas/inativas) e pela escola;
+ *   - cada turma já traz `professores` (sem uma chamada por turma);
+ *   - a lista de usuários (só usada no formulário) é buscada na primeira vez
+ *     que o formulário abre, não junto com a página.
  *
  * Não existe exclusão de turma: ela é desativada (ativa=false) e pode ser
- * reativada, preservando alunos e registros vinculados.
+ * reativada na aba "Inativas", preservando alunos e registros vinculados.
  */
 
 const ETAPA_LABELS = {
@@ -48,6 +55,10 @@ const NIVEIS_VINCULAVEIS = {
 };
 
 const TODAS = 'todas';
+const POR_PAGINA = 10;
+const ABA_ATIVAS = 'ativas';
+const ABA_INATIVAS = 'inativas';
+const LISTA_VAZIA = { results: [], count: 0, total_paginas: 1, totais: { ativas: 0, inativas: 0 } };
 const anoAtual = () => new Date().getFullYear().toString();
 
 /** `{ error }` (permissão/escopo) ou `{ campo: [mensagens] }` (validação). */
@@ -68,63 +79,76 @@ function textoFaixa(turma) {
     return min != null ? `a partir de ${min} anos` : `até ${max} anos`;
 }
 
-function compararTurmas(a, b) {
-    return (a.escola_nome || '').localeCompare(b.escola_nome || '')
-        || (a.ordem ?? 999) - (b.ordem ?? 999)
-        || (a.nome || '').localeCompare(b.nome || '', 'pt-BR', { numeric: true });
-}
-
 const TurmasTab = () => {
     const navigate = useNavigate();
-    const [turmas, setTurmas] = useState([]);
-    const [escolas, setEscolas] = useState([]);
-    const [usuarios, setUsuarios] = useState([]);
-    const [vinculos, setVinculos] = useState({}); // turmaId → [{ usuario, usuario_nome, usuario_nivel }]
-    const [loading, setLoading] = useState(true);
+    const [aba, setAba] = useState(ABA_ATIVAS);
+    const [pagina, setPagina] = useState(1);
     const [filtroEscola, setFiltroEscola] = useState(TODAS);
-    const [mostrarInativas, setMostrarInativas] = useState(false);
+    const [lista, setLista] = useState(LISTA_VAZIA);
+    const [loading, setLoading] = useState(true);
+    const [carregouUmaVez, setCarregouUmaVez] = useState(false);
+    const [escolas, setEscolas] = useState([]);
+    const [usuarios, setUsuarios] = useState(null); // null = ainda não buscados
     const [isFormOpen, setIsFormOpen] = useState(false);
     const [editingTurma, setEditingTurma] = useState(null);
     const [desativandoTurma, setDesativandoTurma] = useState(null);
+    // Descarta respostas atrasadas quando o usuário troca de aba/página rápido.
+    const ultimaRequisicao = useRef(0);
 
     const carregar = useCallback(async () => {
+        const id = ++ultimaRequisicao.current;
         setLoading(true);
         try {
-            const [listaTurmas, listaEscolas, listaUsuarios] = await Promise.all([
-                listarTurmas(), listarEscolas(), listarUsuarios(),
-            ]);
-            // Uma chamada por turma: o TurmaSerializer não traz os professores.
-            let falhas = 0;
-            const professores = await Promise.all(
-                listaTurmas.map((t) => listarProfessoresTurma(t.id).catch(() => { falhas += 1; return []; })),
-            );
-            setTurmas(listaTurmas);
-            setEscolas(listaEscolas);
-            setUsuarios(listaUsuarios);
-            setVinculos(Object.fromEntries(listaTurmas.map((t, i) => [t.id, professores[i]])));
-            if (falhas) {
-                toast({ variant: "destructive", title: "Professores incompletos", description: `Não foi possível carregar os professores de ${falhas} turma(s).` });
-            }
+            const dados = await listarTurmasPaginado({
+                ativa: aba === ABA_ATIVAS,
+                escola: filtroEscola === TODAS ? undefined : filtroEscola,
+                page: pagina,
+                pageSize: POR_PAGINA,
+            });
+            if (id !== ultimaRequisicao.current) return;
+            setLista(dados);
+            // Ex.: desativou a única turma da última página → o backend devolve a anterior.
+            if (dados.pagina && dados.pagina !== pagina) setPagina(dados.pagina);
         } catch (err) {
+            if (id !== ultimaRequisicao.current) return;
             toast({ variant: "destructive", title: "Erro ao carregar turmas", description: mensagemDeErro(err) });
         } finally {
-            setLoading(false);
+            if (id === ultimaRequisicao.current) {
+                setLoading(false);
+                setCarregouUmaVez(true);
+            }
         }
-    }, []);
+    }, [aba, pagina, filtroEscola]);
 
     useEffect(() => { carregar(); }, [carregar]);
+
+    // Escolas: lista curta, usada no filtro e no formulário. Busca uma vez só.
+    useEffect(() => {
+        listarEscolas()
+            .then(setEscolas)
+            .catch((err) => toast({ variant: "destructive", title: "Erro ao carregar escolas", description: mensagemDeErro(err) }));
+    }, []);
+
+    // Usuários: só o formulário precisa. Busca na primeira abertura e reaproveita.
+    const garantirUsuarios = useCallback(() => {
+        if (usuarios !== null) return;
+        listarUsuarios()
+            .then(setUsuarios)
+            .catch((err) => {
+                setUsuarios([]);
+                toast({ variant: "destructive", title: "Erro ao carregar professores", description: mensagemDeErro(err) });
+            });
+    }, [usuarios]);
 
     const variasEscolas = escolas.length > 1;
     const escolasAtivas = useMemo(() => escolas.filter((e) => e.ativa !== false), [escolas]);
     const vinculaveis = useMemo(
-        () => usuarios.filter((u) => u.is_active !== false && NIVEIS_VINCULAVEIS[u.nivel]),
+        () => (usuarios ?? []).filter((u) => u.is_active !== false && NIVEIS_VINCULAVEIS[u.nivel]),
         [usuarios],
     );
 
-    const turmasVisiveis = useMemo(() => turmas
-        .filter((t) => mostrarInativas || t.ativa !== false)
-        .filter((t) => filtroEscola === TODAS || String(t.escola) === filtroEscola)
-        .sort(compararTurmas), [turmas, mostrarInativas, filtroEscola]);
+    const trocarAba = (valor) => { setAba(valor); setPagina(1); };
+    const trocarEscola = (valor) => { setFiltroEscola(valor); setPagina(1); };
 
     const handleSalvar = async (dados, professoresSelecionados) => {
         let turma;
@@ -138,7 +162,7 @@ const TurmasTab = () => {
         }
 
         // Sincroniza os vínculos: vincula os marcados e desvincula os desmarcados.
-        const atuais = new Set((vinculos[turma.id] ?? []).map((v) => String(v.usuario)));
+        const atuais = new Set((editingTurma?.professores ?? []).map((v) => String(v.usuario)));
         const desejados = new Set(professoresSelecionados.map(String));
         const falhas = [];
         for (const id of desejados) {
@@ -169,19 +193,24 @@ const TurmasTab = () => {
         }
         toast({ title: `Turma ${ativa ? 'reativada' : 'desativada'} com sucesso!` });
         setDesativandoTurma(null);
-        carregar();
+        carregar(); // a turma sai desta aba e os contadores das abas se atualizam
     };
 
-    const openFormForNew = () => {
-        if (!escolasAtivas.length) {
+    const abrirFormulario = (turma) => {
+        if (!turma && !escolasAtivas.length) {
             toast({ variant: "destructive", title: "Nenhuma escola ativa", description: "Cadastre ou reative uma escola antes de criar turmas." });
             return;
         }
-        setEditingTurma(null);
+        garantirUsuarios();
+        setEditingTurma(turma);
         setIsFormOpen(true);
     };
 
+    const { results: turmas, count, total_paginas: totalPaginas, totais } = lista;
+    const primeira = count ? (pagina - 1) * POR_PAGINA + 1 : 0;
+    const ultima = Math.min(pagina * POR_PAGINA, count);
     const colunas = variasEscolas ? 8 : 7;
+    const naAbaInativas = aba === ABA_INATIVAS;
 
     return (
         <Card>
@@ -194,13 +223,23 @@ const TurmasTab = () => {
                             : 'Adicione, edite ou desative as turmas da sua escola.'}
                     </CardDescription>
                 </div>
-                <Button onClick={openFormForNew}><PlusCircle className="mr-2 h-4 w-4" /> Nova Turma</Button>
+                <Button onClick={() => abrirFormulario(null)}><PlusCircle className="mr-2 h-4 w-4" /> Nova Turma</Button>
             </CardHeader>
             <CardContent>
-                <div className="mb-4 flex flex-wrap items-center gap-4">
+                <div className="mb-4 flex flex-wrap items-center justify-between gap-4">
+                    <Tabs value={aba} onValueChange={trocarAba}>
+                        <TabsList>
+                            <TabsTrigger value={ABA_ATIVAS}>
+                                Ativas <Badge variant="secondary" className="ml-2">{totais.ativas}</Badge>
+                            </TabsTrigger>
+                            <TabsTrigger value={ABA_INATIVAS}>
+                                Inativas <Badge variant="secondary" className="ml-2">{totais.inativas}</Badge>
+                            </TabsTrigger>
+                        </TabsList>
+                    </Tabs>
                     {variasEscolas && (
                         <div className="w-64">
-                            <Select value={filtroEscola} onValueChange={setFiltroEscola}>
+                            <Select value={filtroEscola} onValueChange={trocarEscola}>
                                 <SelectTrigger aria-label="Filtrar por escola"><SelectValue /></SelectTrigger>
                                 <SelectContent>
                                     <SelectItem value={TODAS}>Todas as escolas</SelectItem>
@@ -209,97 +248,109 @@ const TurmasTab = () => {
                             </Select>
                         </div>
                     )}
-                    <label className="flex items-center gap-2 text-sm text-gray-600">
-                        <input type="checkbox" checked={mostrarInativas} onChange={(e) => setMostrarInativas(e.target.checked)} />
-                        Mostrar turmas desativadas
-                    </label>
                 </div>
 
-                {loading ? <p>Carregando turmas...</p> : (
+                {!carregouUmaVez ? <p>Carregando turmas...</p> : (
                     <TooltipProvider>
-                        <Table>
-                            <TableHeader>
-                                <TableRow>
-                                    <TableHead>Nome</TableHead>
-                                    {variasEscolas && <TableHead>Escola</TableHead>}
-                                    <TableHead>Etapa</TableHead>
-                                    <TableHead>Faixa Etária</TableHead>
-                                    <TableHead>Turno</TableHead>
-                                    <TableHead>Professores</TableHead>
-                                    <TableHead>Ano Letivo</TableHead>
-                                    <TableHead className="text-right">Ações</TableHead>
-                                </TableRow>
-                            </TableHeader>
-                            <TableBody>
-                                {turmasVisiveis.length > 0 ? turmasVisiveis.map((turma) => {
-                                    const nomes = (vinculos[turma.id] ?? []).map((v) => v.usuario_nome);
-                                    const inativa = turma.ativa === false;
-                                    return (
-                                        <TableRow key={turma.id} className={inativa ? 'opacity-60' : undefined}>
-                                            <TableCell className="font-medium">
-                                                {turma.nome}
-                                                {inativa && <Badge variant="outline" className="ml-2">Desativada</Badge>}
-                                            </TableCell>
-                                            {variasEscolas && <TableCell>{turma.escola_nome}</TableCell>}
-                                            <TableCell>{ETAPA_LABELS[turma.etapa] || '—'}</TableCell>
-                                            <TableCell>{textoFaixa(turma)}</TableCell>
-                                            <TableCell>{TURNO_LABELS[turma.turno] || turma.turno}</TableCell>
-                                            <TableCell>
-                                                {nomes.length
-                                                    ? nomes.join(', ')
-                                                    : <span className="text-amber-600">Nenhum vinculado</span>}
-                                            </TableCell>
-                                            <TableCell>{turma.ano_letivo}</TableCell>
-                                            <TableCell className="text-right space-x-2 whitespace-nowrap">
-                                                {!inativa && (
+                        {/* Mantém a tabela na tela ao trocar de página/aba, só esmaecida. */}
+                        <div className={loading ? 'pointer-events-none opacity-50 transition-opacity' : 'transition-opacity'} aria-busy={loading}>
+                            <Table>
+                                <TableHeader>
+                                    <TableRow>
+                                        <TableHead>Nome</TableHead>
+                                        {variasEscolas && <TableHead>Escola</TableHead>}
+                                        <TableHead>Etapa</TableHead>
+                                        <TableHead>Faixa Etária</TableHead>
+                                        <TableHead>Turno</TableHead>
+                                        <TableHead>Professores</TableHead>
+                                        <TableHead>Ano Letivo</TableHead>
+                                        <TableHead className="text-right">Ações</TableHead>
+                                    </TableRow>
+                                </TableHeader>
+                                <TableBody>
+                                    {turmas.length > 0 ? turmas.map((turma) => {
+                                        const nomes = (turma.professores ?? []).map((v) => v.usuario_nome);
+                                        const inativa = turma.ativa === false;
+                                        return (
+                                            <TableRow key={turma.id} className={inativa ? 'opacity-60' : undefined}>
+                                                <TableCell className="font-medium">{turma.nome}</TableCell>
+                                                {variasEscolas && <TableCell>{turma.escola_nome}</TableCell>}
+                                                <TableCell>{ETAPA_LABELS[turma.etapa] || '—'}</TableCell>
+                                                <TableCell>{textoFaixa(turma)}</TableCell>
+                                                <TableCell>{TURNO_LABELS[turma.turno] || turma.turno}</TableCell>
+                                                <TableCell>
+                                                    {nomes.length
+                                                        ? nomes.join(', ')
+                                                        : <span className="text-amber-600">Nenhum vinculado</span>}
+                                                </TableCell>
+                                                <TableCell>{turma.ano_letivo}</TableCell>
+                                                <TableCell className="text-right space-x-2 whitespace-nowrap">
+                                                    {!inativa && (
+                                                        <Tooltip>
+                                                            <TooltipTrigger asChild>
+                                                                <Button variant="ghost" size="icon" onClick={() => navigate(`/admin/alunos?turma_id=${turma.id}`)} aria-label="Cadastrar alunos para esta turma">
+                                                                    <UserPlus className="h-4 w-4 text-blue-500" />
+                                                                </Button>
+                                                            </TooltipTrigger>
+                                                            <TooltipContent><p>Cadastrar Alunos</p></TooltipContent>
+                                                        </Tooltip>
+                                                    )}
                                                     <Tooltip>
                                                         <TooltipTrigger asChild>
-                                                            <Button variant="ghost" size="icon" onClick={() => navigate(`/admin/alunos?turma_id=${turma.id}`)} aria-label="Cadastrar alunos para esta turma">
-                                                                <UserPlus className="h-4 w-4 text-blue-500" />
+                                                            <Button variant="ghost" size="icon" onClick={() => abrirFormulario(turma)} aria-label="Editar turma">
+                                                                <Edit className="h-4 w-4" />
                                                             </Button>
                                                         </TooltipTrigger>
-                                                        <TooltipContent><p>Cadastrar Alunos</p></TooltipContent>
+                                                        <TooltipContent><p>Editar Turma</p></TooltipContent>
                                                     </Tooltip>
-                                                )}
-                                                <Tooltip>
-                                                    <TooltipTrigger asChild>
-                                                        <Button variant="ghost" size="icon" onClick={() => { setEditingTurma(turma); setIsFormOpen(true); }} aria-label="Editar turma">
-                                                            <Edit className="h-4 w-4" />
-                                                        </Button>
-                                                    </TooltipTrigger>
-                                                    <TooltipContent><p>Editar Turma</p></TooltipContent>
-                                                </Tooltip>
-                                                {inativa ? (
-                                                    <Tooltip>
-                                                        <TooltipTrigger asChild>
-                                                            <Button variant="ghost" size="icon" onClick={() => alterarAtiva(turma, true)} aria-label="Reativar turma">
-                                                                <RotateCcw className="h-4 w-4 text-green-600" />
-                                                            </Button>
-                                                        </TooltipTrigger>
-                                                        <TooltipContent><p>Reativar Turma</p></TooltipContent>
-                                                    </Tooltip>
-                                                ) : (
-                                                    <Tooltip>
-                                                        <TooltipTrigger asChild>
-                                                            <Button variant="ghost" size="icon" onClick={() => setDesativandoTurma(turma)} aria-label="Desativar turma">
-                                                                <Power className="h-4 w-4 text-red-500" />
-                                                            </Button>
-                                                        </TooltipTrigger>
-                                                        <TooltipContent><p>Desativar Turma</p></TooltipContent>
-                                                    </Tooltip>
-                                                )}
+                                                    {inativa ? (
+                                                        <Tooltip>
+                                                            <TooltipTrigger asChild>
+                                                                <Button variant="ghost" size="icon" onClick={() => alterarAtiva(turma, true)} aria-label="Reativar turma">
+                                                                    <RotateCcw className="h-4 w-4 text-green-600" />
+                                                                </Button>
+                                                            </TooltipTrigger>
+                                                            <TooltipContent><p>Reativar Turma</p></TooltipContent>
+                                                        </Tooltip>
+                                                    ) : (
+                                                        <Tooltip>
+                                                            <TooltipTrigger asChild>
+                                                                <Button variant="ghost" size="icon" onClick={() => setDesativandoTurma(turma)} aria-label="Desativar turma">
+                                                                    <Power className="h-4 w-4 text-red-500" />
+                                                                </Button>
+                                                            </TooltipTrigger>
+                                                            <TooltipContent><p>Desativar Turma</p></TooltipContent>
+                                                        </Tooltip>
+                                                    )}
+                                                </TableCell>
+                                            </TableRow>
+                                        );
+                                    }) : (
+                                        <TableRow>
+                                            <TableCell colSpan={colunas} className="text-center text-gray-500">
+                                                {naAbaInativas ? 'Nenhuma turma inativa.' : 'Nenhuma turma ativa.'}
+                                                {filtroEscola !== TODAS && ' (nesta escola)'}
                                             </TableCell>
                                         </TableRow>
-                                    );
-                                }) : (
-                                    <TableRow>
-                                        <TableCell colSpan={colunas} className="text-center">
-                                            {turmas.length ? 'Nenhuma turma com esses filtros.' : 'Nenhuma turma cadastrada.'}
-                                        </TableCell>
-                                    </TableRow>
-                                )}
-                            </TableBody>
-                        </Table>
+                                    )}
+                                </TableBody>
+                            </Table>
+                        </div>
+
+                        {totalPaginas > 1 && (
+                            <div className="mt-4 flex flex-wrap items-center justify-between gap-2 text-sm text-gray-600">
+                                <span>Mostrando {primeira}–{ultima} de {count} turmas</span>
+                                <div className="flex items-center gap-2">
+                                    <Button variant="outline" size="sm" disabled={loading || pagina <= 1} onClick={() => setPagina((p) => p - 1)}>
+                                        <ChevronLeft className="mr-1 h-4 w-4" /> Anterior
+                                    </Button>
+                                    <span className="px-2">Página {pagina} de {totalPaginas}</span>
+                                    <Button variant="outline" size="sm" disabled={loading || pagina >= totalPaginas} onClick={() => setPagina((p) => p + 1)}>
+                                        Próxima <ChevronRight className="ml-1 h-4 w-4" />
+                                    </Button>
+                                </div>
+                            </div>
+                        )}
                     </TooltipProvider>
                 )}
             </CardContent>
@@ -310,7 +361,8 @@ const TurmasTab = () => {
                 turma={editingTurma}
                 escolas={escolasAtivas}
                 vinculaveis={vinculaveis}
-                vinculosAtuais={editingTurma ? (vinculos[editingTurma.id] ?? []) : []}
+                carregandoProfessores={usuarios === null}
+                vinculosAtuais={editingTurma?.professores ?? []}
                 onSubmit={handleSalvar}
             />
 
@@ -319,9 +371,9 @@ const TurmasTab = () => {
                     <DialogHeader>
                         <DialogTitle>Desativar turma</DialogTitle>
                         <DialogDescription>
-                            A turma "{desativandoTurma?.nome}" deixa de aparecer entre as turmas ativas.
+                            A turma "{desativandoTurma?.nome}" passa para a aba Inativas.
                             Alunos, registros e relatórios dela são mantidos, e você pode reativá-la depois
-                            marcando "Mostrar turmas desativadas".
+                            por essa aba.
                         </DialogDescription>
                     </DialogHeader>
                     <DialogFooter>
@@ -341,7 +393,7 @@ const FORM_VAZIO = {
 
 const inteiroOuNulo = (v) => (v === '' || v == null ? null : parseInt(v, 10));
 
-const TurmaFormDialog = ({ isOpen, setIsOpen, turma, escolas, vinculaveis, vinculosAtuais, onSubmit }) => {
+const TurmaFormDialog = ({ isOpen, setIsOpen, turma, escolas, vinculaveis, carregandoProfessores, vinculosAtuais, onSubmit }) => {
     const [formData, setFormData] = useState(FORM_VAZIO);
     const [salvando, setSalvando] = useState(false);
 
@@ -502,7 +554,9 @@ const TurmaFormDialog = ({ isOpen, setIsOpen, turma, escolas, vinculaveis, vincu
                     <div>
                         <Label>Professores</Label>
                         <div className="mt-1 max-h-44 space-y-1 overflow-y-auto rounded-md border p-2">
-                            {opcoesProfessores.length ? opcoesProfessores.map((p) => (
+                            {carregandoProfessores ? (
+                                <p className="px-1 py-1 text-sm text-gray-500">Carregando professores...</p>
+                            ) : opcoesProfessores.length ? opcoesProfessores.map((p) => (
                                 <label key={p.id} className="flex cursor-pointer items-center gap-2 rounded px-1 py-1 text-sm hover:bg-gray-50">
                                     <input type="checkbox" checked={formData.professores.includes(p.id)} onChange={() => alternarProfessor(p.id)} />
                                     <span>{p.nome}</span>
@@ -519,7 +573,7 @@ const TurmaFormDialog = ({ isOpen, setIsOpen, turma, escolas, vinculaveis, vincu
                     </div>
                     <DialogFooter>
                         <DialogClose asChild><Button type="button" variant="outline">Cancelar</Button></DialogClose>
-                        <Button type="submit" disabled={salvando}>{salvando ? 'Salvando...' : 'Salvar'}</Button>
+                        <Button type="submit" disabled={salvando || carregandoProfessores}>{salvando ? 'Salvando...' : 'Salvar'}</Button>
                     </DialogFooter>
                 </form>
             </DialogContent>

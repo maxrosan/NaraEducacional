@@ -48,6 +48,38 @@ class UsuarioTurmaSerializer(serializers.ModelSerializer):
         read_only_fields = ['id', 'turma', 'criado_em']
 
 
+class ProfessorDaTurmaSerializer(serializers.ModelSerializer):
+    """Vínculo resumido para a listagem (mesmas chaves do UsuarioTurmaSerializer)."""
+    usuario_nome = serializers.CharField(source='usuario.nome', read_only=True)
+    usuario_nivel = serializers.CharField(source='usuario.nivel', read_only=True)
+
+    class Meta:
+        model = UsuarioTurma
+        fields = ['usuario', 'usuario_nome', 'usuario_nivel']
+
+
+class TurmaListaSerializer(serializers.ModelSerializer):
+    """
+    Linha da listagem paginada de turmas (só leitura).
+
+    Traz os professores junto para a tela não fazer uma chamada a
+    /turmas/<id>/professores/ por turma. Depende da view fazer
+    select_related('escola') e o Prefetch em `professores_listagem`
+    (ver views/turma.py::listar_turmas); sem isso volta o N+1.
+    """
+    escola_nome = serializers.CharField(source='escola.nome', read_only=True)
+    professores = ProfessorDaTurmaSerializer(source='professores_listagem', many=True, read_only=True)
+
+    class Meta:
+        model = Turma
+        fields = [
+            'id', 'nome', 'faixa_etaria', 'turno', 'ano_letivo', 'ativa',
+            'etapa', 'ordem', 'idade_min', 'idade_max',
+            'escola', 'escola_nome', 'professores',
+        ]
+        read_only_fields = fields
+
+
 class DisciplinaSerializer(serializers.ModelSerializer):
     escola_nome = serializers.CharField(source='escola.nome', read_only=True)
 

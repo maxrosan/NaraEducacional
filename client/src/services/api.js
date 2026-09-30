@@ -1015,6 +1015,19 @@ export async function listarTurmas(filtros = {}) {
   return turmas.filter((t) => t.ativa === undefined || t.ativa === ativa);
 }
 
+/**
+ * Listagem paginada (tela de gestão de turmas). Traz os professores de cada
+ * turma embutidos em `professores`, sem precisar de listarProfessoresTurma().
+ * @param {Object} filtros - { ativa: boolean, escola: uuid, page: number, pageSize: number }
+ * @returns {Promise<{count, pagina, total_paginas, page_size, totais: {ativas, inativas}, results}>}
+ */
+export async function listarTurmasPaginado({ ativa, escola, page = 1, pageSize } = {}) {
+  return getJson(
+    comQuery('/turmas/', { ativa, escola, page, page_size: pageSize }),
+    'listar turmas',
+  );
+}
+
 /** Detalhe de uma turma. */
 export async function buscarTurma(turmaId) {
   return getJson(`/turmas/${turmaId}/`, 'buscar turma');

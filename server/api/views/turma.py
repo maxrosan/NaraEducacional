@@ -1,29 +1,114 @@
 """Endpoints de Turma."""
 
 from django.core.exceptions import ValidationError
+from django.core.paginator import Paginator
+from django.db.models import Count, F, Prefetch, Q
 from rest_framework import status
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
-from api.escopo import buscar_no_escopo, pode_gerenciar, resolver_escopo_criacao
-from api.models import Turma, Usuario, UsuarioTurma
-from api.serializers import TurmaSerializer, UsuarioTurmaSerializer
+from api.escopo import buscar_no_escopo, filtrar_por, pode_gerenciar, resolver_escopo_criacao
+from api.models import Escola, Turma, Usuario, UsuarioTurma
+from api.serializers import TurmaListaSerializer, TurmaSerializer, UsuarioTurmaSerializer
+
+TURMAS_POR_PAGINA = 10
+TURMAS_POR_PAGINA_MAX = 50
 
 
 def _turma_nao_encontrada():
     return Response({'error': 'Turma não encontrada.'}, status=status.HTTP_404_NOT_FOUND)
 
 
+def _param_bool(valor):
+    """'true'/'false' (e variações) → bool; ausente ou inválido → None (sem filtro)."""
+    if valor is None:
+        return None
+    valor = valor.strip().lower()
+    if valor in ('true', '1', 'sim'):
+        return True
+    if valor in ('false', '0', 'nao', 'não'):
+        return False
+    return None
+
+
+def _param_int(valor, padrao, minimo, maximo):
+    try:
+        return max(minimo, min(int(valor), maximo))
+    except (TypeError, ValueError):
+        return padrao
+
+
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
 def listar_turmas(request):
     """
-    Já vem filtrado pelo TenantManager: admin vê as da instituição,
-    demais níveis vêem as da própria escola, superadmin vê tudo.
+    GET /turmas/ — já vem recortado pelo TenantManager (admin: turmas da rede;
+    coordenador/professor: da própria escola; superadmin: todas).
+
+    Query params (todos opcionais):
+      ativa=true|false   filtra pelo status
+      escola=<uuid>      filtra por escola (fora do escopo/malformado → vazio)
+      page=<n>           liga a paginação (página fora do intervalo → última)
+      page_size=<n>      padrão 10, máximo 50
+
+    SEM `page`: devolve um array simples, como antes — outras telas chamam
+    listarTurmas() e esperam o array.
+
+    COM `page`:
+      {
+        "count": 37, "pagina": 1, "total_paginas": 4, "page_size": 10,
+        "totais": {"ativas": 30, "inativas": 7},   # p/ os contadores das abas
+        "results": [ ...TurmaListaSerializer (com `professores`)... ]
+      }
+
+    Custo fixo por página, independente do nº de turmas: count, página,
+    prefetch dos vínculos e totais (4 queries).
     """
-    turmas = Turma.objects.all().order_by('nome')
-    return Response(TurmaSerializer(turmas, many=True).data)
+    base = filtrar_por(Turma.objects.all(), request, 'escola', Escola, 'escola')
+
+    ativa = _param_bool(request.query_params.get('ativa'))
+    turmas = base if ativa is None else base.filter(ativa=ativa)
+
+    # Mesma ordem que a tela usava no front: escola, ordem (vazias por último), nome.
+    # `id` no fim deixa a ordem estável entre páginas quando há empates.
+    turmas = turmas.order_by(
+        'escola__nome', F('ordem').asc(nulls_last=True), 'nome', 'id',
+    )
+
+    if 'page' not in request.query_params:
+        return Response(TurmaSerializer(turmas.select_related('escola'), many=True).data)
+
+    turmas = turmas.select_related('escola').prefetch_related(
+        Prefetch(
+            'usuario_turmas',
+            queryset=UsuarioTurma.objects.select_related('usuario').order_by('usuario__nome'),
+            to_attr='professores_listagem',
+        ),
+    )
+
+    page_size = _param_int(
+        request.query_params.get('page_size'),
+        TURMAS_POR_PAGINA, 1, TURMAS_POR_PAGINA_MAX,
+    )
+    pagina = Paginator(turmas, page_size).get_page(request.query_params.get('page'))
+
+    # Totais das abas respeitam o filtro de escola, mas não o de `ativa`.
+    totais = base.aggregate(
+        ativas=Count('id', filter=Q(ativa=True)),
+        inativas=Count('id', filter=Q(ativa=False)),
+    )
+    # Em queryset vazio (qs.none()), Django < 4.0 devolve None em vez de 0.
+    totais = {chave: valor or 0 for chave, valor in totais.items()}
+
+    return Response({
+        'count': pagina.paginator.count,
+        'pagina': pagina.number,
+        'total_paginas': pagina.paginator.num_pages,
+        'page_size': page_size,
+        'totais': totais,
+        'results': TurmaListaSerializer(pagina.object_list, many=True).data,
+    })
 
 
 @api_view(['POST'])
