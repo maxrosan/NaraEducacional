@@ -20,7 +20,7 @@ from django.db.models import Q
 from rest_framework import status
 from rest_framework.response import Response
 
-from api.models import Aluno, Escola, Instituicao, UsuarioTurma
+from api.models import Aluno, Escola, Instituicao, Usuario, UsuarioTurma
 from api.tenancy import is_superadmin  # noqa: F401 — fonte única em tenancy; reexportado
 
 
@@ -297,6 +297,44 @@ def professor_vinculado_turma(usuario, turma_id) -> bool:
     if turma_id is None:
         return False
     return UsuarioTurma.objects.filter(usuario=usuario, turma_id=turma_id).exists()
+
+
+# Quem pode ser vinculado a uma turma. Coordenador entra porque o front antigo
+# também o aceitava como responsável pela turma.
+NIVEIS_VINCULAVEIS_TURMA = (
+    'professor_infantil', 'professor_fundamental', 'professor_especialista', 'coordenador',
+)
+
+
+def validar_professores_turma(escola_id, usuario_ids, ja_vinculados=()):
+    """Confere os usuários que vão ficar vinculados a uma turma da `escola_id`.
+
+    Retorna `(usuarios, erro)`, onde `erro` é uma mensagem (str) ou None.
+
+    Quem JÁ está vinculado é mantido sem nova checagem (mesmo que tenha sido
+    desativado depois): salvar a turma não pode desfazer um vínculo sem querer.
+    Quem é NOVO precisa ser da mesma escola, estar ativo e ter nível vinculável.
+    """
+    ids = {str(i) for i in usuario_ids}
+    ja = {str(i) for i in ja_vinculados}
+    try:
+        usuarios = list(Usuario.objects.filter(id__in=ids))
+    except (DjangoValidationError, ValueError):
+        return [], 'Lista de professores inválida.'
+
+    if len(usuarios) != len(ids):
+        return [], 'Um ou mais professores não foram encontrados.'
+
+    for u in usuarios:
+        if str(u.id) in ja:
+            continue
+        if u.escola_id != escola_id:
+            return [], f'{u.nome} não pertence à escola da turma.'
+        if not u.is_active:
+            return [], f'{u.nome} está inativo e não pode ser vinculado.'
+        if u.nivel not in NIVEIS_VINCULAVEIS_TURMA:
+            return [], f'{u.nome} não tem um perfil que possa ser vinculado a turmas.'
+    return usuarios, None
 
 
 def dono_ou_gestao(user, obj, campo_dono='professor_id') -> bool:

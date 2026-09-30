@@ -6,6 +6,8 @@ Provê conversão entre models Django e JSON para endpoints RESTful.
 from rest_framework import serializers
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 
+from .escopo import validar_professores_turma
+
 from .models import (
     Usuario, Instituicao, Escola, Especialista, Turma, UsuarioTurma,
     Disciplina, UsuarioDisciplina, Aluno, Projeto, Producao, ProducaoAluno,
@@ -20,18 +22,142 @@ from .models import (
 )
 
 
+def _sincronizar_professores(turma, usuarios):
+    """Deixa a turma vinculada exatamente a `usuarios` (remove e cria o que mudou)."""
+    desejados = {u.id for u in usuarios}
+    vinculos = UsuarioTurma.objects.filter(turma=turma)
+    atuais = set(vinculos.values_list('usuario_id', flat=True))
+    vinculos.exclude(usuario_id__in=desejados).delete()
+    UsuarioTurma.objects.bulk_create(
+        [UsuarioTurma(turma=turma, usuario=u) for u in usuarios if u.id not in atuais]
+    )
+
+
 class TurmaSerializer(serializers.ModelSerializer):
+    """
+    Cadastro de turma.
+
+    Criação: a view passa `context={'escola_id': ...}` (vinda do
+    resolver_escopo_criacao), porque `escola` é read_only aqui e as checagens
+    de nome duplicado e de professores dependem dela.
+
+    `professores` (opcional, só escrita): lista de ids de usuários. Quando
+    enviada, os vínculos da turma passam a ser exatamente essa lista. A view
+    salva dentro de transaction.atomic(): turma e vínculos gravam juntos.
+    """
     escola_nome = serializers.CharField(source='escola.nome', read_only=True)
+    professores = serializers.ListField(
+        child=serializers.UUIDField(), write_only=True, required=False,
+    )
 
     class Meta:
         model = Turma
         fields = [
             'id', 'nome', 'faixa_etaria', 'turno', 'ano_letivo', 'ativa',
             'etapa', 'ordem', 'idade_min', 'idade_max',
-            'escola', 'escola_nome', 'instituicao',
+            'escola', 'escola_nome', 'instituicao', 'professores',
             'criado_em', 'atualizado_em',
         ]
-        read_only_fields = ['id', 'escola', 'instituicao', 'turma', 'criado_em', 'atualizado_em']
+        read_only_fields = ['id', 'escola', 'instituicao', 'criado_em', 'atualizado_em']
+        extra_kwargs = {
+            'idade_min': {'min_value': 0, 'max_value': 18},
+            'idade_max': {'min_value': 0, 'max_value': 18},
+            'ordem': {'min_value': 0},
+        }
+
+    def _escola_id(self):
+        if self.instance is not None:
+            return self.instance.escola_id
+        return self.context.get('escola_id')
+
+    def _valor(self, attrs, campo):
+        """Valor final do campo: o enviado ou, no PATCH, o que já está salvo."""
+        if campo in attrs:
+            return attrs[campo]
+        if self.instance is not None:
+            return getattr(self.instance, campo)
+        return Turma._meta.get_field(campo).get_default()
+
+    def validate_ano_letivo(self, valor):
+        valor = str(valor).strip()
+        if not (valor.isdigit() and len(valor) == 4 and 2000 <= int(valor) <= 2100):
+            raise serializers.ValidationError('Informe um ano letivo entre 2000 e 2100.')
+        return valor
+
+    def validate(self, attrs):
+        idade_min = self._valor(attrs, 'idade_min')
+        idade_max = self._valor(attrs, 'idade_max')
+        if idade_min is not None and idade_max is not None and idade_min > idade_max:
+            raise serializers.ValidationError(
+                {'idade_max': ['A idade máxima não pode ser menor que a mínima.']}
+            )
+
+        escola_id = self._escola_id()
+        if escola_id and self._mudou_nome_ou_ano(attrs):
+            self._checar_nome_duplicado(escola_id, attrs)
+
+        if 'professores' in attrs:
+            attrs['professores'] = self._validar_professores(escola_id, attrs['professores'])
+        return attrs
+
+    def _mudou_nome_ou_ano(self, attrs):
+        """Na edição, só checa duplicidade se nome ou ano mudaram de fato.
+
+        O formulário sempre reenvia o nome; sem isso, uma turma que já estava
+        duplicada antes desta regra não poderia mais ser editada (nem para
+        trocar o turno) até alguém renomeá-la.
+        """
+        if self.instance is None:
+            return True
+        nome = self._valor(attrs, 'nome')
+        return (
+            nome.casefold() != (self.instance.nome or '').casefold()
+            or self._valor(attrs, 'ano_letivo') != self.instance.ano_letivo
+        )
+
+    def _checar_nome_duplicado(self, escola_id, attrs):
+        nome = self._valor(attrs, 'nome')
+        ano = self._valor(attrs, 'ano_letivo')
+        # Sem constraint no banco: esta checagem é a regra. A view trava a linha
+        # da escola durante validação + save para não haver corrida.
+        # _base_manager: sem recorte de tenant; o filtro por escola já delimita.
+        existentes = Turma._base_manager.filter(
+            escola_id=escola_id, ano_letivo=ano, nome__iexact=nome,
+        )
+        if self.instance is not None:
+            existentes = existentes.exclude(pk=self.instance.pk)
+        existente = existentes.first()
+        if existente is None:
+            return
+        mensagem = f'Já existe a turma "{existente.nome}" nesta escola em {ano}.'
+        if not existente.ativa:
+            mensagem += ' Ela está desativada: reative-a na aba Inativas.'
+        raise serializers.ValidationError({'nome': [mensagem]})
+
+    def _validar_professores(self, escola_id, ids):
+        if escola_id is None:
+            raise serializers.ValidationError({'professores': ['Escola da turma não definida.']})
+        ja_vinculados = []
+        if self.instance is not None:
+            ja_vinculados = UsuarioTurma.objects.filter(turma=self.instance).values_list('usuario_id', flat=True)
+        usuarios, erro = validar_professores_turma(escola_id, ids, ja_vinculados)
+        if erro:
+            raise serializers.ValidationError({'professores': [erro]})
+        return usuarios
+
+    def create(self, validated_data):
+        professores = validated_data.pop('professores', None)
+        turma = super().create(validated_data)
+        if professores is not None:
+            _sincronizar_professores(turma, professores)
+        return turma
+
+    def update(self, instance, validated_data):
+        professores = validated_data.pop('professores', None)
+        turma = super().update(instance, validated_data)
+        if professores is not None:
+            _sincronizar_professores(turma, professores)
+        return turma
 
 
 class UsuarioTurmaSerializer(serializers.ModelSerializer):

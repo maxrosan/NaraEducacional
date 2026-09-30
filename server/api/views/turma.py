@@ -2,22 +2,45 @@
 
 from django.core.exceptions import ValidationError
 from django.core.paginator import Paginator
+from django.db import transaction
 from django.db.models import Count, F, Prefetch, Q
 from rest_framework import status
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
-from api.escopo import buscar_no_escopo, filtrar_por, pode_gerenciar, resolver_escopo_criacao
+from api.escopo import (
+    buscar_no_escopo, filtrar_por, pode_gerenciar, resolver_escopo_criacao,
+    validar_professores_turma,
+)
 from api.models import Escola, Turma, Usuario, UsuarioTurma
 from api.serializers import TurmaListaSerializer, TurmaSerializer, UsuarioTurmaSerializer
 
 TURMAS_POR_PAGINA = 10
 TURMAS_POR_PAGINA_MAX = 50
 
-
 def _turma_nao_encontrada():
     return Response({'error': 'Turma não encontrada.'}, status=status.HTTP_404_NOT_FOUND)
+
+
+def _validar_e_salvar(serializer, escola_travada_id, **extra):
+    """Valida e salva turma + vínculos de professores numa transação só.
+
+    A regra de nome único (escola + ano letivo) é checada só no serializer,
+    sem constraint no banco. Para duas requisições simultâneas não passarem
+    ambas pela checagem, a linha da escola fica travada (SELECT ... FOR UPDATE)
+    da validação até o commit: saves de turmas da MESMA escola entram em fila;
+    os de outras escolas seguem livres.
+
+    ValidationError dentro do atomic desfaz a transação e o DRF devolve 400.
+
+    `escola_travada_id` tem esse nome (e não `escola_id`) porque `escola_id`
+    também chega em `**extra` para o serializer.save() na criação.
+    """
+    with transaction.atomic():
+        list(Escola._base_manager.select_for_update().filter(pk=escola_travada_id).values_list('pk', flat=True))
+        serializer.is_valid(raise_exception=True)
+        return serializer.save(**extra)
 
 
 def _param_bool(valor):
@@ -122,9 +145,13 @@ def criar_turma(request):
     if erro:
         return erro
 
-    serializer = TurmaSerializer(data=request.data)
-    serializer.is_valid(raise_exception=True)
-    turma = serializer.save(instituicao_id=instituicao_id, escola_id=escola_id)
+    # _base_manager: o resolver já garantiu que a escola é do escopo do usuário.
+    if not Escola._base_manager.filter(id=escola_id, ativa=True).exists():
+        return Response({'error': 'Não é possível criar turmas em uma escola desativada.'},
+                        status=status.HTTP_400_BAD_REQUEST)
+
+    serializer = TurmaSerializer(data=request.data, context={'escola_id': escola_id})
+    turma = _validar_e_salvar(serializer, escola_id, instituicao_id=instituicao_id, escola_id=escola_id)
     return Response(TurmaSerializer(turma).data, status=status.HTTP_201_CREATED)
 
 
@@ -150,9 +177,8 @@ def atualizar_turma(request, turma_id):
     # escola/instituicao são read_only no TurmaSerializer: a turma não muda de dono.
     partial = request.method == 'PATCH'
     serializer = TurmaSerializer(turma, data=request.data, partial=partial)
-    serializer.is_valid(raise_exception=True)
-    serializer.save()
-    return Response(serializer.data)
+    turma = _validar_e_salvar(serializer, turma.escola_id)
+    return Response(TurmaSerializer(turma).data)
 
 
 @api_view(['GET'])
@@ -184,9 +210,10 @@ def vincular_professor_turma(request, turma_id):
     if usuario is None:
         return Response({'error': 'Usuário não encontrado.'}, status=status.HTTP_404_NOT_FOUND)
 
-    if usuario.escola_id != turma.escola_id:
-        return Response({'error': 'O usuário precisa pertencer à mesma escola da turma.'},
-                        status=status.HTTP_400_BAD_REQUEST)
+    ja_vinculados = UsuarioTurma.objects.filter(turma=turma).values_list('usuario_id', flat=True)
+    _, erro = validar_professores_turma(turma.escola_id, [usuario.id], ja_vinculados)
+    if erro:
+        return Response({'error': erro}, status=status.HTTP_400_BAD_REQUEST)
 
     vinculo, criado = UsuarioTurma.objects.get_or_create(usuario=usuario, turma=turma)
     status_code = status.HTTP_201_CREATED if criado else status.HTTP_200_OK
