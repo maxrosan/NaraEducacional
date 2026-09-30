@@ -3,6 +3,7 @@ Serializers para a API REST do multi-nara.
 Provê conversão entre models Django e JSON para endpoints RESTful.
 """
 
+from django.utils import timezone
 from rest_framework import serializers
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 
@@ -321,6 +322,17 @@ class UsuarioWriteSerializer(serializers.ModelSerializer):
 
 
 class AlunoSerializer(serializers.ModelSerializer):
+    """
+    Cadastro de aluno.
+
+    Criação: a view passa `context={'escola_id': ...}` (a escola vem da turma),
+    porque `escola` é read_only aqui e a checagem de duplicidade depende dela.
+    A view também trava a linha da escola durante validação + save (ver
+    views/aluno.py::_validar_e_salvar), como em turmas.
+
+    Listagem: a view faz select_related('turma', 'escola'); sem isso,
+    `turma_nome` e `escola_nome` custam 2 queries por aluno.
+    """
     turma_nome = serializers.CharField(source='turma.nome', read_only=True)
     escola_nome = serializers.CharField(source='escola.nome', read_only=True)
 
@@ -334,6 +346,83 @@ class AlunoSerializer(serializers.ModelSerializer):
             'criado_em', 'atualizado_em',
         ]
         read_only_fields = ['id', 'escola', 'instituicao', 'criado_em', 'atualizado_em']
+
+    def _valor(self, attrs, campo):
+        """Valor final do campo: o enviado ou, no PATCH, o que já está salvo."""
+        if campo in attrs:
+            return attrs[campo]
+        return getattr(self.instance, campo, None)
+
+    def validate_data_nascimento(self, valor):
+        if valor and valor > timezone.localdate():
+            raise serializers.ValidationError('A data de nascimento não pode ser no futuro.')
+        return valor
+
+    def validate_telefone_responsavel(self, valor):
+        if not valor:
+            return valor
+        valor = valor.strip()
+        digitos = ''.join(c for c in valor if c.isdigit())
+        # 10–11 dígitos (DDD + número); até 13 com o código do país (55).
+        if not 10 <= len(digitos) <= 13:
+            raise serializers.ValidationError('Informe o telefone com DDD, ex.: (84) 99999-9999.')
+        return valor
+
+    def validate(self, attrs):
+        turma = attrs.get('turma')
+        mudou_turma = turma is not None and (self.instance is None or turma.pk != self.instance.turma_id)
+        if mudou_turma:
+            self._checar_turma(turma)
+
+        escola_id = self.instance.escola_id if self.instance is not None else self.context.get('escola_id')
+        if escola_id and self._mudou_nome_ou_nascimento(attrs):
+            self._checar_duplicado(escola_id, attrs)
+        return attrs
+
+    def _checar_turma(self, turma):
+        if self.instance is not None and turma.escola_id != self.instance.escola_id:
+            raise serializers.ValidationError(
+                {'turma': ['Não é possível mover o aluno para uma turma de outra escola.']}
+            )
+        if not turma.ativa:
+            raise serializers.ValidationError({'turma': ['A turma escolhida está desativada.']})
+
+    def _mudou_nome_ou_nascimento(self, attrs):
+        """Na edição, só checa duplicidade se nome ou nascimento mudaram de fato:
+        um par que já estava duplicado antes da regra continua editável."""
+        if self.instance is None:
+            return True
+        nome = self._valor(attrs, 'nome_completo') or ''
+        return (
+            nome.casefold() != (self.instance.nome_completo or '').casefold()
+            or self._valor(attrs, 'data_nascimento') != self.instance.data_nascimento
+        )
+
+    def _checar_duplicado(self, escola_id, attrs):
+        """Mesmo nome (sem diferenciar maiúsculas) + mesma data de nascimento na
+        mesma escola é quase certamente o mesmo aluno cadastrado duas vezes
+        (ex.: planilha de importação enviada de novo). Sem data de nascimento
+        não dá para distinguir homônimos, então não bloqueia."""
+        nascimento = self._valor(attrs, 'data_nascimento')
+        if not nascimento:
+            return
+        existentes = Aluno._base_manager.filter(
+            escola_id=escola_id,
+            data_nascimento=nascimento,
+            nome_completo__iexact=self._valor(attrs, 'nome_completo'),
+        )
+        if self.instance is not None:
+            existentes = existentes.exclude(pk=self.instance.pk)
+        existente = existentes.select_related('turma').first()
+        if existente is None:
+            return
+        mensagem = (
+            f'{existente.nome_completo}, nascido(a) em {nascimento:%d/%m/%Y}, '
+            f'já está cadastrado(a) nesta escola (turma {existente.turma.nome}).'
+        )
+        if existente.status_vinculo != 'ativo':
+            mensagem += f' O cadastro está como "{existente.get_status_vinculo_display()}": reative-o em vez de criar outro.'
+        raise serializers.ValidationError({'nome_completo': [mensagem]})
 
 
 class ProjetoSerializer(serializers.ModelSerializer):

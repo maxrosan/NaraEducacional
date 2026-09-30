@@ -1,136 +1,154 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { listarInstituicoes, listarTurmas, listarCriancas } from '@/services/api';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { useSearchParams } from 'react-router-dom';
+import { listarInstituicoes, listarEscolas, listarTurmas, listarAlunosPaginado } from '@/services/api';
 import { useToast } from '@/components/ui/use-toast';
 import { Card, CardHeader, CardTitle, CardContent, CardDescription } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Badge } from "@/components/ui/badge";
 import { Label } from '@/components/ui/label';
 import { Input } from '@/components/ui/input';
 import AlunosList from './alunos/AlunosList';
 import StudentFormDialog from './alunos/StudentFormDialog';
 import { Button } from '@/components/ui/button';
-import { UserPlus, Download, ChevronLeft, ChevronRight } from 'lucide-react';
+import { UserPlus, ChevronLeft, ChevronRight } from 'lucide-react';
 import BulkUploadDialog from './alunos/BulkUploadDialog';
 
-const PAGE_SIZE = 20;
-const SEARCH_DEBOUNCE_MS = 400;
+/*
+ * Gestão de alunos (backend: /alunos/?page=).
+ *
+ * Carregamento leve:
+ *   - a lista vem paginada (10 por página) e já filtrada no servidor por
+ *     status (abas), escola, turma e busca por nome;
+ *   - cada aluno já traz turma_nome/escola_nome (select_related no backend);
+ *   - escolas, turmas e instituição são buscadas uma vez, em paralelo.
+ *
+ * A tela de turmas abre esta com ?turma_id=<uuid> para já filtrar a turma.
+ *
+ * Não existe exclusão de aluno: "excluir" muda o status para inativo e o
+ * aluno passa para a aba Inativos. A aba Inativos também mostra os
+ * transferidos (status_vinculo = 'transferido').
+ */
+
+const POR_PAGINA = 10;
+const BUSCA_DEBOUNCE_MS = 400;
+const TODAS = 'todas';
+// `status`: valor(es) de status_vinculo que cada aba pede ao backend.
+const ABAS = [
+    { valor: 'ativos', rotulo: 'Ativos', status: ['ativo'] },
+    { valor: 'inativos', rotulo: 'Inativos', status: ['inativo', 'transferido'] },
+];
+const abaPorValor = (valor) => ABAS.find((a) => a.valor === valor) ?? ABAS[0];
+const LISTA_VAZIA = {
+    results: [], count: 0, total_paginas: 1,
+    totais: { ativo: 0, inativo: 0, transferido: 0 },
+};
 
 const AlunosTab = () => {
     const { toast } = useToast();
-    const [turmas, setTurmas] = useState([]);
-    const [alunos, setAlunos] = useState([]);
+    const [searchParams] = useSearchParams();
+
+    const [aba, setAba] = useState('ativos');
+    const [pagina, setPagina] = useState(1);
+    const [filtroEscola, setFiltroEscola] = useState(TODAS);
+    const [filtroTurma, setFiltroTurma] = useState(() => searchParams.get('turma_id') || TODAS);
+    const [busca, setBusca] = useState('');
+    const [buscaAplicada, setBuscaAplicada] = useState('');
+
+    const [lista, setLista] = useState(LISTA_VAZIA);
     const [loading, setLoading] = useState(true);
-    const [selectedTurma, setSelectedTurma] = useState('');
-    const [searchTerm, setSearchTerm] = useState('');
-    const [debouncedSearchTerm, setDebouncedSearchTerm] = useState('');
+    const [carregouUmaVez, setCarregouUmaVez] = useState(false);
+    const [escolas, setEscolas] = useState([]);
+    const [turmas, setTurmas] = useState([]);
     const [institutionId, setInstitutionId] = useState(null);
-    const [page, setPage] = useState(1);
-    const [totalPages, setTotalPages] = useState(1);
-    const [totalCount, setTotalCount] = useState(0);
+    const ultimaRequisicao = useRef(0);
 
-    // Evita disparar uma busca no backend a cada tecla digitada — espera
-    // o usuário parar de digitar antes de consultar a API.
-    const debounceRef = useRef(null);
+    // Só consulta o backend quando o usuário para de digitar.
     useEffect(() => {
-        if (debounceRef.current) clearTimeout(debounceRef.current);
-        debounceRef.current = setTimeout(() => {
-            setDebouncedSearchTerm(searchTerm);
-        }, SEARCH_DEBOUNCE_MS);
-        return () => clearTimeout(debounceRef.current);
-    }, [searchTerm]);
+        const termo = busca.trim();
+        if (termo === buscaAplicada) return undefined;
+        const id = setTimeout(() => {
+            setBuscaAplicada(termo);
+            setPagina(1);
+        }, BUSCA_DEBOUNCE_MS);
+        return () => clearTimeout(id);
+    }, [busca, buscaAplicada]);
 
-    // Volta para a primeira página sempre que um filtro muda, para não
-    // ficar "presa" numa página que deixou de existir no resultado novo.
+    // Dados de apoio (filtros e formulários): uma vez, em paralelo e sem
+    // bloquear a lista. A instituição só é repassada aos componentes filhos.
     useEffect(() => {
-        setPage(1);
-    }, [selectedTurma, debouncedSearchTerm]);
-
-    const fetchTurmasEInstituicao = useCallback(async () => {
-        try {
-            const instituicoes = await listarInstituicoes();
-            const currentInstitutionId = instituicoes?.[0]?.id;
-            setInstitutionId(currentInstitutionId);
-
-            if (currentInstitutionId) {
-                const turmasData = await listarTurmas({ instituicao_id: currentInstitutionId });
-                const sortedTurmas = (turmasData || []).sort((a, b) =>
-                    (a.nome || '').localeCompare(b.nome || '')
-                );
-                setTurmas(sortedTurmas);
-            }
-            return currentInstitutionId;
-        } catch (error) {
-            toast({ variant: "destructive", title: "Erro ao carregar turmas", description: error.message });
-            return null;
-        }
+        const erro = (titulo) => (err) => toast({ variant: "destructive", title: titulo, description: err.message });
+        listarEscolas().then(setEscolas).catch(erro("Erro ao carregar escolas"));
+        listarTurmas()
+            .then((dados) => setTurmas((dados || []).slice().sort((a, b) =>
+                (a.escola_nome || '').localeCompare(b.escola_nome || '')
+                || (a.nome || '').localeCompare(b.nome || '', 'pt-BR', { numeric: true }))))
+            .catch(erro("Erro ao carregar turmas"));
+        listarInstituicoes()
+            .then((insts) => setInstitutionId(insts?.[0]?.id ?? null))
+            .catch(erro("Erro ao carregar instituição"));
     }, [toast]);
 
-    const fetchAlunos = useCallback(async (currentInstitutionId) => {
-        if (!currentInstitutionId) return;
+    const carregar = useCallback(async () => {
+        const id = ++ultimaRequisicao.current;
         setLoading(true);
         try {
-            const filtros = {
-                instituicao_id: currentInstitutionId,
-                status_vinculo: 'all',
-                page,
-                page_size: PAGE_SIZE,
-            };
-            if (selectedTurma && selectedTurma !== 'all') {
-                filtros.turma_id = selectedTurma;
-            }
-            if (debouncedSearchTerm.trim()) {
-                filtros.nome = debouncedSearchTerm.trim();
-            }
-
-            const response = await listarCriancas(filtros);
-            setAlunos(response.results || []);
-            setTotalPages(response.total_pages || 1);
-            setTotalCount(response.count ?? (response.results || []).length);
-        } catch (error) {
-            toast({ variant: "destructive", title: "Erro ao carregar alunos", description: error.message });
+            const dados = await listarAlunosPaginado({
+                status: abaPorValor(aba).status.join(','),
+                escola: filtroEscola === TODAS ? undefined : filtroEscola,
+                turma: filtroTurma === TODAS ? undefined : filtroTurma,
+                busca: buscaAplicada || undefined,
+                page: pagina,
+                pageSize: POR_PAGINA,
+            });
+            if (id !== ultimaRequisicao.current) return; // resposta atrasada
+            setLista(dados);
+            // Ex.: inativou o único aluno da última página → o backend devolve a anterior.
+            if (dados.pagina && dados.pagina !== pagina) setPagina(dados.pagina);
+        } catch (err) {
+            if (id !== ultimaRequisicao.current) return;
+            toast({ variant: "destructive", title: "Erro ao carregar alunos", description: err.message });
         } finally {
-            setLoading(false);
-        }
-    }, [toast, page, selectedTurma, debouncedSearchTerm]);
-
-    // Carrega instituição/turmas uma vez ao montar.
-    useEffect(() => {
-        fetchTurmasEInstituicao().then((currentInstitutionId) => {
-            if (currentInstitutionId) {
-                fetchAlunos(currentInstitutionId);
+            if (id === ultimaRequisicao.current) {
+                setLoading(false);
+                setCarregouUmaVez(true);
             }
-        });
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, []);
-
-    // Recarrega alunos sempre que página, turma ou busca mudam — mas só
-    // depois que já temos institutionId (evita chamada duplicada no mount).
-    useEffect(() => {
-        if (institutionId) {
-            fetchAlunos(institutionId);
         }
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [page, selectedTurma, debouncedSearchTerm, institutionId]);
+    }, [aba, pagina, filtroEscola, filtroTurma, buscaAplicada, toast]);
 
-    const handleFilterByTurma = (turmaId) => {
-        setSelectedTurma(turmaId);
+    useEffect(() => { carregar(); }, [carregar]);
+
+    const variasEscolas = escolas.length > 1;
+    const turmasDoFiltro = useMemo(
+        () => (filtroEscola === TODAS ? turmas : turmas.filter((t) => String(t.escola) === filtroEscola)),
+        [turmas, filtroEscola],
+    );
+    // Formulários só oferecem turmas ativas (o backend recusa as desativadas).
+    const turmasAtivas = useMemo(() => turmas.filter((t) => t.ativa !== false), [turmas]);
+
+    // Todo filtro novo volta para a página 1 (no mesmo render, sem requisição extra).
+    const trocarAba = (valor) => { setAba(valor); setPagina(1); };
+    const trocarTurma = (valor) => { setFiltroTurma(valor); setPagina(1); };
+    const trocarEscola = (valor) => {
+        setFiltroEscola(valor);
+        setPagina(1);
+        // A turma escolhida pode não ser da escola nova.
+        if (valor !== TODAS && filtroTurma !== TODAS) {
+            const turma = turmas.find((t) => String(t.id) === filtroTurma);
+            if (turma && String(turma.escola) !== valor) setFiltroTurma(TODAS);
+        }
     };
 
-    const handleStudentUpdated = () => {
-        fetchAlunos(institutionId);
+    const rotuloTurma = (t) => {
+        const partes = [t.nome];
+        if (variasEscolas && filtroEscola === TODAS && t.escola_nome) partes.push(`— ${t.escola_nome}`);
+        if (t.ativa === false) partes.push('(desativada)');
+        return partes.join(' ');
     };
 
-    const handleStudentDeleted = () => {
-        // Recarrega para o aluno reaparecer marcado como inativo (admin continua vendo).
-        fetchAlunos(institutionId);
-    };
-
-    const handlePreviousPage = () => {
-        setPage((p) => Math.max(1, p - 1));
-    };
-
-    const handleNextPage = () => {
-        setPage((p) => Math.min(totalPages, p + 1));
-    };
+    const { results: alunos, count, total_paginas: totalPaginas, totais } = lista;
+    const primeiro = count ? (pagina - 1) * POR_PAGINA + 1 : 0;
+    const ultimo = Math.min(pagina * POR_PAGINA, count);
 
     return (
         <div className="grid grid-cols-1 gap-6">
@@ -139,18 +157,22 @@ const AlunosTab = () => {
                     <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
                         <div>
                             <CardTitle>Gestão de Alunos</CardTitle>
-                            <CardDescription>Cadastre, edite e visualize os alunos da instituição.</CardDescription>
+                            <CardDescription>
+                                {variasEscolas
+                                    ? 'Cadastre, edite e visualize os alunos das escolas da rede.'
+                                    : 'Cadastre, edite e visualize os alunos da escola.'}
+                            </CardDescription>
                         </div>
                         <div className="flex items-center gap-2">
-                             <BulkUploadDialog 
-                                turmas={turmas}
+                            <BulkUploadDialog
+                                turmas={turmasAtivas}
                                 institutionId={institutionId}
-                                onUploadComplete={handleStudentUpdated}
-                             />
-                            <StudentFormDialog 
-                                turmas={turmas}
+                                onUploadComplete={carregar}
+                            />
+                            <StudentFormDialog
+                                turmas={turmasAtivas}
                                 institutionId={institutionId}
-                                onStudentUpdated={handleStudentUpdated}
+                                onStudentUpdated={carregar}
                             >
                                 <Button>
                                     <UserPlus className="mr-2 h-4 w-4" />
@@ -161,17 +183,42 @@ const AlunosTab = () => {
                     </div>
                 </CardHeader>
                 <CardContent>
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6 max-w-3xl">
+                    <div className="mb-4">
+                        <Tabs value={aba} onValueChange={trocarAba}>
+                            <TabsList>
+                                {ABAS.map(({ valor, rotulo, status }) => (
+                                    <TabsTrigger key={valor} value={valor}>
+                                        {rotulo}{' '}
+                                        <Badge variant="secondary" className="ml-2">
+                                            {status.reduce((soma, s) => soma + (totais[s] ?? 0), 0)}
+                                        </Badge>
+                                    </TabsTrigger>
+                                ))}
+                            </TabsList>
+                        </Tabs>
+                    </div>
+
+                    <div className={`grid grid-cols-1 gap-4 mb-6 ${variasEscolas ? 'md:grid-cols-3' : 'md:grid-cols-2 max-w-3xl'}`}>
+                        {variasEscolas && (
+                            <div>
+                                <Label htmlFor="escola-filter">Escola</Label>
+                                <Select value={filtroEscola} onValueChange={trocarEscola}>
+                                    <SelectTrigger id="escola-filter"><SelectValue /></SelectTrigger>
+                                    <SelectContent>
+                                        <SelectItem value={TODAS}>Todas as escolas</SelectItem>
+                                        {escolas.map((e) => <SelectItem key={e.id} value={String(e.id)}>{e.nome}</SelectItem>)}
+                                    </SelectContent>
+                                </Select>
+                            </div>
+                        )}
                         <div>
-                            <Label htmlFor="turma-filter">Filtrar por Turma</Label>
-                            <Select onValueChange={handleFilterByTurma} value={selectedTurma}>
-                                <SelectTrigger id="turma-filter">
-                                    <SelectValue placeholder="Todas as turmas" />
-                                </SelectTrigger>
+                            <Label htmlFor="turma-filter">Turma</Label>
+                            <Select value={filtroTurma} onValueChange={trocarTurma}>
+                                <SelectTrigger id="turma-filter"><SelectValue placeholder="Todas as turmas" /></SelectTrigger>
                                 <SelectContent>
-                                    <SelectItem value="all">Todas as turmas</SelectItem>
-                                    {turmas.map(turma => (
-                                        <SelectItem key={turma.id} value={turma.id}>{turma.nome}</SelectItem>
+                                    <SelectItem value={TODAS}>Todas as turmas</SelectItem>
+                                    {turmasDoFiltro.map((t) => (
+                                        <SelectItem key={t.id} value={String(t.id)}>{rotuloTurma(t)}</SelectItem>
                                     ))}
                                 </SelectContent>
                             </Select>
@@ -181,47 +228,41 @@ const AlunosTab = () => {
                             <Input
                                 id="aluno-search"
                                 placeholder="Digite o nome do aluno..."
-                                value={searchTerm}
-                                onChange={(e) => setSearchTerm(e.target.value)}
+                                value={busca}
+                                onChange={(e) => setBusca(e.target.value)}
                             />
                         </div>
                     </div>
 
-                    <AlunosList 
-                        alunos={alunos} 
-                        loading={loading}
-                        onStudentUpdated={handleStudentUpdated}
-                        onStudentDeleted={handleStudentDeleted}
-                        turmas={turmas}
-                        institutionId={institutionId}
-                    />
-
-                    {!loading && totalCount > 0 && (
-                        <div className="flex items-center justify-between mt-4">
-                            <span className="text-sm text-gray-500">
-                                {totalCount} aluno{totalCount !== 1 ? 's' : ''} · Página {page} de {totalPages}
-                            </span>
-                            <div className="flex gap-2">
-                                <Button
-                                    variant="outline"
-                                    size="sm"
-                                    disabled={page <= 1}
-                                    onClick={handlePreviousPage}
-                                >
-                                    <ChevronLeft className="h-4 w-4 mr-1" />
-                                    Anterior
-                                </Button>
-                                <Button
-                                    variant="outline"
-                                    size="sm"
-                                    disabled={page >= totalPages}
-                                    onClick={handleNextPage}
-                                >
-                                    Próxima
-                                    <ChevronRight className="h-4 w-4 ml-1" />
-                                </Button>
+                    {!carregouUmaVez ? <p>Carregando alunos...</p> : (
+                        <>
+                            {/* Mantém a lista na tela ao trocar de página/filtro, só esmaecida. */}
+                            <div className={loading ? 'pointer-events-none opacity-50 transition-opacity' : 'transition-opacity'} aria-busy={loading}>
+                                <AlunosList
+                                    alunos={alunos}
+                                    loading={false}
+                                    onStudentUpdated={carregar}
+                                    onStudentDeleted={carregar}
+                                    turmas={turmas}
+                                    institutionId={institutionId}
+                                />
                             </div>
-                        </div>
+
+                            {totalPaginas > 1 && (
+                                <div className="mt-4 flex flex-wrap items-center justify-between gap-2 text-sm text-gray-600">
+                                    <span>Mostrando {primeiro}–{ultimo} de {count} alunos</span>
+                                    <div className="flex items-center gap-2">
+                                        <Button variant="outline" size="sm" disabled={loading || pagina <= 1} onClick={() => setPagina((p) => p - 1)}>
+                                            <ChevronLeft className="mr-1 h-4 w-4" /> Anterior
+                                        </Button>
+                                        <span className="px-2">Página {pagina} de {totalPaginas}</span>
+                                        <Button variant="outline" size="sm" disabled={loading || pagina >= totalPaginas} onClick={() => setPagina((p) => p + 1)}>
+                                            Próxima <ChevronRight className="ml-1 h-4 w-4" />
+                                        </Button>
+                                    </div>
+                                </div>
+                            )}
+                        </>
                     )}
                 </CardContent>
             </Card>

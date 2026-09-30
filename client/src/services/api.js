@@ -826,9 +826,26 @@ export const buscarDadosRelatorio = apiService.buscarDadosRelatorio;
  */
 export async function listarCriancas(filtros = {}) {
   const alunos = await getJson(comQuery('/alunos/', { turma: filtros.turma_id }), 'listar alunos');
-  return filtros.status_vinculo
-    ? alunos.filter((a) => a.status_vinculo === filtros.status_vinculo)
+  // 'all' (usado por telas antigas) significa "sem filtro", não um status.
+  const status = filtros.status_vinculo;
+  return status && status !== 'all'
+    ? alunos.filter((a) => a.status_vinculo === status)
     : alunos;
+}
+
+/**
+ * Listagem paginada (tela de gestão de alunos). Filtros aplicados no backend.
+ * Os registros já vêm com os nomes antigos (turma_id, escola_id...) para os
+ * componentes da tela que ainda leem esses campos.
+ * @param {Object} filtros - { status: 'ativo'|'inativo'|'transferido', escola, turma, busca, page, pageSize }
+ * @returns {Promise<{count, pagina, total_paginas, page_size, totais: {ativo, inativo, transferido}, results}>}
+ */
+export async function listarAlunosPaginado({ status, escola, turma, busca, page = 1, pageSize } = {}) {
+  const dados = await getJson(
+    comQuery('/alunos/', { status, escola, turma, busca, page, page_size: pageSize }),
+    'listar alunos',
+  );
+  return { ...dados, results: (dados.results || []).map(adicionarAliases) };
 }
 
 /** Detalhe de um aluno. @param {string} criancaId - UUID do aluno */
@@ -1036,12 +1053,17 @@ export async function buscarTurma(turmaId) {
 /**
  * Cria turma. Admin/superadmin: `escola` é obrigatória (a instituição vem dela).
  * Coordenador: a escola é sempre a dele (o backend ignora a do body).
+ * `professores` (opcional): ids dos usuários a vincular, gravados na mesma
+ * transação da turma. Nome repetido na escola/ano → erro 400 em `nome`.
  */
 export async function criarTurma(dados) {
   return enviarJson('/turmas/criar/', 'POST', dados, 'criar turma');
 }
 
-/** Atualiza turma (PATCH parcial). `escola` e `instituicao` não mudam. Desativar: { ativa: false }. */
+/**
+ * Atualiza turma (PATCH parcial). `escola` e `instituicao` não mudam. Desativar: { ativa: false }.
+ * Com `professores`, os vínculos passam a ser exatamente essa lista; sem ele, não mudam.
+ */
 export async function atualizarTurma(turmaId, dados) {
   return enviarJson(`/turmas/${turmaId}/atualizar/`, 'PATCH', dados, 'atualizar turma');
 }
