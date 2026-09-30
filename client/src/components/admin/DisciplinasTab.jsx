@@ -121,7 +121,7 @@ const DisciplinasTab = () => {
     // Usuários: só o formulário precisa. Busca na primeira abertura e reaproveita.
     const garantirUsuarios = useCallback(() => {
         if (usuarios !== null) return;
-        listarUsuarios()
+        listarUsuarios({ nivel: NIVEL_VINCULAVEL, ativo: true })
             .then(setUsuarios)
             .catch((err) => {
                 setUsuarios([]);

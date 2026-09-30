@@ -1,293 +1,299 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { RefreshCw } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogClose } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogClose, DialogDescription } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Checkbox } from "@/components/ui/checkbox";
 import { toast } from '@/components/ui/use-toast';
+import { NIVEL_LABELS, TIPO_ESPECIALISTA_LABELS } from './UserList';
 
-const PROFESSOR_FUNDAMENTAL = 'professor_fundamental';
+// Espelham as regras do backend (api/escopo.py e UsuarioWriteSerializer).
+const NIVEIS_COM_TURMA = ['professor_infantil', 'professor_fundamental', 'professor_especialista', 'coordenador'];
+const NIVEIS_COM_DISCIPLINA = ['professor_fundamental'];
+const NIVEIS_COM_TIPO_ESPECIALISTA = ['especialista', 'professor_especialista'];
+const NIVEIS_SEM_ESCOLA = ['admin'];
 
-const UserFormDialog = ({ isOpen, setIsOpen, user, turmas, disciplinas, onSubmit }) => {
-    const tiposEspecialistaPadrao = [
-        { value: 'psicologo', label: 'Psicólogo' },
-        { value: 'psicopedagogo', label: 'Psicopedagogo' },
-        { value: 'fonoaudiologo', label: 'Fonoaudiólogo' },
-        { value: 'terapeuta_ocupacional', label: 'Terapeuta Ocupacional' },
-    ];
-    const tipoEspecialistaOutro = 'outro';
-    const specialistProfiles = ['especialista', 'professor_especialista'];
-    const [formData, setFormData] = useState({});
+const FORM_VAZIO = {
+    nome: '', email: '', password: '', nivel: '', escola: '',
+    tipo_especialista: '', turmas: [], disciplinas: [],
+};
 
-    const generatePassword = () => {
-        const length = 10;
-        const charset = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#$%^&*()";
-        let retVal = "";
-        for (let i = 0, n = charset.length; i < length; ++i) {
-            retVal += charset.charAt(Math.floor(Math.random() * n));
-        }
-        return retVal;
-    };
+/** Senha aleatória com gerador criptográfico (Math.random não é seguro para senhas). */
+function gerarSenha(tamanho = 12) {
+    const caracteres = 'abcdefghijkmnopqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789!@#$%&*';
+    const valores = new Uint32Array(tamanho);
+    crypto.getRandomValues(valores);
+    return Array.from(valores, (v) => caracteres[v % caracteres.length]).join('');
+}
+
+/**
+ * Cria/edita usuário. Ativar e desativar ficam nas ações da lista (abas
+ * Ativos/Inativos), não aqui.
+ *
+ * Props:
+ *   user                 usuário em edição (da listagem: já traz turmas/disciplinas) ou null
+ *   escolas              escolas ATIVAS do escopo
+ *   turmas, disciplinas  catálogos do escopo (carregados na 1ª abertura)
+ *   carregandoCatalogos  true enquanto turmas/disciplinas não chegaram
+ *   niveisPermitidos     níveis que QUEM ESTÁ LOGADO pode atribuir (vem do backend)
+ *   usuarioAtual         id de quem está logado (autoedição só muda dados pessoais)
+ *   onSubmit(dados)      async; o pai fecha o diálogo se salvar
+ */
+const UserFormDialog = ({
+    isOpen, setIsOpen, user, escolas, turmas, disciplinas, carregandoCatalogos,
+    niveisPermitidos, usuarioAtual, onSubmit,
+}) => {
+    const [formData, setFormData] = useState(FORM_VAZIO);
+    const [salvando, setSalvando] = useState(false);
+    const editandoASiMesmo = !!user && String(user.id) === String(usuarioAtual);
 
     useEffect(() => {
-        const tiposEspecialistaValores = tiposEspecialistaPadrao.map(tipo => tipo.value);
-        const isTipoPadrao = user?.tipo_especialista && tiposEspecialistaValores.includes(user.tipo_especialista);
-        const isSpecialistProfile = specialistProfiles.includes(user?.perfil);
-        const initialData = {
-            nome: user?.nome || '',
-            email: user?.email || '',
-            perfil: user?.perfil || '',
-            ativo: user?.ativo ?? true,
-            turmas: user?.turmas || [],
-            disciplinas: user?.usuario_disciplinas?.map(v => v.disciplina) || [],
+        if (!isOpen) return;
+        setFormData(user ? {
+            nome: user.nome || '',
+            email: user.email || '',
             password: '',
-            tipo_especialista: isSpecialistProfile ? (isTipoPadrao ? user.tipo_especialista : tipoEspecialistaOutro) : '',
-            tipo_especialista_outro: isSpecialistProfile && !isTipoPadrao ? user.tipo_especialista : '',
-            permissoes_esp: user?.permissoes_esp || {},
-        };
-        if (!user) {
-            initialData.password = generatePassword();
-        }
-        setFormData(initialData);
-
+            nivel: user.nivel || '',
+            escola: user.escola ? String(user.escola) : '',
+            tipo_especialista: user.tipo_especialista || '',
+            turmas: (user.turmas ?? []).map((t) => String(t.turma)),
+            disciplinas: (user.disciplinas ?? []).map((d) => String(d.disciplina)),
+        } : {
+            ...FORM_VAZIO,
+            password: gerarSenha(),
+            escola: escolas.length === 1 ? String(escolas[0].id) : '',
+        });
+    // escolas pode chegar depois; só reinicia ao abrir ou trocar o usuário.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [user, isOpen]);
 
-    const handleChange = (e) => {
-        const { name, value, type, checked } = e.target;
-        setFormData(prev => ({ ...prev, [name]: type === 'checkbox' ? checked : value }));
+    const precisaEscola = formData.nivel && !NIVEIS_SEM_ESCOLA.includes(formData.nivel);
+    const temTurmas = NIVEIS_COM_TURMA.includes(formData.nivel);
+    const temDisciplinas = NIVEIS_COM_DISCIPLINA.includes(formData.nivel);
+    const temTipo = NIVEIS_COM_TIPO_ESPECIALISTA.includes(formData.nivel);
+
+    // O perfil atual de quem está sendo editado sempre aparece, mesmo que quem
+    // edita não possa atribuí-lo (só para exibição).
+    const opcoesNivel = useMemo(() => {
+        const lista = [...(niveisPermitidos ?? [])];
+        if (user?.nivel && !lista.includes(user.nivel)) lista.push(user.nivel);
+        return lista;
+    }, [niveisPermitidos, user]);
+
+    // Turmas: ativas da escola + as já vinculadas (mesmo desativadas), para
+    // salvar não desfazer um vínculo sem querer.
+    const turmasDaEscola = useMemo(() => {
+        const vinculadas = new Set(formData.turmas);
+        return turmas
+            .filter((t) => String(t.escola) === formData.escola && (t.ativa !== false || vinculadas.has(String(t.id))))
+            .sort((a, b) => (a.nome || '').localeCompare(b.nome || '', 'pt-BR', { numeric: true }));
+    // formData.turmas fora das deps de propósito: a lista não deve "piscar" ao marcar.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [turmas, formData.escola]);
+
+    const disciplinasDaEscola = useMemo(() => {
+        const vinculadas = new Set(formData.disciplinas);
+        return disciplinas
+            .filter((d) => String(d.escola) === formData.escola && (d.ativo !== false || vinculadas.has(String(d.id))))
+            .sort((a, b) => (a.nome || '').localeCompare(b.nome || '', 'pt-BR'));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [disciplinas, formData.escola]);
+
+    const set = (campo, valor) => setFormData((prev) => ({ ...prev, [campo]: valor }));
+    // Trocar de escola invalida as turmas/disciplinas marcadas (são de outra escola).
+    const trocarEscola = (escola) => setFormData((prev) => ({ ...prev, escola, turmas: [], disciplinas: [] }));
+
+    const alternar = (campo, id, marcado) => setFormData((prev) => ({
+        ...prev,
+        [campo]: marcado ? [...prev[campo], id] : prev[campo].filter((x) => x !== id),
+    }));
+    const marcarTodas = (campo, lista, marcado) => set(campo, marcado ? lista.map((x) => String(x.id)) : []);
+
+    const handleGerarSenha = () => {
+        const senha = gerarSenha();
+        set('password', senha);
+        navigator.clipboard?.writeText(senha)
+            .then(() => toast({ title: 'Senha gerada e copiada!' }))
+            .catch(() => toast({ title: 'Senha gerada.', description: 'Copie-a manualmente antes de salvar.' }));
     };
 
-    const handleSelectChange = (name, value) => {
-        setFormData(prev => ({...prev, [name]: value}));
-    };
-
-    const handleTurmaChange = (turmaId, checked) => {
-        setFormData(prev => {
-            const currentTurmas = prev.turmas || [];
-            if (checked) {
-                return { ...prev, turmas: [...currentTurmas, turmaId] };
-            } else {
-                return { ...prev, turmas: currentTurmas.filter(id => id !== turmaId) };
-            }
-        });
-    };
-
-    const handleSelectAllTurmas = (checked) => {
-        if (checked) {
-            setFormData(prev => ({ ...prev, turmas: turmas.map(t => t.id) }));
-        } else {
-            setFormData(prev => ({ ...prev, turmas: [] }));
-        }
-    };
-
-    const handleDisciplinaChange = (disciplinaId, checked) => {
-        setFormData(prev => {
-            const currentDisciplinas = prev.disciplinas || [];
-            if (checked) {
-                return { ...prev, disciplinas: [...currentDisciplinas, disciplinaId] };
-            } else {
-                return { ...prev, disciplinas: currentDisciplinas.filter(id => id !== disciplinaId) };
-            }
-        });
-    };
-
-    const handleSelectAllDisciplinas = (checked) => {
-        if (checked) {
-            setFormData(prev => ({ ...prev, disciplinas: disciplinas.map(d => d.id) }));
-        } else {
-            setFormData(prev => ({ ...prev, disciplinas: [] }));
-        }
-    };
-
-    const handleSubmit = (e) => {
+    const handleSubmit = async (e) => {
         e.preventDefault();
-        let finalData = { ...formData };
-        if (!specialistProfiles.includes(formData.perfil)) {
-            finalData.tipo_especialista = null;
-            finalData.tipo_especialista_outro = null;
+
+        let dados;
+        if (editandoASiMesmo) {
+            // O backend ignora perfil, escola e vínculos na autoedição.
+            dados = { nome: formData.nome.trim() };
+        } else {
+            // Os Selects do Radix não participam da validação nativa do form.
+            const faltando = [
+                !formData.nivel && 'perfil',
+                precisaEscola && !formData.escola && 'escola',
+                temTipo && !formData.tipo_especialista && 'tipo de especialista',
+            ].filter(Boolean);
+            if (faltando.length) {
+                toast({ variant: "destructive", title: "Campos obrigatórios", description: `Selecione: ${faltando.join(', ')}.` });
+                return;
+            }
+            dados = {
+                nome: formData.nome.trim(),
+                nivel: formData.nivel,
+                escola: precisaEscola ? formData.escola : null,
+                turmas: temTurmas ? formData.turmas : [],
+                disciplinas: temDisciplinas ? formData.disciplinas : [],
+            };
+            if (temTipo) dados.tipo_especialista = formData.tipo_especialista;
         }
-        // Always clear permissions for specialists, as it's no longer configured here
-        if (specialistProfiles.includes(formData.perfil)) {
-            finalData.permissoes_esp = {};
+        if (!user) dados.email = formData.email.trim();
+        if (formData.password) dados.password = formData.password;
+
+        setSalvando(true);
+        try {
+            await onSubmit(dados);
+        } finally {
+            setSalvando(false);
         }
-        // Disciplinas só se aplicam a professor_fundamental — limpa o resto
-        // pra não deixar vínculo órfão se o perfil mudar antes de salvar.
-        if (formData.perfil !== PROFESSOR_FUNDAMENTAL) {
-            finalData.disciplinas = [];
-        }
-        onSubmit(finalData);
     };
 
-    const handleGenerateAndCopyPassword = () => {
-        const newPassword = generatePassword();
-        setFormData(prev => ({ ...prev, password: newPassword }));
-        navigator.clipboard.writeText(newPassword);
-        toast({ title: "Senha gerada e copiada!" });
-    };
+    const listaDeMarcar = (campo, lista, vazio, idTodas) => (
+        <div className="space-y-2 rounded-md border p-3">
+            {carregandoCatalogos ? (
+                <p className="text-sm text-gray-500">Carregando...</p>
+            ) : !formData.escola ? (
+                <p className="text-sm text-gray-500">Selecione a escola primeiro.</p>
+            ) : lista.length === 0 ? (
+                <p className="text-sm text-gray-500">{vazio}</p>
+            ) : (
+                <>
+                    <div className="flex items-center space-x-2 border-b pb-2">
+                        <Checkbox
+                            id={idTodas}
+                            checked={formData[campo].length === lista.length}
+                            onCheckedChange={(v) => marcarTodas(campo, lista, !!v)}
+                        />
+                        <Label htmlFor={idTodas} className="font-semibold">Selecionar todas</Label>
+                    </div>
+                    <div className="max-h-32 space-y-1 overflow-y-auto pt-1">
+                        {lista.map((item) => (
+                            <div key={item.id} className="flex items-center space-x-2">
+                                <Checkbox
+                                    id={`${campo}-${item.id}`}
+                                    checked={formData[campo].includes(String(item.id))}
+                                    onCheckedChange={(v) => alternar(campo, String(item.id), !!v)}
+                                />
+                                <Label htmlFor={`${campo}-${item.id}`}>{item.nome}</Label>
+                            </div>
+                        ))}
+                    </div>
+                </>
+            )}
+        </div>
+    );
 
     return (
-        <Dialog open={isOpen} onOpenChange={setIsOpen}>
+        // Não fecha no meio do salvamento (Esc/clique fora).
+        <Dialog open={isOpen} onOpenChange={(aberto) => { if (!salvando) setIsOpen(aberto); }}>
             <DialogContent className="max-h-[90vh] overflow-y-auto">
                 <DialogHeader>
                     <DialogTitle>{user ? 'Editar Usuário' : 'Novo Usuário'}</DialogTitle>
+                    {editandoASiMesmo && (
+                        <DialogDescription>
+                            Você está editando o próprio cadastro: perfil, escola e vínculos só podem
+                            ser alterados por outro gestor.
+                        </DialogDescription>
+                    )}
                 </DialogHeader>
-                <form onSubmit={handleSubmit} className="space-y-4 pt-4">
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <form onSubmit={handleSubmit} className="space-y-4 pt-2">
+                    <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                         <div>
                             <Label htmlFor="nome">Nome</Label>
-                            <Input id="nome" name="nome" value={formData.nome || ''} onChange={handleChange} required />
+                            <Input id="nome" value={formData.nome} onChange={(e) => set('nome', e.target.value)} maxLength={200} required />
                         </div>
                         <div>
                             <Label htmlFor="email">Email</Label>
-                            <Input id="email" name="email" type="email" value={formData.email || ''} onChange={handleChange} required disabled={!!user} />
+                            <Input id="email" type="email" value={formData.email} onChange={(e) => set('email', e.target.value)} required disabled={!!user} />
                         </div>
                     </div>
 
-
-                    { user ? (
-  <div>
-    <Label htmlFor="password">Nova Senha <span className="text-xs text-gray-400">(deixe em branco para não alterar)</span></Label>
-    <div className="flex items-center gap-2">
-      <Input id="password" name="password" type="text" value={formData.password || ''} onChange={handleChange} placeholder="Digite para redefinir..." />
-      <Button type="button" variant="ghost" size="icon" onClick={handleGenerateAndCopyPassword} title="Gerar e copiar nova senha">
-        <RefreshCw className="h-4 w-4" />
-      </Button>
-    </div>
-  </div>
-                    ) : (
-  <div>
-    <Label htmlFor="password">Senha</Label>
-    <div className="flex items-center gap-2">
-      <Input id="password" name="password" type="text" value={formData.password || ''} onChange={handleChange} required />
-      <Button type="button" variant="ghost" size="icon" onClick={handleGenerateAndCopyPassword} title="Gerar e copiar nova senha">
-        <RefreshCw className="h-4 w-4" />
-      </Button>
-    </div>
-  </div>
-                    )
-                    }
-
                     <div>
-                        <Label htmlFor="perfil">Perfil</Label>
-                        <Select name="perfil" required value={formData.perfil || ''} onValueChange={(v) => handleSelectChange('perfil', v)}>
-                            <SelectTrigger id="perfil"><SelectValue placeholder="Selecione o perfil" /></SelectTrigger>
-                            <SelectContent>
-                                <SelectItem value="professor_infantil">Professor Educação Infantil</SelectItem>
-                                <SelectItem value="professor_fundamental">Professor Ensino Fundamental</SelectItem>
-                                <SelectItem value="professor_especialista">Professor Especialista</SelectItem>
-                                <SelectItem value="coordenador">Coordenador</SelectItem>
-                                <SelectItem value="especialista">Especialista</SelectItem>
-                                <SelectItem value="admin">Administrador</SelectItem>
-                                {/* 'professor' é perfil legado — não oferecido em novos cadastros,
-                                    mas precisa continuar selecionável aqui pra exibir corretamente
-                                    o valor de usuários antigos que ainda o possuem. */}
-                                {formData.perfil === 'professor' && (
-                                    <SelectItem value="professor">Professor (legado)</SelectItem>
-                                )}
-                            </SelectContent>
-                        </Select>
+                        <Label htmlFor="password">
+                            {user ? <>Nova Senha <span className="text-xs text-gray-400">(deixe em branco para não alterar)</span></> : 'Senha'}
+                        </Label>
+                        <div className="flex items-center gap-2">
+                            <Input
+                                id="password" type="text" value={formData.password}
+                                onChange={(e) => set('password', e.target.value)}
+                                minLength={8} required={!user}
+                                placeholder={user ? 'Digite para redefinir...' : undefined}
+                            />
+                            <Button type="button" variant="ghost" size="icon" onClick={handleGerarSenha} title="Gerar e copiar nova senha">
+                                <RefreshCw className="h-4 w-4" />
+                            </Button>
+                        </div>
                     </div>
-                    {specialistProfiles.includes(formData.perfil) && (
+
+                    {!editandoASiMesmo && (
                         <>
-                            <div className="space-y-2">
-                                <Label htmlFor="tipo_especialista">Tipo de Especialista</Label>
-                                <Select
-                                    name="tipo_especialista"
-                                    required
-                                    value={formData.tipo_especialista || ''}
-                                    onValueChange={(v) => handleSelectChange('tipo_especialista', v)}
-                                >
-                                    <SelectTrigger id="tipo_especialista">
-                                        <SelectValue placeholder="Selecione o tipo" />
-                                    </SelectTrigger>
-                                <SelectContent>
-                                        {tiposEspecialistaPadrao.map(tipo => (
-                                            <SelectItem key={tipo.value} value={tipo.value}>{tipo.label}</SelectItem>
-                                        ))}
-                                        <SelectItem value={tipoEspecialistaOutro}>Outro</SelectItem>
-                                    </SelectContent>
-                                </Select>
-                            </div>
-                            {formData.tipo_especialista === tipoEspecialistaOutro && (
+                            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                                 <div>
-                                    <Label htmlFor="tipo_especialista_outro">Especifique o tipo</Label>
-                                    <Input
-                                        id="tipo_especialista_outro"
-                                        name="tipo_especialista_outro"
-                                        value={formData.tipo_especialista_outro || ''}
-                                        onChange={handleChange}
-                                        placeholder="Digite o tipo de especialista"
-                                        required
-                                    />
+                                    <Label htmlFor="nivel">Perfil</Label>
+                                    <Select value={formData.nivel} onValueChange={(v) => set('nivel', v)}>
+                                        <SelectTrigger id="nivel"><SelectValue placeholder="Selecione o perfil" /></SelectTrigger>
+                                        <SelectContent>
+                                            {opcoesNivel.map((n) => <SelectItem key={n} value={n}>{NIVEL_LABELS[n] || n}</SelectItem>)}
+                                        </SelectContent>
+                                    </Select>
+                                </div>
+                                {precisaEscola && escolas.length > 1 && (
+                                    <div>
+                                        <Label htmlFor="escola">Escola</Label>
+                                        <Select value={formData.escola} onValueChange={trocarEscola}>
+                                            <SelectTrigger id="escola"><SelectValue placeholder="Selecione a escola" /></SelectTrigger>
+                                            <SelectContent>
+                                                {escolas.map((e) => <SelectItem key={e.id} value={String(e.id)}>{e.nome}</SelectItem>)}
+                                            </SelectContent>
+                                        </Select>
+                                    </div>
+                                )}
+                            </div>
+
+                            {temTipo && (
+                                <div>
+                                    <Label htmlFor="tipo_especialista">Tipo de Especialista</Label>
+                                    <Select value={formData.tipo_especialista} onValueChange={(v) => set('tipo_especialista', v)}>
+                                        <SelectTrigger id="tipo_especialista"><SelectValue placeholder="Selecione o tipo" /></SelectTrigger>
+                                        <SelectContent>
+                                            {Object.entries(TIPO_ESPECIALISTA_LABELS).map(([valor, label]) => (
+                                                <SelectItem key={valor} value={valor}>{label}</SelectItem>
+                                            ))}
+                                        </SelectContent>
+                                    </Select>
+                                </div>
+                            )}
+
+                            {temDisciplinas && (
+                                <div>
+                                    <Label>Disciplinas</Label>
+                                    {listaDeMarcar('disciplinas', disciplinasDaEscola, 'Nenhuma disciplina ativa nesta escola.', 'todas-disciplinas')}
+                                </div>
+                            )}
+
+                            {temTurmas && (
+                                <div>
+                                    <Label>Turmas Vinculadas</Label>
+                                    {listaDeMarcar('turmas', turmasDaEscola, 'Nenhuma turma ativa nesta escola.', 'todas-turmas')}
                                 </div>
                             )}
                         </>
                     )}
-                    {formData.perfil === PROFESSOR_FUNDAMENTAL && (
-                        <div>
-                            <Label>Disciplinas</Label>
-                            <div className="space-y-2 rounded-md border p-4">
-                                {disciplinas.length > 0 && (
-                                    <div className="flex items-center space-x-2 pb-2 border-b">
-                                        <Checkbox
-                                            id="select-all-disciplinas"
-                                            checked={disciplinas.length > 0 && formData.disciplinas?.length === disciplinas.length}
-                                            onCheckedChange={handleSelectAllDisciplinas}
-                                        />
-                                        <Label htmlFor="select-all-disciplinas" className="font-semibold">Selecionar Todas as Disciplinas</Label>
-                                    </div>
-                                )}
-                                <div className="max-h-32 overflow-y-auto pt-2">
-                                    {disciplinas.length > 0 ? disciplinas.map(disciplina => (
-                                        <div key={disciplina.id} className="flex items-center space-x-2">
-                                            <Checkbox
-                                                id={`disciplina-${disciplina.id}`}
-                                                checked={formData.disciplinas?.includes(disciplina.id)}
-                                                onCheckedChange={(checked) => handleDisciplinaChange(disciplina.id, checked)}
-                                            />
-                                            <Label htmlFor={`disciplina-${disciplina.id}`}>{disciplina.nome}</Label>
-                                        </div>
-                                    )) : <p className="text-sm text-gray-500">Nenhuma disciplina cadastrada.</p>}
-                                </div>
-                            </div>
-                        </div>
-                    )}
-                    <div>
-                        <Label>Turmas Vinculadas</Label>
-                        <div className="space-y-2 rounded-md border p-4">
-                            {turmas.length > 0 && (
-                                <div className="flex items-center space-x-2 pb-2 border-b">
-                                    <Checkbox
-                                        id="select-all-turmas"
-                                        checked={turmas.length > 0 && formData.turmas?.length === turmas.length}
-                                        onCheckedChange={handleSelectAllTurmas}
-                                    />
-                                    <Label htmlFor="select-all-turmas" className="font-semibold">Selecionar Todas as Turmas</Label>
-                                </div>
-                            )}
-                            <div className="max-h-32 overflow-y-auto pt-2">
-                                {turmas.length > 0 ? turmas.map(turma => (
-                                    <div key={turma.id} className="flex items-center space-x-2">
-                                        <Checkbox
-                                            id={`turma-${turma.id}`}
-                                            checked={formData.turmas?.includes(turma.id)}
-                                            onCheckedChange={(checked) => handleTurmaChange(turma.id, checked)}
-                                        />
-                                        <Label htmlFor={`turma-${turma.id}`}>{turma.nome}</Label>
-                                    </div>
-                                )) : <p className="text-sm text-gray-500">Nenhuma turma disponível.</p>}
-                            </div>
-                        </div>
-                    </div>
-                    <div className="flex items-center space-x-2">
-                        <Checkbox id="ativo" name="ativo" checked={formData.ativo} onCheckedChange={(checked) => setFormData(p => ({...p, ativo: checked}))} />
-                        <Label htmlFor="ativo">Usuário Ativo</Label>
-                    </div>
+
                     <DialogFooter>
-                        <DialogClose asChild><Button type="button" variant="outline">Cancelar</Button></DialogClose>
-                        <Button type="submit">Salvar</Button>
+                        <DialogClose asChild><Button type="button" variant="outline" disabled={salvando}>Cancelar</Button></DialogClose>
+                        <Button type="submit" disabled={salvando || (carregandoCatalogos && !editandoASiMesmo)}>
+                            {salvando ? 'Salvando...' : 'Salvar'}
+                        </Button>
                     </DialogFooter>
                 </form>
             </DialogContent>

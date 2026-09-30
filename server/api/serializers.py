@@ -403,51 +403,219 @@ class EspecialistaSerializer(serializers.ModelSerializer):
         return escola
 
 
+NIVEIS_COM_TIPO_ESPECIALISTA = ('especialista', 'professor_especialista')
+
+
 class UsuarioSerializer(serializers.ModelSerializer):
-    """Serializer para o model Usuario (leitura — usado no payload de login e em /me/)."""
+    """Serializer para o model Usuario (leitura — usado no payload de login, em
+    /me/ e na lista completa de /usuarios/).
+
+    Em listas, a view faz select_related('escola', 'instituicao', 'especialista');
+    sem isso, cada usuário custa até 3 queries extras.
+    """
 
     escola_nome = serializers.CharField(source='escola.nome', read_only=True, default=None)
     instituicao_nome = serializers.CharField(source='instituicao.nome', read_only=True, default=None)
+    tipo_especialista = serializers.CharField(source='especialista.tipo_especialista', read_only=True, default=None)
 
     class Meta:
         model = Usuario
         fields = [
             'id', 'nome', 'email', 'numero', 'nivel',
             'escola', 'escola_nome', 'instituicao', 'instituicao_nome',
-            'especialista', 'is_active',
+            'especialista', 'tipo_especialista', 'is_active',
         ]
         read_only_fields = fields
 
 
+class _TurmaDoUsuarioSerializer(serializers.ModelSerializer):
+    turma_nome = serializers.CharField(source='turma.nome', read_only=True)
+
+    class Meta:
+        model = UsuarioTurma
+        fields = ['turma', 'turma_nome']
+
+
+class _DisciplinaDoUsuarioSerializer(serializers.ModelSerializer):
+    disciplina_nome = serializers.CharField(source='disciplina.nome', read_only=True)
+
+    class Meta:
+        model = UsuarioDisciplina
+        fields = ['disciplina', 'disciplina_nome']
+
+
+class UsuarioListaSerializer(UsuarioSerializer):
+    """
+    Linha da listagem paginada de usuários, com turmas e disciplinas embutidas
+    (a tela de edição já abre preenchida, sem requisição extra). Depende dos
+    Prefetch em `turmas_listagem` e `disciplinas_listagem` da view.
+    """
+    turmas = _TurmaDoUsuarioSerializer(source='turmas_listagem', many=True, read_only=True)
+    disciplinas = _DisciplinaDoUsuarioSerializer(source='disciplinas_listagem', many=True, read_only=True)
+
+    class Meta(UsuarioSerializer.Meta):
+        fields = UsuarioSerializer.Meta.fields + ['turmas', 'disciplinas']
+        read_only_fields = fields
+
+
 class UsuarioWriteSerializer(serializers.ModelSerializer):
-    """Serializer de escrita para Usuario — lida com hash de senha via set_password."""
+    """Serializer de escrita para Usuario — lida com hash de senha via set_password.
+
+    Campos opcionais, só escrita, gravados na mesma transação (a view usa
+    transaction.atomic):
+
+    * `turmas`: ids de turmas. Os vínculos passam a ser exatamente essa lista.
+      Só para níveis vinculáveis a turma, e só turmas da escola do usuário.
+    * `disciplinas`: ids de disciplinas. Idem; só para professor_fundamental.
+    * `tipo_especialista`: para especialista/professor_especialista. Liga o
+      usuário ao registro de Especialista (catálogo por rede+escola) desse tipo,
+      criando-o se ainda não existir.
+
+    Se a escola do usuário mudar e `turmas`/`disciplinas` não vierem, os
+    vínculos antigos (da escola anterior) são removidos.
+    """
 
     password = serializers.CharField(write_only=True, required=False, min_length=8)
+    turmas = serializers.ListField(child=serializers.UUIDField(), write_only=True, required=False)
+    disciplinas = serializers.ListField(child=serializers.UUIDField(), write_only=True, required=False)
+    tipo_especialista = serializers.ChoiceField(
+        choices=Especialista._meta.get_field('tipo_especialista').choices,
+        write_only=True, required=False, allow_null=True, allow_blank=True,
+    )
 
     class Meta:
         model = Usuario
         fields = [
             'id', 'nome', 'email', 'numero', 'nivel',
             'escola', 'instituicao', 'especialista', 'is_active', 'password',
+            'turmas', 'disciplinas', 'tipo_especialista',
         ]
         read_only_fields = ['id']
 
+    def _valor(self, attrs, campo):
+        if campo in attrs:
+            return attrs[campo]
+        return getattr(self.instance, campo, None)
+
+    def _id(self, valor):
+        return getattr(valor, 'pk', valor)
+
+    def validate(self, attrs):
+        nivel = self._valor(attrs, 'nivel')
+        escola_id = self._id(self._valor(attrs, 'escola'))
+        instituicao_id = self._id(self._valor(attrs, 'instituicao'))
+
+        if 'turmas' in attrs:
+            attrs['turmas'] = self._validar_turmas(attrs['turmas'], nivel, escola_id)
+        if 'disciplinas' in attrs:
+            attrs['disciplinas'] = self._validar_disciplinas(attrs['disciplinas'], nivel, escola_id)
+
+        if nivel not in NIVEIS_COM_TIPO_ESPECIALISTA:
+            attrs.pop('tipo_especialista', None)
+            if 'nivel' in attrs:  # deixou de ser especialista: desfaz a ligação
+                attrs['especialista'] = None
+        elif attrs.get('tipo_especialista'):
+            if instituicao_id is None:
+                raise serializers.ValidationError(
+                    {'tipo_especialista': ['O usuário precisa estar vinculado a uma instituição.']}
+                )
+            attrs['_especialista_chave'] = (instituicao_id, escola_id, attrs.pop('tipo_especialista'))
+        else:
+            attrs.pop('tipo_especialista', None)
+        return attrs
+
+    def _validar_turmas(self, ids, nivel, escola_id):
+        if not ids:
+            return []
+        from .escopo import NIVEIS_VINCULAVEIS_TURMA
+        if nivel not in NIVEIS_VINCULAVEIS_TURMA:
+            raise serializers.ValidationError({'turmas': ['Este perfil não pode ser vinculado a turmas.']})
+        turmas = list(Turma._base_manager.filter(id__in=ids))
+        if len(turmas) != len(set(ids)) or any(t.escola_id != escola_id for t in turmas):
+            raise serializers.ValidationError({'turmas': ['Todas as turmas precisam ser da escola do usuário.']})
+        return turmas
+
+    def _validar_disciplinas(self, ids, nivel, escola_id):
+        if not ids:
+            return []
+        from .escopo import NIVEIS_VINCULAVEIS_DISCIPLINA
+        if nivel not in NIVEIS_VINCULAVEIS_DISCIPLINA:
+            raise serializers.ValidationError(
+                {'disciplinas': ['Só professores do Ensino Fundamental podem ter disciplinas.']}
+            )
+        disciplinas = list(Disciplina._base_manager.filter(id__in=ids))
+        if len(disciplinas) != len(set(ids)) or any(d.escola_id != escola_id for d in disciplinas):
+            raise serializers.ValidationError(
+                {'disciplinas': ['Todas as disciplinas precisam ser da escola do usuário.']}
+            )
+        return disciplinas
+
+    def _aplicar_especialista(self, validated_data):
+        chave = validated_data.pop('_especialista_chave', None)
+        if chave is None:
+            return
+        instituicao_id, escola_id, tipo = chave
+        especialista = Especialista._base_manager.filter(
+            instituicao_id=instituicao_id, escola_id=escola_id, tipo_especialista=tipo,
+        ).order_by('criado_em').first()
+        if especialista is None:
+            especialista = Especialista._base_manager.create(
+                instituicao_id=instituicao_id, escola_id=escola_id, tipo_especialista=tipo,
+            )
+        validated_data['especialista'] = especialista
+
+    def _sincronizar_vinculos(self, usuario, turmas, disciplinas, escola_mudou):
+        if turmas is None and escola_mudou:
+            turmas = []
+        if disciplinas is None and escola_mudou:
+            disciplinas = []
+        if turmas is not None:
+            desejadas = {t.pk for t in turmas}
+            vinculos = UsuarioTurma.objects.filter(usuario=usuario)
+            atuais = set(vinculos.values_list('turma_id', flat=True))
+            vinculos.exclude(turma_id__in=desejadas).delete()
+            UsuarioTurma.objects.bulk_create(
+                [UsuarioTurma(usuario=usuario, turma=t) for t in turmas if t.pk not in atuais]
+            )
+        if disciplinas is not None:
+            desejadas = {d.pk for d in disciplinas}
+            vinculos = UsuarioDisciplina.objects.filter(usuario=usuario)
+            atuais = set(vinculos.values_list('disciplina_id', flat=True))
+            vinculos.exclude(disciplina_id__in=desejadas).delete()
+            UsuarioDisciplina.objects.bulk_create([
+                UsuarioDisciplina(
+                    usuario=usuario, disciplina=d, escola_id=d.escola_id, instituicao_id=d.instituicao_id,
+                )
+                for d in disciplinas if d.pk not in atuais
+            ])
+
     def create(self, validated_data):
+        turmas = validated_data.pop('turmas', None)
+        disciplinas = validated_data.pop('disciplinas', None)
+        self._aplicar_especialista(validated_data)
         password = validated_data.pop('password', None)
         if not password:
             raise serializers.ValidationError({'password': 'Senha é obrigatória na criação.'})
         usuario = Usuario(**validated_data)
         usuario.set_password(password)
         usuario.save()
+        self._sincronizar_vinculos(usuario, turmas, disciplinas, escola_mudou=False)
         return usuario
 
     def update(self, instance, validated_data):
+        turmas = validated_data.pop('turmas', None)
+        disciplinas = validated_data.pop('disciplinas', None)
+        self._aplicar_especialista(validated_data)
+        escola_anterior = instance.escola_id
         password = validated_data.pop('password', None)
         for attr, value in validated_data.items():
             setattr(instance, attr, value)
         if password:
             instance.set_password(password)
         instance.save()
+        self._sincronizar_vinculos(
+            instance, turmas, disciplinas, escola_mudou=instance.escola_id != escola_anterior,
+        )
         return instance
 
 

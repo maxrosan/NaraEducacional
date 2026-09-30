@@ -1295,22 +1295,31 @@ export async function listarResumoEscolas() {
 // =============================================================================
 
 /**
- * Lista usuários. Só gestão (admin/coordenador/superadmin) tem acesso; os
- * demais recebem 403 e devem usar /me/.
- * ALTERADO: o backend ignora query params; `perfil` e `ativo` são filtrados aqui.
- * O antigo `perfil` agora se chama `nivel`.
- * @param {Object} filtros - { perfil, ativo }
+ * Lista usuários (array completo, sem paginação). Só gestão
+ * (admin/coordenador/superadmin) tem acesso; os demais recebem 403 e devem usar /me/.
+ * Os filtros são aplicados no servidor. O antigo `perfil` agora se chama `nivel`
+ * (os dois nomes são aceitos aqui).
+ * @param {Object} filtros - { nivel | perfil, ativo, escola }
  */
 export async function listarUsuarios(filtros = {}) {
-  let usuarios = await getJson('/usuarios/', 'listar usuários');
-  if (filtros.perfil) {
-    usuarios = usuarios.filter((u) => u.nivel === filtros.perfil);
-  }
-  if (filtros.ativo !== undefined) {
-    const ativo = filtros.ativo === true || filtros.ativo === 'true';
-    usuarios = usuarios.filter((u) => u.is_active === ativo);
-  }
-  return usuarios;
+  const ativo = filtros.ativo === undefined ? undefined : filtros.ativo === true || filtros.ativo === 'true';
+  return getJson(
+    comQuery('/usuarios/', { nivel: filtros.nivel ?? filtros.perfil, ativo, escola: filtros.escola }),
+    'listar usuários',
+  );
+}
+
+/**
+ * Listagem paginada (tela de gestão de usuários). Cada usuário traz `turmas` e
+ * `disciplinas` embutidas. A resposta também diz quais níveis quem está
+ * logado pode atribuir (`niveis_permitidos`) e o id dele (`usuario_atual`).
+ * @param {Object} filtros - { ativo, escola, nivel, busca, page, pageSize }
+ */
+export async function listarUsuariosPaginado({ ativo, escola, nivel, busca, page = 1, pageSize } = {}) {
+  return getJson(
+    comQuery('/usuarios/', { ativo, escola, nivel, busca, page, page_size: pageSize }),
+    'listar usuários',
+  );
 }
 
 /** Detalhe de um usuário. */
@@ -1318,12 +1327,18 @@ export async function buscarUsuario(usuarioId) {
   return getJson(`/usuarios/${usuarioId}/`, 'buscar usuário');
 }
 
-/** Cria usuário (incluindo password). */
+/**
+ * Cria usuário (incluindo password). Opcionais, gravados na mesma transação:
+ * `turmas` e `disciplinas` (ids) e `tipo_especialista`.
+ */
 export async function criarUsuario(dados) {
   return enviarJson('/usuarios/criar/', 'POST', dados, 'criar usuário');
 }
 
-/** Atualiza usuário. */
+/**
+ * Atualiza usuário (PATCH). Com `turmas`/`disciplinas`, os vínculos passam a ser
+ * exatamente essas listas; sem elas, não mudam. Desativar: { is_active: false }.
+ */
 export async function atualizarUsuario(usuarioId, dados) {
   return enviarJson(`/usuarios/${usuarioId}/atualizar/`, 'PATCH', dados, 'atualizar usuário');
 }

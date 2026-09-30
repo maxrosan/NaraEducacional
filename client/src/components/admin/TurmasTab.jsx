@@ -15,7 +15,6 @@ import { Badge } from "@/components/ui/badge";
 import {
     listarTurmasPaginado, listarEscolas, listarUsuarios,
     criarTurma, atualizarTurma,
-    vincularProfessorTurma, desvincularProfessorTurma,
 } from '@/services/api';
 
 /*
@@ -33,6 +32,12 @@ import {
  *   - cada turma já traz `professores` (sem uma chamada por turma);
  *   - a lista de usuários (só usada no formulário) é buscada na primeira vez
  *     que o formulário abre, não junto com a página.
+ *
+ * Salvar é UMA requisição: os professores vão no próprio payload da turma e o
+ * backend grava turma e vínculos na mesma transação (tudo ou nada).
+ *
+ * Não pode haver duas turmas com o mesmo nome (sem diferenciar maiúsculas) na
+ * mesma escola e ano letivo; o backend devolve o erro no campo `nome`.
  *
  * Não existe exclusão de turma: ela é desativada (ativa=false) e pode ser
  * reativada na aba "Inativas", preservando alunos e registros vinculados.
@@ -132,7 +137,7 @@ const TurmasTab = () => {
     // Usuários: só o formulário precisa. Busca na primeira abertura e reaproveita.
     const garantirUsuarios = useCallback(() => {
         if (usuarios !== null) return;
-        listarUsuarios()
+        listarUsuarios({ ativo: true })
             .then(setUsuarios)
             .catch((err) => {
                 setUsuarios([]);
@@ -150,38 +155,28 @@ const TurmasTab = () => {
     const trocarAba = (valor) => { setAba(valor); setPagina(1); };
     const trocarEscola = (valor) => { setFiltroEscola(valor); setPagina(1); };
 
-    const handleSalvar = async (dados, professoresSelecionados) => {
-        let turma;
+    const handleSalvar = async (dados) => {
+        const editando = !!editingTurma;
         try {
-            turma = editingTurma
-                ? await atualizarTurma(editingTurma.id, dados)
-                : await criarTurma(dados);
+            if (editando) await atualizarTurma(editingTurma.id, dados);
+            else await criarTurma(dados);
         } catch (err) {
             toast({ variant: "destructive", title: "Erro ao salvar turma", description: mensagemDeErro(err) });
-            return;
+            return false; // mantém o formulário aberto para correção
         }
 
-        // Sincroniza os vínculos: vincula os marcados e desvincula os desmarcados.
-        const atuais = new Set((editingTurma?.professores ?? []).map((v) => String(v.usuario)));
-        const desejados = new Set(professoresSelecionados.map(String));
-        const falhas = [];
-        for (const id of desejados) {
-            if (atuais.has(id)) continue;
-            try { await vincularProfessorTurma(turma.id, id); } catch (err) { falhas.push(mensagemDeErro(err)); }
-        }
-        for (const id of atuais) {
-            if (desejados.has(id)) continue;
-            try { await desvincularProfessorTurma(turma.id, id); } catch (err) { falhas.push(mensagemDeErro(err)); }
-        }
-
-        if (falhas.length) {
-            toast({ variant: "destructive", title: "Turma salva, mas alguns vínculos falharam", description: falhas.join(' ') });
-        } else {
-            toast({ title: `Turma ${editingTurma ? 'atualizada' : 'criada'} com sucesso!` });
-        }
+        toast({ title: `Turma ${editando ? 'atualizada' : 'criada'} com sucesso!` });
         setIsFormOpen(false);
         setEditingTurma(null);
-        carregar();
+
+        // Turma nova nasce ativa: leva o usuário até onde ela aparece.
+        if (!editando && (aba !== ABA_ATIVAS || pagina !== 1)) {
+            setAba(ABA_ATIVAS);
+            setPagina(1); // o efeito de `carregar` recarrega sozinho
+        } else {
+            carregar();
+        }
+        return true;
     };
 
     const alterarAtiva = async (turma, ativa) => {
@@ -462,6 +457,7 @@ const TurmaFormDialog = ({ isOpen, setIsOpen, turma, escolas, vinculaveis, carre
         }
 
         const dados = {
+            professores: formData.professores,
             nome: formData.nome.trim(),
             etapa: formData.etapa,
             faixa_etaria: formData.faixa_etaria.trim(),
@@ -475,14 +471,15 @@ const TurmaFormDialog = ({ isOpen, setIsOpen, turma, escolas, vinculaveis, carre
 
         setSalvando(true);
         try {
-            await onSubmit(dados, formData.professores);
+            await onSubmit(dados);
         } finally {
             setSalvando(false);
         }
     };
 
     return (
-        <Dialog open={isOpen} onOpenChange={setIsOpen}>
+        // Não fecha no meio do salvamento (Esc/clique fora).
+        <Dialog open={isOpen} onOpenChange={(aberto) => { if (!salvando) setIsOpen(aberto); }}>
             <DialogContent className="max-h-[90vh] overflow-y-auto">
                 <DialogHeader>
                     <DialogTitle>{turma ? 'Editar Turma' : 'Nova Turma'}</DialogTitle>
@@ -505,7 +502,7 @@ const TurmaFormDialog = ({ isOpen, setIsOpen, turma, escolas, vinculaveis, carre
                     )}
                     <div>
                         <Label htmlFor="nome">Nome da Turma</Label>
-                        <Input id="nome" name="nome" value={formData.nome} onChange={handleChange} placeholder="Ex: Nível 3A, 1º Ano B" required />
+                        <Input id="nome" name="nome" value={formData.nome} onChange={handleChange} placeholder="Ex: Nível 3A, 1º Ano B" maxLength={100} required />
                     </div>
                     <div className="grid grid-cols-2 gap-4">
                         <div>
@@ -572,7 +569,7 @@ const TurmaFormDialog = ({ isOpen, setIsOpen, turma, escolas, vinculaveis, carre
                         </div>
                     </div>
                     <DialogFooter>
-                        <DialogClose asChild><Button type="button" variant="outline">Cancelar</Button></DialogClose>
+                        <DialogClose asChild><Button type="button" variant="outline" disabled={salvando}>Cancelar</Button></DialogClose>
                         <Button type="submit" disabled={salvando || carregandoProfessores}>{salvando ? 'Salvando...' : 'Salvar'}</Button>
                     </DialogFooter>
                 </form>

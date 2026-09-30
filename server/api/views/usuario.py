@@ -1,13 +1,16 @@
 """Endpoints de Usuario."""
 
+from django.core.paginator import Paginator
+from django.db import transaction
+from django.db.models import Count, Prefetch, Q
 from rest_framework import status
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
-from api.escopo import buscar_no_escopo, pode_gerenciar, validar_vinculos_usuario
-from api.models import Usuario
-from api.serializers import UsuarioSerializer, UsuarioWriteSerializer
+from api.escopo import buscar_no_escopo, filtrar_por, pode_gerenciar, validar_vinculos_usuario
+from api.models import Escola, Usuario, UsuarioDisciplina, UsuarioTurma
+from api.serializers import UsuarioListaSerializer, UsuarioSerializer, UsuarioWriteSerializer
 from api.tenancy import is_superadmin
 
 # Papéis internos do NARA — sem vínculo com instituição/escola.
@@ -19,6 +22,17 @@ NIVEIS_SISTEMA = {'superadmin', 'vendedor', 'suporte'}
 NIVEIS_QUE_COORDENADOR_CRIA = {
     'professor_infantil', 'professor_fundamental', 'professor_especialista', 'especialista',
 }
+
+# Campos que ninguém (exceto superadmin) altera em si mesmo por esta rota:
+# evita auto-promoção, trocar de escola e se vincular sozinho a turmas ou
+# disciplinas (o que daria acesso aos alunos delas).
+CAMPOS_BLOQUEADOS_NA_AUTOEDICAO = (
+    'nivel', 'instituicao', 'escola', 'especialista', 'tipo_especialista',
+    'turmas', 'disciplinas', 'is_active',
+)
+
+USUARIOS_POR_PAGINA = 10
+USUARIOS_POR_PAGINA_MAX = 50
 
 
 def _sem_permissao(mensagem='Sem permissão.'):
@@ -46,6 +60,13 @@ def _nivel_permitido(user, nivel, obrigatorio=False) -> Response | None:
             f'Coordenador só pode atribuir: {", ".join(sorted(NIVEIS_QUE_COORDENADOR_CRIA))}.'
         )
     return None
+
+
+def _niveis_que_pode_atribuir(user):
+    """Mesma regra de `_nivel_permitido`, em forma de lista (para o front
+    montar o select de perfil sem duplicar a regra)."""
+    todos = [valor for valor, _ in Usuario._meta.get_field('nivel').choices]
+    return [n for n in todos if _nivel_permitido(user, n) is None]
 
 
 def _pode_ver(user, alvo) -> bool:
@@ -76,19 +97,116 @@ def _pode_editar(user, alvo) -> bool:
     return True
 
 
+def _param_bool(valor):
+    """'true'/'false' (e variações) → bool; ausente ou inválido → None (sem filtro)."""
+    if valor is None:
+        return None
+    valor = valor.strip().lower()
+    if valor in ('true', '1', 'sim'):
+        return True
+    if valor in ('false', '0', 'nao', 'não'):
+        return False
+    return None
+
+
+def _param_int(valor, padrao, minimo, maximo):
+    try:
+        return max(minimo, min(int(valor), maximo))
+    except (TypeError, ValueError):
+        return padrao
+
+
+def _salvar(serializer):
+    """Usuário + vínculos (turmas, disciplinas, especialista) numa transação:
+    ou grava tudo, ou nada."""
+    serializer.is_valid(raise_exception=True)
+    with transaction.atomic():
+        return serializer.save()
+
+
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
 def listar_usuarios(request):
-    """Superadmin vê todos. Admin vê os da própria instituição. Coordenador vê os da própria escola.
-
-    O recorte por instituição/escola é do TenantManager (usuário sem o vínculo
-    exigido recebe lista vazia).
     """
-    if not pode_gerenciar(request.user):
+    GET /usuarios/ — superadmin vê todos; admin, os da própria instituição;
+    coordenador, os da própria escola. O recorte é do TenantManager (usuário
+    sem o vínculo exigido recebe lista vazia).
+
+    Query params (todos opcionais):
+      ativo=true|false   filtra por is_active
+      escola=<uuid>      fora do escopo/malformado → vazio
+      nivel=<nivel>      ex.: professor_fundamental
+      busca=<texto>      parte do nome ou do e-mail
+      page=<n>           liga a paginação (fora do intervalo → última)
+      page_size=<n>      padrão 10, máximo 50
+
+    SEM `page`: array simples, como antes (formulários de turma e disciplina
+    usam a lista completa), já com os filtros acima aplicados no servidor.
+
+    COM `page`:
+      {
+        "count": 37, "pagina": 1, "total_paginas": 4, "page_size": 10,
+        "totais": {"ativos": 30, "inativos": 7},        # p/ as abas
+        "niveis_permitidos": ["admin", "coordenador", ...],  # o que QUEM PEDE pode atribuir
+        "usuario_atual": "<uuid>",                       # p/ a tela não oferecer auto-desativação
+        "results": [ ...UsuarioListaSerializer (com turmas e disciplinas)... ]
+      }
+    """
+    user = request.user
+    if not pode_gerenciar(user):
         return _sem_permissao('Sem permissão. Use /api/me/ para ver seus próprios dados.')
 
-    usuarios = Usuario.objects.all().order_by('nome')
-    return Response(UsuarioSerializer(usuarios, many=True).data)
+    base = filtrar_por(Usuario.objects.all(), request, 'escola', Escola, 'escola')
+    nivel = request.query_params.get('nivel')
+    if nivel:
+        base = base.filter(nivel=nivel)
+    busca = (request.query_params.get('busca') or '').strip()
+    if busca:
+        base = base.filter(Q(nome__icontains=busca) | Q(email__icontains=busca))
+
+    ativo = _param_bool(request.query_params.get('ativo'))
+    usuarios = base if ativo is None else base.filter(is_active=ativo)
+    usuarios = usuarios.select_related('escola', 'instituicao', 'especialista').order_by('nome', 'id')
+
+    if 'page' not in request.query_params:
+        return Response(UsuarioSerializer(usuarios, many=True).data)
+
+    usuarios = usuarios.prefetch_related(
+        Prefetch(
+            'usuario_turmas',
+            queryset=UsuarioTurma.objects.select_related('turma').order_by('turma__nome'),
+            to_attr='turmas_listagem',
+        ),
+        Prefetch(
+            'usuario_disciplinas',
+            queryset=UsuarioDisciplina.objects.select_related('disciplina').order_by('disciplina__nome'),
+            to_attr='disciplinas_listagem',
+        ),
+    )
+
+    page_size = _param_int(
+        request.query_params.get('page_size'),
+        USUARIOS_POR_PAGINA, 1, USUARIOS_POR_PAGINA_MAX,
+    )
+    pagina = Paginator(usuarios, page_size).get_page(request.query_params.get('page'))
+
+    # Totais das abas respeitam escola/nível/busca, mas não o filtro `ativo`.
+    totais = base.aggregate(
+        ativos=Count('id', filter=Q(is_active=True)),
+        inativos=Count('id', filter=Q(is_active=False)),
+    )
+    totais = {chave: valor or 0 for chave, valor in totais.items()}
+
+    return Response({
+        'count': pagina.paginator.count,
+        'pagina': pagina.number,
+        'total_paginas': pagina.paginator.num_pages,
+        'page_size': page_size,
+        'totais': totais,
+        'niveis_permitidos': _niveis_que_pode_atribuir(user),
+        'usuario_atual': str(user.id),
+        'results': UsuarioListaSerializer(pagina.object_list, many=True).data,
+    })
 
 
 @api_view(['POST'])
@@ -115,9 +233,7 @@ def criar_usuario(request):
     if erro:
         return erro
 
-    serializer = UsuarioWriteSerializer(data=data)
-    serializer.is_valid(raise_exception=True)
-    usuario = serializer.save()
+    usuario = _salvar(UsuarioWriteSerializer(data=data))
     return Response(UsuarioSerializer(usuario).data, status=status.HTTP_201_CREATED)
 
 
@@ -148,12 +264,11 @@ def atualizar_usuario(request, usuario_id):
 
     data = request.data.copy()
 
-    # Ninguém edita o próprio nivel/instituicao/escola por essa rota — evita
-    # auto-promoção. Superadmin pode mudar de qualquer um.
+    # Na autoedição, só dados pessoais (nome, e-mail, senha...). Superadmin
+    # pode mudar tudo de qualquer um.
     if is_self and not is_superadmin(user):
-        data.pop('nivel', None)
-        data.pop('instituicao', None)
-        data.pop('escola', None)
+        for campo in CAMPOS_BLOQUEADOS_NA_AUTOEDICAO:
+            data.pop(campo, None)
     else:
         erro = _nivel_permitido(user, data.get('nivel'))
         if erro:
@@ -166,7 +281,5 @@ def atualizar_usuario(request, usuario_id):
         return erro
 
     partial = request.method == 'PATCH'
-    serializer = UsuarioWriteSerializer(alvo, data=data, partial=partial)
-    serializer.is_valid(raise_exception=True)
-    usuario = serializer.save()
+    usuario = _salvar(UsuarioWriteSerializer(alvo, data=data, partial=partial))
     return Response(UsuarioSerializer(usuario).data)
