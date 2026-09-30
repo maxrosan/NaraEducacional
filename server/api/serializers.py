@@ -771,13 +771,73 @@ class PlanejamentoSemanalSerializer(serializers.ModelSerializer):
 
 
 class PeriodoAvaliativoSerializer(serializers.ModelSerializer):
+    """
+    Cadastro de período avaliativo.
+
+    Criação: a view passa `context={'escola_id': ...}` (vinda do
+    resolver_escopo_criacao), porque `escola` é read_only e a checagem de
+    sobreposição depende dela. A view trava a linha da escola durante
+    validação + save (ver views/avaliacao.py::_validar_e_salvar_periodo).
+
+    Listagem: a view faz select_related('escola') por causa de `escola_nome`.
+    """
+    escola_nome = serializers.CharField(source='escola.nome', read_only=True)
+
     class Meta:
         model = PeriodoAvaliativo
         fields = [
             'id', 'descricao', 'tipo_periodo', 'ano', 'numero',
-            'data_inicio', 'data_fim', 'escola', 'instituicao', 'criado_em', 'atualizado_em',
+            'data_inicio', 'data_fim', 'escola', 'escola_nome', 'instituicao',
+            'criado_em', 'atualizado_em',
         ]
         read_only_fields = ['id', 'escola', 'instituicao', 'criado_em', 'atualizado_em']
+        extra_kwargs = {
+            'ano': {'min_value': 2000, 'max_value': 2100},
+            'numero': {'min_value': 1, 'max_value': 12},
+        }
+
+    def _valor(self, attrs, campo):
+        """Valor final do campo: o enviado ou, no PATCH, o que já está salvo."""
+        if campo in attrs:
+            return attrs[campo]
+        return getattr(self.instance, campo, None)
+
+    def validate(self, attrs):
+        inicio = self._valor(attrs, 'data_inicio')
+        fim = self._valor(attrs, 'data_fim')
+        if inicio and fim and fim < inicio:
+            raise serializers.ValidationError(
+                {'data_fim': ['A data de fim não pode ser anterior à data de início.']}
+            )
+
+        # Sem ano informado, usa o do início (é o que as telas filtram/mostram).
+        if inicio and self._valor(attrs, 'ano') is None:
+            attrs['ano'] = inicio.year
+
+        escola_id = self.instance.escola_id if self.instance is not None else self.context.get('escola_id')
+        campos_da_regra = ('data_inicio', 'data_fim', 'tipo_periodo')
+        if escola_id and inicio and fim and (self.instance is None or any(c in attrs for c in campos_da_regra)):
+            self._checar_sobreposicao(escola_id, attrs, inicio, fim)
+        return attrs
+
+    def _checar_sobreposicao(self, escola_id, attrs, inicio, fim):
+        """Dois períodos do MESMO tipo na mesma escola não podem ter datas em
+        comum (ex.: 1º e 2º bimestre se cruzando). Tipos diferentes podem: um
+        período anual convive com os bimestres dentro dele."""
+        tipo = self._valor(attrs, 'tipo_periodo')
+        conflitos = PeriodoAvaliativo._base_manager.filter(
+            escola_id=escola_id, tipo_periodo=tipo,
+            data_inicio__lte=fim, data_fim__gte=inicio,
+        )
+        if self.instance is not None:
+            conflitos = conflitos.exclude(pk=self.instance.pk)
+        conflito = conflitos.order_by('data_inicio').first()
+        if conflito is None:
+            return
+        raise serializers.ValidationError({'data_inicio': [
+            f'As datas se sobrepõem ao período "{conflito.descricao}" '
+            f'({conflito.data_inicio:%d/%m/%Y} a {conflito.data_fim:%d/%m/%Y}), do mesmo tipo, nesta escola.'
+        ]})
 
 
 class RelatorioTemplateSerializer(serializers.ModelSerializer):

@@ -133,6 +133,7 @@ from .views.avaliacao import (
     criar_periodo_avaliativo,
     detalhe_periodo_avaliativo,
     atualizar_periodo_avaliativo,
+    excluir_periodo_avaliativo,
     listar_relatorio_templates,
     criar_relatorio_template,
     detalhe_relatorio_template,
@@ -400,6 +401,7 @@ urlpatterns = [
     path('periodos-avaliativos/criar/', criar_periodo_avaliativo, name='criar_periodo_avaliativo'),
     path('periodos-avaliativos/<uuid:periodo_id>/', detalhe_periodo_avaliativo, name='detalhe_periodo_avaliativo'),
     path('periodos-avaliativos/<uuid:periodo_id>/atualizar/', atualizar_periodo_avaliativo, name='atualizar_periodo_avaliativo'),
+    path('periodos-avaliativos/<uuid:periodo_id>/excluir/', excluir_periodo_avaliativo, name='excluir_periodo_avaliativo'),
 
     # Templates de Relatório
     path('relatorio-templates/', listar_relatorio_templates, name='listar_relatorio_templates'),

@@ -1127,6 +1127,49 @@ export async function atualizarDisciplina(disciplinaId, dados) {
   return enviarJson(`/disciplinas/${disciplinaId}/atualizar/`, 'PATCH', dados, 'atualizar disciplina');
 }
 
+// ============================================================
+// Períodos avaliativos
+// ============================================================
+
+/** Todos os períodos do escopo (array), mais recente primeiro. Para selects. */
+export async function listarPeriodosAvaliativos(filtros = {}) {
+  return getJson(comQuery('/periodos-avaliativos/', { escola: filtros.escola }), 'listar períodos avaliativos');
+}
+
+/**
+ * Listagem paginada (tela de gestão de períodos). Cada período traz `escola_nome`.
+ * @param {Object} filtros - { situacao: 'vigentes'|'encerrados', escola, page, pageSize }
+ * @returns {Promise<{count, pagina, total_paginas, page_size, totais: {vigentes, encerrados}, results}>}
+ */
+export async function listarPeriodosPaginado({ situacao, escola, page = 1, pageSize } = {}) {
+  return getJson(
+    comQuery('/periodos-avaliativos/', { situacao, escola, page, page_size: pageSize }),
+    'listar períodos avaliativos',
+  );
+}
+
+/**
+ * Cria período. Admin/superadmin: `escola` é obrigatória. Coordenador: a escola
+ * é sempre a dele. Datas do mesmo tipo que se cruzam na escola → erro 400.
+ */
+export async function criarPeriodoAvaliativo(dados) {
+  return enviarJson('/periodos-avaliativos/criar/', 'POST', dados, 'criar período avaliativo');
+}
+
+/** Atualiza período (PATCH parcial). A escola não muda. */
+export async function atualizarPeriodoAvaliativo(periodoId, dados) {
+  return enviarJson(`/periodos-avaliativos/${periodoId}/atualizar/`, 'PATCH', dados, 'atualizar período avaliativo');
+}
+
+/** Exclui o período (o backend responde 204, sem corpo). */
+export async function excluirPeriodoAvaliativo(periodoId) {
+  const response = await authFetch(
+    `${API_BASE_URL}/periodos-avaliativos/${periodoId}/excluir/`,
+    { method: 'DELETE' },
+  );
+  return parseJsonOrThrow(response, 'excluir período avaliativo');
+}
+
 // =============================================================================
 // PRODUÇÕES — ALTERADO: /producoes-criancas/ → /producoes/
 // =============================================================================
