@@ -14,7 +14,7 @@ import {
   AlunosTab, PromptsTab, CategoriasPromptTab,
   DispositivosTab
 } from '@/components/admin';
-import DisciplinasTab from '@/components/admin/disciplinas/DisciplinasTab';
+import DisciplinasTab from '@/components/admin/DisciplinasTab';
 import EscolasTab from '@/components/admin/EscolasTab';
 import { useAuth } from '@/contexts/AuthContext';
 import OpenAIUsagePage from '@/pages/OpenAIUsagePage';

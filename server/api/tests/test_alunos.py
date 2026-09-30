@@ -275,6 +275,14 @@ class AlunosTests(CenarioMultiTenant):
         self.assertEqual(r.status_code, 400, r.content)
         self.assertIn('nome_completo', r.json())
 
+    def test_duplicado_com_acento_em_maiuscula(self):
+        Aluno.objects.create(
+            nome_completo='João Álvares', data_nascimento=date(2019, 3, 3), turma=self.turma_a1,
+            escola=self.a1, instituicao=self.rede_a,
+        )
+        r = self._post_criar(nome_completo='JOÃO ÁLVARES', data_nascimento='2019-03-03')
+        self.assertEqual(r.status_code, 400, r.content)
+
     def test_duplicado_em_outra_turma_da_mesma_escola(self):
         turma = self._turma('Nível 4A')
         r = self._post_criar(turma=str(turma.id), nome_completo='Ana A1', data_nascimento='2020-01-01')

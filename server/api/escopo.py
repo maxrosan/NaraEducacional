@@ -299,44 +299,6 @@ def professor_vinculado_turma(usuario, turma_id) -> bool:
     return UsuarioTurma.objects.filter(usuario=usuario, turma_id=turma_id).exists()
 
 
-# Quem pode ser vinculado a uma turma. Coordenador entra porque o front antigo
-# também o aceitava como responsável pela turma.
-NIVEIS_VINCULAVEIS_TURMA = (
-    'professor_infantil', 'professor_fundamental', 'professor_especialista', 'coordenador',
-)
-
-
-def validar_professores_turma(escola_id, usuario_ids, ja_vinculados=()):
-    """Confere os usuários que vão ficar vinculados a uma turma da `escola_id`.
-
-    Retorna `(usuarios, erro)`, onde `erro` é uma mensagem (str) ou None.
-
-    Quem JÁ está vinculado é mantido sem nova checagem (mesmo que tenha sido
-    desativado depois): salvar a turma não pode desfazer um vínculo sem querer.
-    Quem é NOVO precisa ser da mesma escola, estar ativo e ter nível vinculável.
-    """
-    ids = {str(i) for i in usuario_ids}
-    ja = {str(i) for i in ja_vinculados}
-    try:
-        usuarios = list(Usuario.objects.filter(id__in=ids))
-    except (DjangoValidationError, ValueError):
-        return [], 'Lista de professores inválida.'
-
-    if len(usuarios) != len(ids):
-        return [], 'Um ou mais professores não foram encontrados.'
-
-    for u in usuarios:
-        if str(u.id) in ja:
-            continue
-        if u.escola_id != escola_id:
-            return [], f'{u.nome} não pertence à escola da turma.'
-        if not u.is_active:
-            return [], f'{u.nome} está inativo e não pode ser vinculado.'
-        if u.nivel not in NIVEIS_VINCULAVEIS_TURMA:
-            return [], f'{u.nome} não tem um perfil que possa ser vinculado a turmas.'
-    return usuarios, None
-
-
 def dono_ou_gestao(user, obj, campo_dono='professor_id') -> bool:
     """Editar/apagar um registro: gestão pode qualquer um do escopo; os demais,
     só os próprios (`campo_dono` aponta o autor: professor_id, usuario_especialista_id...)."""
@@ -405,3 +367,57 @@ def resolver_escola_painel(request):
     if not pode_ver_escola(user, escola):
         return None, _erro('Escola não pertence à sua instituição.', status.HTTP_403_FORBIDDEN)
     return escola.id, None
+
+
+# Quem pode ser vinculado a uma turma. Coordenador entra porque o front antigo
+# também o aceitava como responsável pela turma.
+NIVEIS_VINCULAVEIS_TURMA = (
+    'professor_infantil', 'professor_fundamental', 'professor_especialista', 'coordenador',
+)
+
+# Regra herdada do legado: só professor_fundamental é vinculado a disciplinas
+# (educação infantil não trabalha com disciplinas separadas).
+NIVEIS_VINCULAVEIS_DISCIPLINA = ('professor_fundamental',)
+
+
+def _validar_vinculados(escola_id, usuario_ids, ja_vinculados, niveis, destino):
+    """Confere os usuários que vão ficar vinculados a um registro da `escola_id`
+    (turma ou disciplina). Retorna `(usuarios, erro)`; `erro` é str ou None.
+
+    Quem JÁ está vinculado é mantido sem nova checagem (mesmo que tenha sido
+    desativado ou mudado de nível depois): salvar o registro não pode desfazer
+    um vínculo sem querer. Quem é NOVO precisa ser da mesma escola, estar ativo
+    e ter um dos `niveis`.
+    """
+    ids = {str(i) for i in usuario_ids}
+    ja = {str(i) for i in ja_vinculados}
+    try:
+        usuarios = list(Usuario.objects.filter(id__in=ids))
+    except (DjangoValidationError, ValueError):
+        return [], 'Lista de professores inválida.'
+
+    if len(usuarios) != len(ids):
+        return [], 'Um ou mais professores não foram encontrados.'
+
+    for u in usuarios:
+        if str(u.id) in ja:
+            continue
+        if u.escola_id != escola_id:
+            return [], f'{u.nome} não pertence à escola da {destino}.'
+        if not u.is_active:
+            return [], f'{u.nome} está inativo e não pode ser vinculado.'
+        if u.nivel not in niveis:
+            return [], f'{u.nome} não tem um perfil que possa ser vinculado a {destino}s.'
+    return usuarios, None
+
+
+def validar_professores_turma(escola_id, usuario_ids, ja_vinculados=()):
+    """Ver `_validar_vinculados`. Níveis: NIVEIS_VINCULAVEIS_TURMA."""
+    return _validar_vinculados(escola_id, usuario_ids, ja_vinculados, NIVEIS_VINCULAVEIS_TURMA, 'turma')
+
+
+def validar_professores_disciplina(escola_id, usuario_ids, ja_vinculados=()):
+    """Ver `_validar_vinculados`. Níveis: NIVEIS_VINCULAVEIS_DISCIPLINA."""
+    return _validar_vinculados(
+        escola_id, usuario_ids, ja_vinculados, NIVEIS_VINCULAVEIS_DISCIPLINA, 'disciplina',
+    )

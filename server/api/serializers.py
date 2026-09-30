@@ -7,7 +7,7 @@ from django.utils import timezone
 from rest_framework import serializers
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 
-from .escopo import validar_professores_turma
+from .escopo import validar_professores_disciplina, validar_professores_turma
 
 from .models import (
     Usuario, Instituicao, Escola, Especialista, Turma, UsuarioTurma,
@@ -21,6 +21,21 @@ from .models import (
     Ticket, RespostaTicket, AnexoTicket, LogAuditoria, PermissaoUsuario,
     TemplateDocumento, Contrato, PromptCategoria, PromptTemplate,
 )
+
+
+def _mesmo_nome(a, b):
+    """Compara nomes sem diferenciar maiúsculas, inclusive acentuadas.
+
+    Feito no Python (casefold) e não com `__iexact`: no Postgres o iexact vira
+    UPPER(), que depende do locale do banco; no locale "C" o UPPER não converte
+    letras acentuadas ('Á' ≠ UPPER('á')). As queries que chamam isto já filtram
+    por escola (e ano/nascimento), então sobram poucos registros.
+    """
+    return (a or '').strip().casefold() == (b or '').strip().casefold()
+
+
+def _primeiro_com_nome(queryset, campo, nome):
+    return next((obj for obj in queryset if _mesmo_nome(getattr(obj, campo), nome)), None)
 
 
 def _sincronizar_professores(turma, usuarios):
@@ -110,9 +125,8 @@ class TurmaSerializer(serializers.ModelSerializer):
         """
         if self.instance is None:
             return True
-        nome = self._valor(attrs, 'nome')
         return (
-            nome.casefold() != (self.instance.nome or '').casefold()
+            not _mesmo_nome(self._valor(attrs, 'nome'), self.instance.nome)
             or self._valor(attrs, 'ano_letivo') != self.instance.ano_letivo
         )
 
@@ -122,12 +136,10 @@ class TurmaSerializer(serializers.ModelSerializer):
         # Sem constraint no banco: esta checagem é a regra. A view trava a linha
         # da escola durante validação + save para não haver corrida.
         # _base_manager: sem recorte de tenant; o filtro por escola já delimita.
-        existentes = Turma._base_manager.filter(
-            escola_id=escola_id, ano_letivo=ano, nome__iexact=nome,
-        )
+        existentes = Turma._base_manager.filter(escola_id=escola_id, ano_letivo=ano)
         if self.instance is not None:
             existentes = existentes.exclude(pk=self.instance.pk)
-        existente = existentes.first()
+        existente = _primeiro_com_nome(existentes, 'nome', nome)
         if existente is None:
             return
         mensagem = f'Já existe a turma "{existente.nome}" nesta escola em {ano}.'
@@ -207,13 +219,131 @@ class TurmaListaSerializer(serializers.ModelSerializer):
         read_only_fields = fields
 
 
+def _sincronizar_professores_disciplina(disciplina, usuarios):
+    """Deixa a disciplina vinculada exatamente a `usuarios`."""
+    desejados = {u.id for u in usuarios}
+    vinculos = UsuarioDisciplina.objects.filter(disciplina=disciplina)
+    atuais = set(vinculos.values_list('usuario_id', flat=True))
+    vinculos.exclude(usuario_id__in=desejados).delete()
+    UsuarioDisciplina.objects.bulk_create([
+        UsuarioDisciplina(
+            disciplina=disciplina, usuario=u,
+            escola_id=disciplina.escola_id, instituicao_id=disciplina.instituicao_id,
+        )
+        for u in usuarios if u.id not in atuais
+    ])
+
+
 class DisciplinaSerializer(serializers.ModelSerializer):
+    """
+    Cadastro de disciplina (mesmo padrão do TurmaSerializer).
+
+    Criação: a view passa `context={'escola_id': ...}`, porque `escola` é
+    read_only e as checagens de nome e de professores dependem dela.
+
+    Nome único por escola sem diferenciar maiúsculas ("Matemática" =
+    "matemática"). O banco tem UniqueConstraint(escola, nome), mas ela
+    diferencia maiúsculas; a regra completa é esta checagem, e a view trava a
+    linha da escola durante validação + save.
+
+    `professores` (opcional, só escrita): ids de usuários. Quando enviada, os
+    vínculos passam a ser exatamente essa lista, na mesma transação.
+    """
     escola_nome = serializers.CharField(source='escola.nome', read_only=True)
+    professores = serializers.ListField(
+        child=serializers.UUIDField(), write_only=True, required=False,
+    )
 
     class Meta:
         model = Disciplina
-        fields = ['id', 'nome', 'ativo', 'escola', 'escola_nome', 'instituicao', 'criado_em']
+        fields = ['id', 'nome', 'ativo', 'escola', 'escola_nome', 'instituicao', 'professores', 'criado_em']
         read_only_fields = ['id', 'escola', 'instituicao', 'criado_em']
+
+    def _escola_id(self):
+        if self.instance is not None:
+            return self.instance.escola_id
+        return self.context.get('escola_id')
+
+    def validate(self, attrs):
+        escola_id = self._escola_id()
+        if escola_id and self._mudou_nome(attrs):
+            self._checar_nome_duplicado(escola_id, attrs['nome'])
+        if 'professores' in attrs:
+            attrs['professores'] = self._validar_professores(escola_id, attrs['professores'])
+        return attrs
+
+    def _mudou_nome(self, attrs):
+        """Na edição, só checa se o nome mudou (fora maiúsculas): uma disciplina
+        que já estava duplicada antes da regra continua editável."""
+        if 'nome' not in attrs:
+            return False
+        if self.instance is None:
+            return True
+        return not _mesmo_nome(attrs['nome'], self.instance.nome)
+
+    def _checar_nome_duplicado(self, escola_id, nome):
+        existentes = Disciplina._base_manager.filter(escola_id=escola_id)
+        if self.instance is not None:
+            existentes = existentes.exclude(pk=self.instance.pk)
+        existente = _primeiro_com_nome(existentes, 'nome', nome)
+        if existente is None:
+            return
+        mensagem = f'Já existe a disciplina "{existente.nome}" nesta escola.'
+        if not existente.ativo:
+            mensagem += ' Ela está desativada: reative-a na aba Inativas.'
+        raise serializers.ValidationError({'nome': [mensagem]})
+
+    def _validar_professores(self, escola_id, ids):
+        if escola_id is None:
+            raise serializers.ValidationError({'professores': ['Escola da disciplina não definida.']})
+        ja_vinculados = []
+        if self.instance is not None:
+            ja_vinculados = UsuarioDisciplina.objects.filter(
+                disciplina=self.instance,
+            ).values_list('usuario_id', flat=True)
+        usuarios, erro = validar_professores_disciplina(escola_id, ids, ja_vinculados)
+        if erro:
+            raise serializers.ValidationError({'professores': [erro]})
+        return usuarios
+
+    def create(self, validated_data):
+        professores = validated_data.pop('professores', None)
+        disciplina = super().create(validated_data)
+        if professores is not None:
+            _sincronizar_professores_disciplina(disciplina, professores)
+        return disciplina
+
+    def update(self, instance, validated_data):
+        professores = validated_data.pop('professores', None)
+        disciplina = super().update(instance, validated_data)
+        if professores is not None:
+            _sincronizar_professores_disciplina(disciplina, professores)
+        return disciplina
+
+
+class ProfessorDaDisciplinaSerializer(serializers.ModelSerializer):
+    """Vínculo resumido para a listagem de disciplinas."""
+    usuario_nome = serializers.CharField(source='usuario.nome', read_only=True)
+    usuario_nivel = serializers.CharField(source='usuario.nivel', read_only=True)
+
+    class Meta:
+        model = UsuarioDisciplina
+        fields = ['usuario', 'usuario_nome', 'usuario_nivel']
+
+
+class DisciplinaListaSerializer(serializers.ModelSerializer):
+    """
+    Linha da listagem paginada de disciplinas (só leitura), com os professores
+    embutidos. Depende da view fazer select_related('escola') e o Prefetch em
+    `professores_listagem` (ver views/disciplina.py::listar_disciplinas).
+    """
+    escola_nome = serializers.CharField(source='escola.nome', read_only=True)
+    professores = ProfessorDaDisciplinaSerializer(source='professores_listagem', many=True, read_only=True)
+
+    class Meta:
+        model = Disciplina
+        fields = ['id', 'nome', 'ativo', 'escola', 'escola_nome', 'professores']
+        read_only_fields = fields
 
 
 class UsuarioDisciplinaSerializer(serializers.ModelSerializer):
@@ -392,9 +522,8 @@ class AlunoSerializer(serializers.ModelSerializer):
         um par que já estava duplicado antes da regra continua editável."""
         if self.instance is None:
             return True
-        nome = self._valor(attrs, 'nome_completo') or ''
         return (
-            nome.casefold() != (self.instance.nome_completo or '').casefold()
+            not _mesmo_nome(self._valor(attrs, 'nome_completo'), self.instance.nome_completo)
             or self._valor(attrs, 'data_nascimento') != self.instance.data_nascimento
         )
 
@@ -407,13 +536,11 @@ class AlunoSerializer(serializers.ModelSerializer):
         if not nascimento:
             return
         existentes = Aluno._base_manager.filter(
-            escola_id=escola_id,
-            data_nascimento=nascimento,
-            nome_completo__iexact=self._valor(attrs, 'nome_completo'),
-        )
+            escola_id=escola_id, data_nascimento=nascimento,
+        ).select_related('turma')
         if self.instance is not None:
             existentes = existentes.exclude(pk=self.instance.pk)
-        existente = existentes.select_related('turma').first()
+        existente = _primeiro_com_nome(existentes, 'nome_completo', self._valor(attrs, 'nome_completo'))
         if existente is None:
             return
         mensagem = (

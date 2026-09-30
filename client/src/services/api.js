@@ -1087,6 +1087,46 @@ export async function desvincularProfessorTurma(turmaId, usuarioId) {
   return parseJsonOrThrow(response, 'desvincular professor da turma');
 }
 
+// ============================================================
+// Disciplinas
+// ============================================================
+
+/** Todas as disciplinas do escopo (array), ordenadas por escola e nome. Para selects. */
+export async function listarDisciplinas(filtros = {}) {
+  return getJson(comQuery('/disciplinas/', { ativo: filtros.ativo, escola: filtros.escola }), 'listar disciplinas');
+}
+
+/**
+ * Listagem paginada (tela de gestão de disciplinas). Cada disciplina já traz
+ * `professores` embutidos.
+ * @param {Object} filtros - { ativo: boolean, escola: uuid, busca, page, pageSize }
+ * @returns {Promise<{count, pagina, total_paginas, page_size, totais: {ativas, inativas}, results}>}
+ */
+export async function listarDisciplinasPaginado({ ativo, escola, busca, page = 1, pageSize } = {}) {
+  return getJson(
+    comQuery('/disciplinas/', { ativo, escola, busca, page, page_size: pageSize }),
+    'listar disciplinas',
+  );
+}
+
+/**
+ * Cria disciplina. Admin/superadmin: `escola` é obrigatória. Coordenador: a
+ * escola é sempre a dele. `professores` (opcional): ids de usuários
+ * professor_fundamental, gravados na mesma transação. Nome repetido na
+ * escola (sem diferenciar maiúsculas) → erro 400 em `nome`.
+ */
+export async function criarDisciplina(dados) {
+  return enviarJson('/disciplinas/criar/', 'POST', dados, 'criar disciplina');
+}
+
+/**
+ * Atualiza disciplina (PATCH parcial). Desativar: { ativo: false }.
+ * Com `professores`, os vínculos passam a ser exatamente essa lista; sem ele, não mudam.
+ */
+export async function atualizarDisciplina(disciplinaId, dados) {
+  return enviarJson(`/disciplinas/${disciplinaId}/atualizar/`, 'PATCH', dados, 'atualizar disciplina');
+}
+
 // =============================================================================
 // PRODUÇÕES — ALTERADO: /producoes-criancas/ → /producoes/
 // =============================================================================
