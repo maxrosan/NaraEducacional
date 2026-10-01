@@ -6,7 +6,8 @@ Uso (a partir da pasta do projeto, no host):
 Idempotente: pode rodar várias vezes. Tudo é buscado por chave natural
 (nome, e-mail, escola+nome...) e criado/atualizado. Nomes de alunos e de
 funcionários são gerados com random "semeado", então saem SEMPRE iguais.
-As senhas são redefinidas a cada execução.
+As senhas e as frequências de registro das turmas são redefinidas a cada
+execução (alterações feitas pela tela Registros voltam ao valor do seed).
 
 Compatível com o seed antigo: Rede Alfa/Beta, Escola Alfa 1/Beta 1, Nível 3A e
 os e-mails admin.alfa, coord.alfa, prof.alfa (idem beta) continuam existindo.
@@ -33,6 +34,14 @@ Casos de borda propositais (para enxergar as regras de negócio)
 * Nível 3A do ano anterior . turma inativa com alunos inativos (Alfa 1)
 * Música (Alfa 1) .......... disciplina inativa
 * Alunos transferidos/inativos nas turmas maiores; alguns com observações (AEE)
+
+Frequência de registro (tela Registros)
+---------------------------------------
+* Alfa 1 .................. as três frequências, em turmas fixas (ver REDES)
+* Beta 2 .................. escola inteira quinzenal (frequência da escola)
+* demais escolas .......... sorteio com semente: ~50% semanal, ~30% quinzenal,
+                            ~20% mensal (sempre o mesmo resultado)
+* Precedência: frequência da turma > frequência da escola > sorteio
 """
 import os
 import random
@@ -104,6 +113,9 @@ PERIODOS = {  # (mês, dia) de início e fim de cada período
 }
 NOME_PERIODO = {'bimestral': 'Bimestre', 'trimestral': 'Trimestre', 'semestral': 'Semestre'}
 
+FREQUENCIAS = [valor for valor, _ in Turma.FREQUENCIAS_REGISTRO]
+PESOS_FREQUENCIA = {'semanal': 50, 'quinzenal': 30, 'mensal': 20}
+
 DISC_EF = ['Língua Portuguesa', 'Matemática', 'Ciências', 'História', 'Geografia',
            'Arte', 'Educação Física', 'Língua Inglesa']
 DISC_EI = ['Música', 'Educação Física', 'Língua Inglesa']
@@ -118,9 +130,12 @@ def slug(txt):
     return slugify(txt.replace('º', '').replace('Escola', '')).replace('-', '')
 
 
-def T(nome, idade, turno='manha', alunos=None, ano=ANO, ativa=True):
-    """Turma. idade = idade das crianças em 31/03 do ano letivo."""
+def T(nome, idade, turno='manha', alunos=None, ano=ANO, ativa=True, frequencia=None):
+    """Turma. idade = idade das crianças em 31/03 do ano letivo.
+    frequencia = frequência de registro; None -> a da escola ou sorteada."""
+    assert frequencia in (None, *FREQUENCIAS), frequencia
     return dict(nome=nome, idade=idade, turno=turno, alunos=alunos, ano=ano, ativa=ativa,
+                frequencia=frequencia,
                 etapa='educacao_infantil' if idade <= 5 else 'ensino_fundamental')
 
 
@@ -153,10 +168,15 @@ REDES = [
                 coordenadores=['coord.alfa', 'coord2.alfa1'],
                 disciplinas=DISC_EF, disciplinas_inativas=['Música'],
                 turmas=[
-                    T('Nível 2A', 2, 'integral'), T('Nível 3A', 3, 'manha'),
-                    T('Nível 3B', 3, 'tarde'), T('Nível 4A', 4), T('Nível 5A', 5, 'tarde'),
-                    T('1º Ano A', 6), T('2º Ano A', 7), T('3º Ano A', 8, 'tarde'),
-                    T('Nível 3A', 3, ano=ANO - 1, ativa=False, alunos=5),
+                    T('Nível 2A', 2, 'integral', frequencia='semanal'),
+                    T('Nível 3A', 3, 'manha', frequencia='semanal'),
+                    T('Nível 3B', 3, 'tarde', frequencia='quinzenal'),
+                    T('Nível 4A', 4, frequencia='semanal'),
+                    T('Nível 5A', 5, 'tarde', frequencia='mensal'),
+                    T('1º Ano A', 6, frequencia='quinzenal'),
+                    T('2º Ano A', 7, frequencia='quinzenal'),
+                    T('3º Ano A', 8, 'tarde', frequencia='mensal'),
+                    T('Nível 3A', 3, ano=ANO - 1, ativa=False, alunos=5, frequencia='mensal'),
                 ],
                 professores=[
                     P('prof.alfa', 'professor_infantil', ['Nível 3A', 'Nível 3B']),
@@ -203,7 +223,7 @@ REDES = [
                 ],
             ),
             dict(
-                nome='Escola Beta 2', tipo='filial', ativa=True,
+                nome='Escola Beta 2', tipo='filial', ativa=True, frequencia='quinzenal',
                 coordenadores=['coord.beta2'], disciplinas=DISC_EF,
                 turmas=[T('1º Ano A', 6), T('1º Ano B', 6, 'tarde'), T('2º Ano A', 7),
                         T('4º Ano A', 9), T('5º Ano A', 10, 'tarde', alunos=12)],
@@ -324,6 +344,16 @@ def professores_auto(esc_cfg):
     return profs
 
 
+def frequencia_turma(esc_cfg, t):
+    """Turma > escola > sorteio com semente (mesmo resultado a cada execução)."""
+    if t['frequencia']:
+        return t['frequencia']
+    if esc_cfg.get('frequencia'):
+        return esc_cfg['frequencia']
+    rng = random.Random(f"frequencia|{esc_cfg['nome']}|{t['nome']}|{t['ano']}")
+    return rng.choices(FREQUENCIAS, weights=[PESOS_FREQUENCIA[f] for f in FREQUENCIAS])[0]
+
+
 def criar_alunos(turma, t, esc, inst, usados, ddd):
     rng = random.Random(f"{esc.nome}|{t['nome']}|{t['ano']}")
     n = t['alunos'] or rng.randint(6, 10)
@@ -383,19 +413,25 @@ def criar_escola(inst, rede, idx_rede, idx_esc, cfg):
 
     # Turmas + alunos
     turmas, usados, total_alunos = {}, set(), 0
+    por_frequencia = dict.fromkeys(FREQUENCIAS, 0)
     for ordem, t in enumerate(cfg['turmas']):
         faixa = f"{t['idade']} ano" if t['idade'] == 1 else f"{t['idade']} anos"
+        frequencia = frequencia_turma(cfg, t)
         turma, _ = Turma.objects.update_or_create(
             nome=t['nome'], escola=esc, ano_letivo=str(t['ano']),
             defaults=dict(
                 instituicao=inst, turno=t['turno'], ativa=t['ativa'], etapa=t['etapa'],
                 faixa_etaria=faixa, ordem=ordem, idade_min=t['idade'], idade_max=t['idade'],
+                frequencia_registro=frequencia,
             ),
         )
+        if t['ativa']:
+            por_frequencia[frequencia] += 1
         if t['ano'] == ANO:
             turmas[t['nome']] = turma
         total_alunos += criar_alunos(turma, t, esc, inst, usados, rede['ddd'])
     print(f"    turmas: {len(cfg['turmas'])} | alunos: {total_alunos} | disciplinas: {len(disciplinas)}")
+    print('    frequência (ativas): ' + ' | '.join(f'{f}: {n}' for f, n in por_frequencia.items()))
 
     # Pessoas
     for local in cfg['coordenadores']:

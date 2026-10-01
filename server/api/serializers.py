@@ -70,7 +70,7 @@ class TurmaSerializer(serializers.ModelSerializer):
         model = Turma
         fields = [
             'id', 'nome', 'faixa_etaria', 'turno', 'ano_letivo', 'ativa',
-            'etapa', 'ordem', 'idade_min', 'idade_max',
+            'etapa', 'ordem', 'idade_min', 'idade_max', 'frequencia_registro',
             'escola', 'escola_nome', 'instituicao', 'professores',
             'criado_em', 'atualizado_em',
         ]
@@ -213,10 +213,48 @@ class TurmaListaSerializer(serializers.ModelSerializer):
         model = Turma
         fields = [
             'id', 'nome', 'faixa_etaria', 'turno', 'ano_letivo', 'ativa',
-            'etapa', 'ordem', 'idade_min', 'idade_max',
+            'etapa', 'ordem', 'idade_min', 'idade_max', 'frequencia_registro',
             'escola', 'escola_nome', 'professores',
         ]
         read_only_fields = fields
+
+
+class TurmaFrequenciaSerializer(serializers.ModelSerializer):
+    """Linha da tela Registros (só leitura). Enxuto de propósito: sem
+    professores nem campos de cadastro. Depende da view fazer
+    select_related('escola') e .only() nestes campos
+    (ver views/turma.py::listar_frequencias_registro)."""
+    escola_nome = serializers.CharField(source='escola.nome', read_only=True)
+
+    class Meta:
+        model = Turma
+        fields = [
+            'id', 'nome', 'turno', 'ano_letivo', 'etapa', 'ativa',
+            'escola', 'escola_nome', 'frequencia_registro',
+        ]
+        read_only_fields = fields
+
+
+class AtualizarFrequenciaSerializer(serializers.Serializer):
+    """Body do PATCH /turmas/frequencia-registro/atualizar/.
+
+    Informe UM dos alvos:
+      turmas: [uuid, ...]  — as turmas indicadas (máx. 200)
+      escola: uuid         — todas as turmas ATIVAS da escola
+    """
+    LIMITE_TURMAS = 200
+
+    frequencia_registro = serializers.ChoiceField(choices=Turma.FREQUENCIAS_REGISTRO)
+    turmas = serializers.ListField(
+        child=serializers.UUIDField(), required=False, allow_empty=False,
+        max_length=LIMITE_TURMAS,
+    )
+    escola = serializers.UUIDField(required=False)
+
+    def validate(self, attrs):
+        if bool(attrs.get('turmas')) == bool(attrs.get('escola')):
+            raise serializers.ValidationError('Informe `turmas` ou `escola` (apenas um dos dois).')
+        return attrs
 
 
 def _sincronizar_professores_disciplina(disciplina, usuarios):

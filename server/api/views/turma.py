@@ -4,6 +4,7 @@ from django.core.exceptions import ValidationError
 from django.core.paginator import Paginator
 from django.db import transaction
 from django.db.models import Count, F, Prefetch, Q
+from django.utils import timezone
 from rest_framework import status
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import IsAuthenticated
@@ -14,10 +15,14 @@ from api.escopo import (
     validar_professores_turma,
 )
 from api.models import Escola, Turma, Usuario, UsuarioTurma
-from api.serializers import TurmaListaSerializer, TurmaSerializer, UsuarioTurmaSerializer
+from api.serializers import (
+    AtualizarFrequenciaSerializer, TurmaFrequenciaSerializer, TurmaListaSerializer,
+    TurmaSerializer, UsuarioTurmaSerializer,
+)
 
 TURMAS_POR_PAGINA = 10
 TURMAS_POR_PAGINA_MAX = 50
+
 
 def _turma_nao_encontrada():
     return Response({'error': 'Turma não encontrada.'}, status=status.HTTP_404_NOT_FOUND)
@@ -238,3 +243,120 @@ def desvincular_professor_turma(request, turma_id, usuario_id):
         return Response({'error': 'Vínculo não encontrado.'}, status=status.HTTP_404_NOT_FOUND)
 
     return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+# =============================================================================
+# Frequência de registro (tela Registros do admin/coordenador)
+# =============================================================================
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def listar_frequencias_registro(request):
+    """
+    GET /turmas/frequencia-registro/ — tela "Registros" do admin/coordenador.
+    Recortado pelo TenantManager como a listagem de turmas.
+
+    Query params (todos opcionais):
+      ativa=true|false   padrão: true (inativas não recebem registro)
+      escola=<uuid>      filtra por escola (fora do escopo/malformado → vazio)
+      frequencia=<valor> semanal | quinzenal | mensal (valor inválido → vazio)
+      busca=<texto>      parte do nome da turma
+      page=<n>           padrão 1 (fora do intervalo → última)
+      page_size=<n>      padrão 10, máximo 50
+
+    Resposta:
+      {
+        "count": 37, "pagina": 1, "total_paginas": 4, "page_size": 10,
+        "totais": {"semanal": 20, "quinzenal": 15, "mensal": 2},
+        "results": [ ...TurmaFrequenciaSerializer... ]
+      }
+
+    `totais` respeita escola/ativa/busca, mas não o filtro de frequência (é
+    o resumo mostrado acima da tabela). Custo fixo: 3 queries (count, página,
+    totais), sem professores nem campos de cadastro.
+    """
+    ativa = _param_bool(request.query_params.get('ativa'))
+    base = filtrar_por(Turma.objects.all(), request, 'escola', Escola, 'escola')
+    base = base.filter(ativa=True if ativa is None else ativa)
+
+    busca = (request.query_params.get('busca') or '').strip()
+    if busca:
+        base = base.filter(nome__icontains=busca)
+
+    turmas = base
+    frequencia = request.query_params.get('frequencia')
+    if frequencia:
+        validas = {valor for valor, _ in Turma.FREQUENCIAS_REGISTRO}
+        turmas = turmas.filter(frequencia_registro=frequencia) if frequencia in validas else turmas.none()
+
+    turmas = (
+        turmas.select_related('escola')
+        .only(
+            'id', 'nome', 'turno', 'ano_letivo', 'etapa', 'ativa',
+            'frequencia_registro', 'escola_id', 'escola__nome',
+        )
+        .order_by('escola__nome', F('ordem').asc(nulls_last=True), 'nome', 'id')
+    )
+
+    page_size = _param_int(
+        request.query_params.get('page_size'),
+        TURMAS_POR_PAGINA, 1, TURMAS_POR_PAGINA_MAX,
+    )
+    pagina = Paginator(turmas, page_size).get_page(request.query_params.get('page'))
+
+    totais = base.aggregate(**{
+        valor: Count('id', filter=Q(frequencia_registro=valor))
+        for valor, _ in Turma.FREQUENCIAS_REGISTRO
+    })
+    totais = {chave: valor or 0 for chave, valor in totais.items()}
+
+    return Response({
+        'count': pagina.paginator.count,
+        'pagina': pagina.number,
+        'total_paginas': pagina.paginator.num_pages,
+        'page_size': page_size,
+        'totais': totais,
+        'results': TurmaFrequenciaSerializer(pagina.object_list, many=True).data,
+    })
+
+
+@api_view(['PATCH'])
+@permission_classes([IsAuthenticated])
+def atualizar_frequencia_registro(request):
+    """
+    PATCH /turmas/frequencia-registro/atualizar/
+
+    Body (um dos alvos):
+      {"frequencia_registro": "quinzenal", "turmas": ["<uuid>", ...]}
+      {"frequencia_registro": "quinzenal", "escola": "<uuid>"}   # todas as ativas da escola
+
+    Tudo ou nada: se alguma turma da lista não existir ou estiver fora do
+    escopo do usuário, nada é alterado e a resposta é 404 (sem dizer qual,
+    para não revelar turmas de outra rede).
+
+    Um único UPDATE, sem passar pelo TurmaSerializer: aqui não há nada para
+    validar além da frequência, e evita o lock por escola do cadastro.
+    `.update()` não dispara auto_now, por isso `atualizado_em` vai explícito.
+
+    Resposta: {"atualizadas": n, "frequencia_registro": "quinzenal"}
+    """
+    if not pode_gerenciar(request.user):
+        return Response({'error': 'Sem permissão.'}, status=status.HTTP_403_FORBIDDEN)
+
+    entrada = AtualizarFrequenciaSerializer(data=request.data)
+    entrada.is_valid(raise_exception=True)
+    frequencia = entrada.validated_data['frequencia_registro']
+
+    if entrada.validated_data.get('escola'):
+        escola = buscar_no_escopo(Escola, entrada.validated_data['escola'])
+        if escola is None:
+            return Response({'error': 'Escola não encontrada.'}, status=status.HTTP_404_NOT_FOUND)
+        alvo = Turma.objects.filter(escola=escola, ativa=True)
+    else:
+        ids = set(entrada.validated_data['turmas'])
+        alvo = Turma.objects.filter(pk__in=ids)
+        if alvo.count() != len(ids):
+            return _turma_nao_encontrada()
+
+    atualizadas = alvo.update(frequencia_registro=frequencia, atualizado_em=timezone.now())
+    return Response({'atualizadas': atualizadas, 'frequencia_registro': frequencia})

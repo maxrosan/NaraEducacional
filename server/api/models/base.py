@@ -206,6 +206,13 @@ class Turma(models.Model):
         ('educacao_infantil', 'Educação Infantil'),
         ('ensino_fundamental', 'Ensino Fundamental'),
     ]
+    # De quanto em quanto tempo a professora deve registrar a turma.
+    # Substitui a tabela `configuracoes_registro` do sistema antigo (1:1 com turma).
+    FREQUENCIAS_REGISTRO = [
+        ('semanal', 'Semanal'),
+        ('quinzenal', 'Quinzenal'),
+        ('mensal', 'Mensal'),
+    ]
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     nome = models.CharField(max_length=100)
@@ -217,6 +224,9 @@ class Turma(models.Model):
     ordem = models.IntegerField(null=True, blank=True)
     idade_min = models.IntegerField(null=True, blank=True)
     idade_max = models.IntegerField(null=True, blank=True)
+    frequencia_registro = models.CharField(
+        max_length=20, choices=FREQUENCIAS_REGISTRO, default='semanal',
+    )
     escola = models.ForeignKey('Escola', on_delete=models.CASCADE, related_name='turmas')
     instituicao = models.ForeignKey('Instituicao', on_delete=models.CASCADE, related_name='turmas')
     criado_em = models.DateTimeField(auto_now_add=True)

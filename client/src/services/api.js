@@ -1,18 +1,5 @@
 import * as Sentry from "@sentry/react";
 
-/*
- * src/services/api.js — alinhado ao backend multi-tenant.
- *
- * Marcadores usados neste arquivo:
- *   ALTERADO   — rota, método, parâmetro ou payload ajustado ao backend novo.
- *   VERIFICAR  — mapeamento provável; confirmar o formato da resposta na tela que usa.
- *   REMOVIDO   — o backend não tem mais o endpoint. A função continua exportada
- *                (para não quebrar imports), mas lança EndpointRemovidoError.
- */
-
-// Usa variável de ambiente com fallback inteligente para desenvolvimento/produção
-// Em desenvolvimento, usa proxy do Vite (caminho relativo /api)
-// Em produção, usa URL completa definida em VITE_API_BASE_URL
 const getApiBaseUrl = () => {
   const envUrl = import.meta.env.VITE_API_BASE_URL;
   if (envUrl && envUrl.trim() !== '') {
@@ -23,23 +10,8 @@ const getApiBaseUrl = () => {
 
 export const API_BASE_URL = getApiBaseUrl();
 
-/*
- * Cabeçalhos que toda chamada à API leva.
- *
- * `ngrok-skip-browser-warning`: quando a aplicação é servida por um túnel
- * ngrok gratuito, o ngrok intercepta requisições com User-Agent de navegador e
- * devolve a página "You are about to visit…" — inclusive nos fetch de API, que
- * então recebem HTML no lugar de JSON e falham em silêncio. O header desliga
- * essa tela. Fora do túnel é um header desconhecido e é ignorado.
- */
 export const HEADERS_PADRAO = { 'ngrok-skip-browser-warning': '1' };
 
-// =============================================================================
-// Tokens JWT (ALTERADO)
-// =============================================================================
-// O backend autentica por `Authorization: Bearer <access>` (TenantJWTAuthentication).
-// É esse header que define o tenant (instituição/escola) da requisição.
-// VERIFICAR: alinhar as chaves abaixo com onde o login (AuthContext) grava os tokens.
 const CHAVE_ACCESS = 'access_token';
 const CHAVE_REFRESH = 'refresh_token';
 
@@ -51,7 +23,6 @@ export function getRefreshToken() {
   return localStorage.getItem(CHAVE_REFRESH);
 }
 
-/** Chamar após POST auth/login/ (resposta traz `access` e `refresh`). */
 export function salvarTokens({ access, refresh }) {
   if (access) localStorage.setItem(CHAVE_ACCESS, access);
   if (refresh) localStorage.setItem(CHAVE_REFRESH, refresh);
@@ -62,12 +33,6 @@ export function limparTokens() {
   localStorage.removeItem(CHAVE_REFRESH);
 }
 
-/*
- * Refresh com rotação: o backend usa ROTATE_REFRESH_TOKENS + BLACKLIST_AFTER_ROTATION,
- * então cada refresh devolve um NOVO refresh token e invalida o anterior. Por isso
- * só pode haver um refresh em andamento por vez (várias chamadas com 401 simultâneas
- * esperam a mesma promise) e o novo par precisa ser salvo.
- */
 let refreshEmAndamento = null;
 
 async function renovarAccessToken() {
@@ -96,7 +61,6 @@ async function renovarAccessToken() {
   }
 }
 
-/** Disparado quando a sessão expira de vez. O AuthContext deve ouvir e mandar para o login. */
 export const EVENTO_SESSAO_EXPIRADA = 'auth:sessao-expirada';
 
 function montarHeaders(options) {
@@ -113,13 +77,6 @@ function montarHeaders(options) {
   return headers;
 }
 
-/**
- * Wrapper do fetch que envia o JWT e, num 401, tenta renovar o token uma vez
- * e repetir a requisição.
- *
- * ALTERADO: antes enviava cookie de sessão + X-CSRFToken. Com JWT, CSRF não se
- * aplica e `credentials: 'include'` deixa de ser necessário.
- */
 export async function authFetch(url, options = {}) {
   const method = (options.method || 'GET').toUpperCase();
 
@@ -151,10 +108,6 @@ export async function authFetch(url, options = {}) {
   }
 }
 
-/**
- * Erros de validação do DRF vêm por campo: { nome_completo: ["..."], telefone: ["..."] }.
- * Junta as mensagens num texto só, para telas que mostram `error.message`.
- */
 function mensagensDeCampo(data) {
   if (!data || typeof data !== 'object' || Array.isArray(data)) return null;
   const mensagens = Object.values(data)
@@ -168,7 +121,6 @@ async function parseJsonOrThrow(response, contexto) {
   try {
     data = await response.json();
   } catch (_) {
-    /* resposta sem corpo JSON */
   }
   if (!response.ok) {
     const mensagem = (data && (data.error || data.detail || mensagensDeCampo(data)))
@@ -218,13 +170,6 @@ function endpointRemovido(nome) {
   return Promise.reject(err);
 }
 
-/*
- * Nomes de campo: o front antigo usa `crianca_id`, `turma_id`, `perfil`...; o
- * backend novo usa `aluno`, `turma`, `nivel` (FKs sem sufixo _id).
- * `traduzirPayload` converte o que o front ENVIA; `adicionarAliases` acrescenta
- * os nomes antigos ao que o backend DEVOLVE, para as telas continuarem lendo
- * `registro.turma_id` enquanto não são migradas. Usados também pelo apiClient.
- */
 const CAMPOS_ANTIGOS_PARA_NOVOS = {
   crianca_id: 'aluno',
   id_crianca: 'aluno',
@@ -252,12 +197,6 @@ const ALIASES_DE_RESPOSTA = {
   nivel: ['perfil'],
 };
 
-/**
- * Renomeia campos antigos para os do backend. Escola e instituição são
- * mantidas (renomeadas): admin e superadmin PRECISAM informar a escola ao
- * criar turma/projeto/pergunta; para coordenador e professor o backend ignora
- * o valor e usa a escola do próprio usuário.
- */
 export function traduzirPayload(dados = {}) {
   if (!dados || typeof dados !== 'object' || Array.isArray(dados)) return dados;
   const saida = {};
@@ -269,7 +208,6 @@ export function traduzirPayload(dados = {}) {
   return saida;
 }
 
-/** Acrescenta os nomes antigos (turma_id, crianca_id...) a um registro vindo do backend. */
 export function adicionarAliases(registro) {
   if (!registro || typeof registro !== 'object' || Array.isArray(registro)) return registro;
   const saida = { ...registro };
@@ -283,10 +221,6 @@ export function adicionarAliases(registro) {
   return saida;
 }
 
-/**
- * Usuário do backend (`nivel`, `nome`, `escola`...) no formato que as telas
- * antigas esperam (`perfil`, `user_metadata.full_name`, `escola_id`...).
- */
 export function normalizarUsuario(u) {
   if (!u) return null;
   return {
@@ -296,12 +230,6 @@ export function normalizarUsuario(u) {
 }
 
 export const apiService = {
-  // ── Leitura ─────────────────────────────────────────────────────────
-
-  /**
-   * Inicia uma análise de leitura no NaraNN.
-   * @param {FormData} formData — campos: audio (Blob), crianca_id, turma_id (opcional)
-   */
   async iniciarAnaliseLeitura(formData) {
     const response = await authFetch(`${API_BASE_URL}/leitura/analisar/`, {
       method: 'POST',
@@ -310,29 +238,19 @@ export const apiService = {
     return parseJsonOrThrow(response, 'iniciar análise de leitura');
   },
 
-  /** Consulta o status atual da análise (probabilidades + classe predita). */
   async consultarAnaliseLeitura(registroId) {
     return getJson(`/leitura/${registroId}/status/`, 'consultar análise de leitura');
   },
 
-  /**
-   * Confirma a classe escolhida pela professora e salva o áudio no S3.
-   * @param {{ classe_escolhida: string, anotacoes_professora?: string }} payload
-   */
   async confirmarAnaliseLeitura(registroId, payload) {
     return enviarJson(`/leitura/${registroId}/confirmar/`, 'POST', payload, 'confirmar análise de leitura');
   },
 
-  /** Cancela um registro pendente (apaga áudio em cache + job no NaraNN). */
   async cancelarAnaliseLeitura(registroId) {
     const response = await authFetch(`${API_BASE_URL}/leitura/${registroId}/`, { method: 'DELETE' });
     return parseJsonOrThrow(response, 'cancelar análise de leitura');
   },
 
-  /**
-   * Lista análises de leitura confirmadas para uma criança no período informado.
-   * @param {{ criancaId: string, dataInicio?: string, dataFim?: string }} params
-   */
   async listarAnalisesLeitura({ criancaId, dataInicio, dataFim } = {}) {
     if (!criancaId) throw new Error('criancaId é obrigatório.');
     return getJson(
@@ -341,27 +259,15 @@ export const apiService = {
     );
   },
 
-  /**
-   * Exclui definitivamente uma análise de leitura (qualquer status).
-   * Diferente do cancelamento (DELETE /leitura/<id>/), funciona também para
-   * registros confirmados — é o que o botão de exclusão do relatório usa.
-   */
   async deletarAnaliseLeitura(registroId) {
     const response = await authFetch(`${API_BASE_URL}/leitura/${registroId}/deletar/`, { method: 'DELETE' });
     return parseJsonOrThrow(response, 'excluir análise de leitura');
   },
 
-  // ── Dispositivos gravadores (Cadastros → Dispositivos) ──────────────
-
-  /** Lista dispositivos (admin/coordenador: todos do escopo). */
   async listarDispositivos() {
     return getJson('/dispositivos/', 'listar dispositivos');
   },
 
-  /**
-   * Gera um código de pareamento (validade curta, uso único).
-   * @param {{professoraId?: string, turmaIds?: string[]}} params
-   */
   async gerarCodigoPareamento({ professoraId, turmaIds } = {}) {
     return enviarJson('/dispositivos/codigo/', 'POST', {
       ...(professoraId ? { professora_id: professoraId } : {}),
@@ -369,33 +275,20 @@ export const apiService = {
     }, 'gerar código de pareamento');
   },
 
-  /**
-   * Atualiza nome e/ou vínculo (professora, turmas) — não exige mexer no aparelho.
-   * @param {{nome?: string, professora_id?: string, turma_ids?: string[]}} dados
-   */
   async atualizarDispositivo(dispositivoId, dados) {
     return enviarJson(`/dispositivos/${dispositivoId}/`, 'PATCH', dados, 'atualizar dispositivo');
   },
 
-  /** Revoga o dispositivo: o token para de funcionar imediatamente. */
   async revogarDispositivo(dispositivoId) {
     const response = await authFetch(`${API_BASE_URL}/dispositivos/${dispositivoId}/revogar/`, { method: 'DELETE' });
     return parseJsonOrThrow(response, 'revogar dispositivo');
   },
 
-  /** Reativa um dispositivo revogado por engano (exige novo pareamento). */
   async reativarDispositivo(dispositivoId) {
     const response = await authFetch(`${API_BASE_URL}/dispositivos/${dispositivoId}/reativar/`, { method: 'POST' });
     return parseJsonOrThrow(response, 'reativar dispositivo');
   },
 
-  // ── Escrita / desenho ───────────────────────────────────────────────
-
-  /**
-   * Upload e análise de escrita.
-   * @param {Object} dadosAnalise - { nomeAluno, serieAluno, turmaId }
-   * @param {File} arquivo
-   */
   async uploadEAnaliseEscrita(dadosAnalise, arquivo) {
     const formData = new FormData();
     formData.append('arquivo', arquivo);
@@ -410,7 +303,6 @@ export const apiService = {
     return parseJsonOrThrow(response, 'upload e análise de escrita');
   },
 
-  /** Upload e análise de desenho. @param {FormData} formData */
   async uploadEAnaliseDesenho(formData) {
     const response = await authFetch(`${API_BASE_URL}/upload-desenho/`, {
       method: 'POST',
@@ -419,16 +311,10 @@ export const apiService = {
     return parseJsonOrThrow(response, 'upload e análise de desenho');
   },
 
-  /** REMOVIDO: versão antiga (só metadados). Use uploadEAnaliseEscrita. */
   async analiseDeEscrita() {
     return endpointRemovido('analise-escrita/');
   },
 
-  /**
-   * Atualiza a classificação de um registro de escrita/desenho quando a
-   * professora discorda da sugestão da IA (modal de confirmação).
-   * @param {'escrita'|'desenho'} tipo
-   */
   async atualizarClassificacaoRegistro(tipo, arquivoHash, classificacao) {
     return enviarJson('/registros/classificacao/', 'POST', {
       tipo,
@@ -437,81 +323,48 @@ export const apiService = {
     }, 'atualizar classificação');
   },
 
-  /**
-   * REMOVIDO: salvar-anotacoes/. As anotações passaram a ser campo do próprio
-   * registro — VERIFICAR se a tela pode usar PATCH registros-escrita/<id>/atualizar/.
-   */
   async salvarAnotacoesProfessora() {
     return endpointRemovido('salvar-anotacoes/');
   },
 
-  /** Lista registros de escrita (já recortados pelo tenant). */
   async listarRegistrosEscrita() {
     return getJson('/registros-escrita/', 'listar registros de escrita');
   },
 
-  /** Lista registros de desenho (já recortados pelo tenant). */
   async listarRegistrosDesenho() {
     return getJson('/registros-desenho/', 'listar registros de desenho');
   },
 
-  /**
-   * REMOVIDO: registros-aluno/<nome>/ (busca por nome). O backend novo identifica
-   * aluno por UUID; a tela precisa passar a trabalhar com o id do aluno.
-   */
   async buscarRegistrosPorAluno() {
     return endpointRemovido('registros-aluno/<nome>/');
   },
 
-  // ── Utilitários ─────────────────────────────────────────────────────
-
-  /** REMOVIDO: hello/. Use healthCheck. */
   async testarConexao() {
     return endpointRemovido('hello/');
   },
 
-  /** Health check da API (público, sem token). */
   async healthCheck() {
     const response = await fetch(`${API_BASE_URL}/health/`, { headers: HEADERS_PADRAO });
     return parseJsonOrThrow(response, 'health check');
   },
 
-  // ── Alertas → Notificações ──────────────────────────────────────────
-
-  /**
-   * Notificações do usuário logado (substituem mensagens da coordenação e alertas).
-   * Cada destinatário tem a própria cópia; `lido_em` nulo = não lida.
-   * @param {{ apenasNaoLidas?: boolean }} [opcoes]
-   * @returns {Promise<Array<{id, tipo, titulo, conteudo, lido_em, remetente, remetente_nome, criado_em}>>}
-   */
   async listarNotificacoes({ apenasNaoLidas = true } = {}) {
     return getJson(apenasNaoLidas ? '/notificacoes/?lidas=false' : '/notificacoes/', 'listar notificações');
   },
 
-  /** ALTERADO: alertas/ virou notificacoes/. Mantido como alias de listarNotificacoes. */
   async listarAlertas() {
     return apiService.listarNotificacoes({ apenasNaoLidas: true });
   },
 
-  /** REMOVIDO: alertas/detalhe/. As notificações já vêm completas na listagem. */
   async buscarDetalheAlerta() {
     return endpointRemovido('alertas/detalhe/');
   },
 
-  /** ALTERADO: marca notificação como lida (novo no backend). */
   async marcarNotificacaoLida(notificacaoId) {
     const response = await authFetch(`${API_BASE_URL}/notificacoes/${notificacaoId}/marcar-lida/`, { method: 'POST' });
     return parseJsonOrThrow(response, 'marcar notificação como lida');
   },
 
-  // ── Coordenação ─────────────────────────────────────────────────────
-
-  /**
-   * Agregados do painel da coordenação para um recorte de tempo (calculado ao vivo).
-   * `dataInicio`+`dataFim` (YYYY-MM-DD) têm precedência sobre `periodoId`.
-   * ALTERADO: admin/superadmin precisam informar `escolaId` (coordenador usa a própria escola).
-   * @param {{periodoId?: string, dataInicio?: string, dataFim?: string, escolaId?: string}} [recorte]
-   */
   async buscarCacheCoordenacao(recorte = {}) {
     const { periodoId, dataInicio, dataFim, escolaId } = recorte;
     const params = { escola_id: escolaId };
@@ -524,28 +377,14 @@ export const apiService = {
     return getJson(comQuery('/coordenacao/cache/', params), 'buscar indicadores da coordenação');
   },
 
-  /**
-   * Períodos avaliativos disponíveis no select da coordenação.
-   * ALTERADO: admin/superadmin precisam informar `escolaId`.
-   */
   async buscarPeriodosCoordenacao({ escolaId } = {}) {
     return getJson(comQuery('/coordenacao/periodos/', { escola_id: escolaId }), 'buscar períodos da coordenação');
   },
 
-  /**
-   * REMOVIDO: o refresh virou rota interna (internal/coordenacao/refresh/, com
-   * X-Internal-Token) usada só pelo scheduler. Como o painel agora é calculado
-   * ao vivo, o botão "Atualizar" pode simplesmente chamar buscarCacheCoordenacao de novo.
-   */
   async atualizarCacheCoordenacao() {
     return endpointRemovido('coordenacao/cache/refresh/');
   },
 
-  /**
-   * ALTERADO / VERIFICAR: indicadores/linguagem/ virou coordenacao/indicadores-turma/.
-   * O instituicaoId é ignorado (o escopo vem do usuário logado). O formato da
-   * resposta provavelmente mudou — conferir na tela.
-   */
   async listarIndicadorLinguagem(_instituicaoId, turmaId = null, periodoId = null) {
     return getJson(
       comQuery('/coordenacao/indicadores-turma/', { turma_id: turmaId, periodo_id: periodoId }),
@@ -553,9 +392,6 @@ export const apiService = {
     );
   },
 
-  // ── BNCC ────────────────────────────────────────────────────────────
-
-  /** Lista habilidades da BNCC (filtros opcionais). */
   async listarHabilidadesBNCC(componente = null, anoSerie = null) {
     return getJson(
       comQuery('/habilidades-bncc/', { componente, ano_serie: anoSerie }),
@@ -563,23 +399,14 @@ export const apiService = {
     );
   },
 
-  /** Cria nova habilidade BNCC. */
   async criarHabilidadeBNCC(dadosHabilidade) {
     return enviarJson('/habilidades-bncc/criar/', 'POST', dadosHabilidade, 'criar habilidade BNCC');
   },
 
-  /** REMOVIDO: habilidades-bncc/popular/. A carga inicial agora é feita no backend (migration/comando). */
   async popularHabilidadesBNCC() {
     return endpointRemovido('habilidades-bncc/popular/');
   },
 
-  // ── Planejamento ────────────────────────────────────────────────────
-
-  /**
-   * Processa um arquivo de planejamento (PDF/DOC/DOCX): sobe para o S3,
-   * extrai o texto e devolve uma sugestão de "Atividades Propostas".
-   * @param {string} diaSemana - 'segunda' | 'terca' | 'quarta' | 'quinta' | 'sexta'
-   */
   async processarArquivoPlanejamento(turmaId, diaSemana, file) {
     const formData = new FormData();
     formData.append('arquivo', file);
@@ -593,41 +420,22 @@ export const apiService = {
     return parseJsonOrThrow(response, 'processar arquivo de planejamento');
   },
 
-  /**
-   * Assistente IA: gera sugestão de atividades a partir de uma descrição livre.
-   * @param {{prompt: string, ano_serie?: string, contexto?: string}} payload
-   */
   async sugerirAtividadesPlanejamento(payload) {
     return enviarJson('/planejamento/sugerir-atividades/', 'POST', payload, 'sugerir atividades de planejamento');
   },
 
-  /**
-   * Aplica atividades extraídas de um arquivo em uma ou mais semanas.
-   * Sobrescreve apenas os dias informados; mantém os demais.
-   */
   async aplicarPlanejamentoEmSemanas(payload) {
     return enviarJson('/planejamento/aplicar-em-semanas/', 'POST', payload, 'aplicar planejamento em semanas');
   },
 
-  /**
-   * Sugere habilidades BNCC com base no texto de "Atividades Propostas".
-   * @param {{atividades_texto: string, ano_serie?: string, limite?: number}} payload
-   */
   async sugerirBnccPlanejamento(payload) {
     return enviarJson('/planejamento/sugerir-bncc/', 'POST', payload, 'sugerir habilidades BNCC');
   },
 
-  /** ALTERADO: POST planejamento/ → POST planejamento/criar/. */
   async criarPlanejamentoSemanal(dadosPlanejamento) {
     return enviarJson('/planejamento/criar/', 'POST', dadosPlanejamento, 'criar planejamento semanal');
   },
 
-  /**
-   * ALTERADO: GET planejamento/<turma>/?semana_inicio= não existe mais.
-   * Agora é a listagem filtrada por turma e pela semana. Mantém o retorno de
-   * UM planejamento (ou null), como a tela esperava.
-   * @param {string} semanaInicio - YYYY-MM-DD
-   */
   async buscarPlanejamentoSemanal(turmaId, semanaInicio) {
     const lista = await getJson(
       comQuery('/planejamento/', {
@@ -640,12 +448,10 @@ export const apiService = {
     return Array.isArray(lista) && lista.length ? lista[0] : null;
   },
 
-  /** ALTERADO: PUT planejamento/atualizar/<id>/ → PUT planejamento/<id>/atualizar/. */
   async atualizarPlanejamentoSemanal(planejamentoId, dadosPlanejamento) {
     return enviarJson(`/planejamento/${planejamentoId}/atualizar/`, 'PUT', dadosPlanejamento, 'atualizar planejamento semanal');
   },
 
-  /** ALTERADO: planejamentos/turma/<id>/ → planejamento/?turma_id=<id>. */
   async listarPlanejamentosTurma(turmaId, inicioPeriodo = null, fimPeriodo = null) {
     return getJson(
       comQuery('/planejamento/', {
@@ -657,18 +463,10 @@ export const apiService = {
     );
   },
 
-  // ── Relatórios ──────────────────────────────────────────────────────
-
-  /** Gera relatório usando IA. */
   async gerarRelatorio(dadosRelatorio) {
     return enviarJson('/gerar-relatorio/', 'POST', dadosRelatorio, 'gerar relatório');
   },
 
-  /**
-   * Gera relatório para uma criança usando período avaliativo.
-   * @param {string} criancaId - UUID do aluno
-   * @param {string} [periodoId] - UUID do período avaliativo
-   */
   async gerarRelatorioPorCrianca(criancaId, periodoId) {
     return enviarJson(
       `/gerar-relatorio/${criancaId}/`,
@@ -678,10 +476,6 @@ export const apiService = {
     );
   },
 
-  /**
-   * ALTERADO: relatorios/salvar/ → relatorios/criar/.
-   * `id_crianca` virou `aluno`; `instituicao_id` não é mais enviado (vem do aluno).
-   */
   async salvarRelatorio(dadosRelatorio) {
     return enviarJson('/relatorios/criar/', 'POST', {
       aluno: dadosRelatorio.id_crianca ?? dadosRelatorio.aluno,
@@ -691,10 +485,6 @@ export const apiService = {
     }, 'salvar relatório');
   },
 
-  /**
-   * Baixa o PDF do relatório gerado pelo backend (serviço report_generator + S3).
-   * Retorna { blob, filename, cached }.
-   */
   async baixarPdfRelatorio(relatorioId) {
     const response = await authFetch(`${API_BASE_URL}/relatorios/${relatorioId}/pdf/download/`);
 
@@ -715,11 +505,6 @@ export const apiService = {
     return { blob, filename, cached };
   },
 
-  /**
-   * Gera PDFs em lote e empacota em um ZIP no S3. O backend responde com um
-   * stream NDJSON (um JSON por linha) com eventos de progresso e, no final,
-   * um evento `done` contendo a URL presigned para baixar o ZIP.
-   */
   async bulkPdfRelatoriosStream({ ids, signal, onEvent }) {
     const response = await authFetch(`${API_BASE_URL}/relatorios/bulk-pdf/`, {
       method: 'POST',
@@ -754,7 +539,6 @@ export const apiService = {
       if (evt?.type === 'done') doneEvent = evt;
     };
 
-    // eslint-disable-next-line no-constant-condition
     while (true) {
       const { value, done } = await reader.read();
       if (done) break;
@@ -765,7 +549,7 @@ export const apiService = {
         buffer = buffer.slice(newlineIdx + 1);
       }
     }
-    // Flush final (caso último evento venha sem \n).
+
     processarLinha(buffer.trim());
 
     if (!doneEvent) {
@@ -774,23 +558,19 @@ export const apiService = {
     return doneEvent;
   },
 
-  /** REMOVIDO: o PDF agora é gerado no backend. Use baixarPdfRelatorio. */
   async uploadRelatorioPdf() {
     return endpointRemovido('relatorios/<id>/pdf/ (upload)');
   },
 
-  /** REMOVIDO: o download já devolve o PDF direto. Use baixarPdfRelatorio. */
   async refreshRelatorioPdf() {
     return endpointRemovido('relatorios/<id>/pdf/refresh/');
   },
 
-  /** REMOVIDO: dados-relatorio/<id>/. Os dados são montados pelo backend em gerar-relatorio/<id>/. */
   async buscarDadosRelatorio() {
     return endpointRemovido('dados-relatorio/<id>/');
   },
 };
 
-// Exportações individuais para compatibilidade
 export const uploadEAnaliseEscrita = apiService.uploadEAnaliseEscrita;
 export const uploadEAnaliseDesenho = apiService.uploadEAnaliseDesenho;
 export const analiseDeEscrita = apiService.analiseDeEscrita;
@@ -802,7 +582,6 @@ export const listarNotificacoes = apiService.listarNotificacoes;
 export const marcarNotificacaoLida = apiService.marcarNotificacaoLida;
 export const buscarRegistrosPorAluno = apiService.buscarRegistrosPorAluno;
 
-// Planejamento, funções relacionadas
 export const listarHabilidadesBNCC = apiService.listarHabilidadesBNCC;
 export const criarHabilidadeBNCC = apiService.criarHabilidadeBNCC;
 export const popularHabilidadesBNCC = apiService.popularHabilidadesBNCC;
@@ -815,7 +594,6 @@ export const buscarPlanejamentoSemanal = apiService.buscarPlanejamentoSemanal;
 export const atualizarPlanejamentoSemanal = apiService.atualizarPlanejamentoSemanal;
 export const listarPlanejamentosTurma = apiService.listarPlanejamentosTurma;
 
-// Relatórios
 export const gerarRelatorio = apiService.gerarRelatorio;
 export const gerarRelatorioPorCrianca = apiService.gerarRelatorioPorCrianca;
 export const salvarRelatorio = apiService.salvarRelatorio;
@@ -825,34 +603,15 @@ export const bulkPdfRelatoriosStream = apiService.bulkPdfRelatoriosStream;
 export const refreshRelatorioPdf = apiService.refreshRelatorioPdf;
 export const buscarDadosRelatorio = apiService.buscarDadosRelatorio;
 
-// =============================================================================
-// ALUNOS (antigo "crianças") — ALTERADO: /criancas/ → /alunos/
-// =============================================================================
-
-/**
- * Lista alunos. Já vem recortado pelo tenant.
- * ALTERADO: o backend só filtra por turma (`?turma=`). `instituicao_id` deixou de
- * existir e `status_vinculo` é aplicado aqui no front.
- * VERIFICAR: o backend devolve um ARRAY, sem paginação (page/page_size são ignorados).
- * Se a tela lia `data.results`/`data.count`, precisa ajustar.
- * @param {Object} filtros - { turma_id, status_vinculo }
- */
 export async function listarCriancas(filtros = {}) {
   const alunos = await getJson(comQuery('/alunos/', { turma: filtros.turma_id }), 'listar alunos');
-  // 'all' (usado por telas antigas) significa "sem filtro", não um status.
+
   const status = filtros.status_vinculo;
   return status && status !== 'all'
     ? alunos.filter((a) => a.status_vinculo === status)
     : alunos;
 }
 
-/**
- * Listagem paginada (tela de gestão de alunos). Filtros aplicados no backend.
- * Os registros já vêm com os nomes antigos (turma_id, escola_id...) para os
- * componentes da tela que ainda leem esses campos.
- * @param {Object} filtros - { status: 'ativo'|'inativo'|'transferido', escola, turma, busca, page, pageSize }
- * @returns {Promise<{count, pagina, total_paginas, page_size, totais: {ativo, inativo, transferido}, results}>}
- */
 export async function listarAlunosPaginado({ status, escola, turma, busca, page = 1, pageSize } = {}) {
   const dados = await getJson(
     comQuery('/alunos/', { status, escola, turma, busca, page, page_size: pageSize }),
@@ -861,36 +620,22 @@ export async function listarAlunosPaginado({ status, escola, turma, busca, page 
   return { ...dados, results: (dados.results || []).map(adicionarAliases) };
 }
 
-/** Detalhe de um aluno. @param {string} criancaId - UUID do aluno */
 export async function buscarCrianca(criancaId) {
   return getJson(`/alunos/${criancaId}/`, 'buscar aluno');
 }
 
-/**
- * Cria aluno. ALTERADO: `turma_id` vira `turma` (obrigatório); escola e
- * instituição são definidas pelo backend a partir da turma.
- */
 export async function criarCrianca(dados) {
   return enviarJson('/alunos/criar/', 'POST', traduzirPayload(dados), 'criar aluno');
 }
 
-/** Atualiza aluno. ALTERADO: /criancas/<id>/atualizar/ → /alunos/<id>/atualizar/. */
 export async function atualizarCrianca(criancaId, dados) {
   return enviarJson(`/alunos/${criancaId}/atualizar/`, 'PATCH', traduzirPayload(dados), 'atualizar aluno');
 }
 
-/**
- * ALTERADO: não existe mais rota de exclusão de aluno. O "soft delete" é feito
- * mudando o status_vinculo pelo endpoint de atualização.
- */
 export async function deletarCrianca(criancaId) {
   return atualizarCrianca(criancaId, { status_vinculo: 'inativo' });
 }
 
-/**
- * Cria vários alunos em sequência, com progresso.
- * @returns {{ successCount: number, errors: Array<{ nome: string, message: string }> }}
- */
 export async function criarCriancasLote(criancas, onProgress) {
   const errors = [];
   let successCount = 0;
@@ -912,57 +657,31 @@ export async function criarCriancasLote(criancas, onProgress) {
   return { successCount, errors };
 }
 
-/**
- * Envia (ou troca) a foto do aluno: POST /alunos/<id>/foto/ (multipart).
- * O backend valida, converte para JPEG e reduz a imagem. Devolve o aluno atualizado.
- */
 export async function uploadFotoCrianca(criancaId, arquivo) {
   const corpo = new FormData();
   corpo.append('foto', arquivo);
-  // Sem Content-Type: o navegador monta o multipart com o boundary certo.
+
   const response = await authFetch(`${API_BASE_URL}/alunos/${criancaId}/foto/`, { method: 'POST', body: corpo });
   return adicionarAliases(await parseJsonOrThrow(response, 'enviar foto do aluno'));
 }
 
-// =============================================================================
-// RELATÓRIOS
-// =============================================================================
-
-/**
- * Lista relatórios. ALTERADO: o filtro `id_crianca` virou `?aluno=`;
- * `instituicao_id` é ignorado (escopo vem do usuário).
- * @param {Object} filtros - { id_crianca }
- */
 export async function listarRelatorios(filtros = {}) {
   return getJson(comQuery('/relatorios/', { aluno: filtros.id_crianca ?? filtros.aluno }), 'listar relatórios');
 }
 
-/** Detalhe de um relatório. */
 export async function buscarRelatorio(relatorioId) {
   return getJson(`/relatorios/${relatorioId}/`, 'buscar relatório');
 }
 
-/** Atualiza relatório (PUT = todos os campos editáveis; PATCH também é aceito). */
 export async function atualizarRelatorio(relatorioId, dados) {
   return enviarJson(`/relatorios/${relatorioId}/atualizar/`, 'PUT', traduzirPayload(dados), 'atualizar relatório');
 }
 
-/** Exclui relatório e o PDF associado. */
 export async function deletarRelatorio(relatorioId) {
   const response = await authFetch(`${API_BASE_URL}/relatorios/${relatorioId}/deletar/`, { method: 'DELETE' });
   return parseJsonOrThrow(response, 'excluir relatório');
 }
 
-// =============================================================================
-// OBSERVAÇÕES — ALTERADO: /observacoes/ → /registros-observacao/
-// =============================================================================
-
-/**
- * Lista registros de observação.
- * ALTERADO: o backend só filtra por aluno (`?aluno=`). Professor e datas
- * são filtrados aqui no front; `turma_id` não é mais suportado.
- * @param {Object} filtros - { crianca_id, professor_id, data_inicio, data_fim }
- */
 export async function listarObservacoes(filtros = {}) {
   const registros = await getJson(
     comQuery('/registros-observacao/', { aluno: filtros.crianca_id }),
@@ -976,18 +695,10 @@ export async function listarObservacoes(filtros = {}) {
   });
 }
 
-/**
- * Cria registro de observação. ALTERADO: `crianca_id` → `aluno`, `pergunta_id` → `pergunta`;
- * professor, escola e instituição são definidos pelo backend.
- */
 export async function criarObservacao(dados) {
   return enviarJson('/registros-observacao/criar/', 'POST', traduzirPayload(dados), 'criar observação');
 }
 
-/**
- * ALTERADO: observacoes/lote/ não existe mais. Cria um a um e reporta falhas,
- * no mesmo formato de criarCriancasLote.
- */
 export async function criarObservacoesLote(registros) {
   const criados = [];
   const errors = [];
@@ -1001,16 +712,6 @@ export async function criarObservacoesLote(registros) {
   return { criados, successCount: criados.length, errors };
 }
 
-// =============================================================================
-// PERGUNTAS — ALTERADO / VERIFICAR: /perguntas-bncc/ → /perguntas/
-// =============================================================================
-
-/**
- * Lista perguntas. O backend filtra só por `faixa_etaria`; `campo_experiencia`
- * e `ids` são aplicados aqui no front.
- * VERIFICAR: nome do campo de campo de experiência no PerguntaSerializer.
- * @param {Object} filtros - { faixa_etaria, campo_experiencia, ids }
- */
 export async function listarPerguntasBncc(filtros = {}) {
   let perguntas = await getJson(
     comQuery('/perguntas/', { faixa_etaria: filtros.faixa_etaria }),
@@ -1026,22 +727,10 @@ export async function listarPerguntasBncc(filtros = {}) {
   return perguntas;
 }
 
-/** Mesmo endpoint de listarPerguntasBncc (mantido por compatibilidade de nome). */
 export async function listarPerguntasBNCC(filtros = {}) {
   return listarPerguntasBncc(filtros);
 }
 
-// =============================================================================
-// TURMAS
-// =============================================================================
-
-/**
- * Lista turmas. Já vem recortado pelo tenant.
- * ALTERADO: o backend ignora todos os query params. Se `id` for informado,
- * busca o detalhe (antes, mandar ?id= devolvia TODAS as turmas). `ativa` é
- * filtrado aqui no front; `instituicao_id` é ignorado.
- * @param {Object} filtros - { id, ativa }
- */
 export async function listarTurmas(filtros = {}) {
   if (filtros.id) {
     return [await buscarTurma(filtros.id)];
@@ -1052,12 +741,6 @@ export async function listarTurmas(filtros = {}) {
   return turmas.filter((t) => t.ativa === undefined || t.ativa === ativa);
 }
 
-/**
- * Listagem paginada (tela de gestão de turmas). Traz os professores de cada
- * turma embutidos em `professores`, sem precisar de listarProfessoresTurma().
- * @param {Object} filtros - { ativa: boolean, escola: uuid, page: number, pageSize: number }
- * @returns {Promise<{count, pagina, total_paginas, page_size, totais: {ativas, inativas}, results}>}
- */
 export async function listarTurmasPaginado({ ativa, escola, page = 1, pageSize } = {}) {
   return getJson(
     comQuery('/turmas/', { ativa, escola, page, page_size: pageSize }),
@@ -1065,40 +748,26 @@ export async function listarTurmasPaginado({ ativa, escola, page = 1, pageSize }
   );
 }
 
-/** Detalhe de uma turma. */
 export async function buscarTurma(turmaId) {
   return getJson(`/turmas/${turmaId}/`, 'buscar turma');
 }
 
-/**
- * Cria turma. Admin/superadmin: `escola` é obrigatória (a instituição vem dela).
- * Coordenador: a escola é sempre a dele (o backend ignora a do body).
- * `professores` (opcional): ids dos usuários a vincular, gravados na mesma
- * transação da turma. Nome repetido na escola/ano → erro 400 em `nome`.
- */
 export async function criarTurma(dados) {
   return enviarJson('/turmas/criar/', 'POST', dados, 'criar turma');
 }
 
-/**
- * Atualiza turma (PATCH parcial). `escola` e `instituicao` não mudam. Desativar: { ativa: false }.
- * Com `professores`, os vínculos passam a ser exatamente essa lista; sem ele, não mudam.
- */
 export async function atualizarTurma(turmaId, dados) {
   return enviarJson(`/turmas/${turmaId}/atualizar/`, 'PATCH', dados, 'atualizar turma');
 }
 
-/** Vínculos da turma: [{ id, usuario, usuario_nome, usuario_email, usuario_nivel, turma, data_vinculo }]. */
 export async function listarProfessoresTurma(turmaId) {
   return getJson(`/turmas/${turmaId}/professores/`, 'listar professores da turma');
 }
 
-/** Vincula usuário à turma. O backend exige que ele seja da mesma escola da turma. */
 export async function vincularProfessorTurma(turmaId, usuarioId) {
   return enviarJson(`/turmas/${turmaId}/professores/vincular/`, 'POST', { usuario: usuarioId }, 'vincular professor à turma');
 }
 
-/** Desfaz o vínculo (o backend responde 204, sem corpo). */
 export async function desvincularProfessorTurma(turmaId, usuarioId) {
   const response = await authFetch(
     `${API_BASE_URL}/turmas/${turmaId}/professores/${usuarioId}/desvincular/`,
@@ -1107,21 +776,37 @@ export async function desvincularProfessorTurma(turmaId, usuarioId) {
   return parseJsonOrThrow(response, 'desvincular professor da turma');
 }
 
-// ============================================================
-// Disciplinas
-// ============================================================
+export const FREQUENCIAS_REGISTRO = [
+  { valor: 'semanal', rotulo: 'Semanal' },
+  { valor: 'quinzenal', rotulo: 'Quinzenal' },
+  { valor: 'mensal', rotulo: 'Mensal' },
+];
 
-/** Todas as disciplinas do escopo (array), ordenadas por escola e nome. Para selects. */
+export async function listarFrequenciasRegistro({
+  escola, frequencia, busca, ativa, page = 1, pageSize,
+} = {}) {
+  return getJson(
+    comQuery('/turmas/frequencia-registro/', {
+      escola, frequencia, busca, ativa, page, page_size: pageSize,
+    }),
+    'listar frequências de registro',
+  );
+}
+
+export async function atualizarFrequenciaRegistro(frequencia, { turmas, escola } = {}) {
+  const corpo = { frequencia_registro: frequencia };
+  if (escola) corpo.escola = escola;
+  else corpo.turmas = turmas;
+  return enviarJson(
+    '/turmas/frequencia-registro/atualizar/', 'PATCH', corpo,
+    'atualizar frequência de registro',
+  );
+}
+
 export async function listarDisciplinas(filtros = {}) {
   return getJson(comQuery('/disciplinas/', { ativo: filtros.ativo, escola: filtros.escola }), 'listar disciplinas');
 }
 
-/**
- * Listagem paginada (tela de gestão de disciplinas). Cada disciplina já traz
- * `professores` embutidos.
- * @param {Object} filtros - { ativo: boolean, escola: uuid, busca, page, pageSize }
- * @returns {Promise<{count, pagina, total_paginas, page_size, totais: {ativas, inativas}, results}>}
- */
 export async function listarDisciplinasPaginado({ ativo, escola, busca, page = 1, pageSize } = {}) {
   return getJson(
     comQuery('/disciplinas/', { ativo, escola, busca, page, page_size: pageSize }),
@@ -1129,38 +814,18 @@ export async function listarDisciplinasPaginado({ ativo, escola, busca, page = 1
   );
 }
 
-/**
- * Cria disciplina. Admin/superadmin: `escola` é obrigatória. Coordenador: a
- * escola é sempre a dele. `professores` (opcional): ids de usuários
- * professor_fundamental, gravados na mesma transação. Nome repetido na
- * escola (sem diferenciar maiúsculas) → erro 400 em `nome`.
- */
 export async function criarDisciplina(dados) {
   return enviarJson('/disciplinas/criar/', 'POST', dados, 'criar disciplina');
 }
 
-/**
- * Atualiza disciplina (PATCH parcial). Desativar: { ativo: false }.
- * Com `professores`, os vínculos passam a ser exatamente essa lista; sem ele, não mudam.
- */
 export async function atualizarDisciplina(disciplinaId, dados) {
   return enviarJson(`/disciplinas/${disciplinaId}/atualizar/`, 'PATCH', dados, 'atualizar disciplina');
 }
 
-// ============================================================
-// Períodos avaliativos
-// ============================================================
-
-/** Todos os períodos do escopo (array), mais recente primeiro. Para selects. */
 export async function listarPeriodosAvaliativos(filtros = {}) {
   return getJson(comQuery('/periodos-avaliativos/', { escola: filtros.escola }), 'listar períodos avaliativos');
 }
 
-/**
- * Listagem paginada (tela de gestão de períodos). Cada período traz `escola_nome`.
- * @param {Object} filtros - { situacao: 'vigentes'|'encerrados', escola, page, pageSize }
- * @returns {Promise<{count, pagina, total_paginas, page_size, totais: {vigentes, encerrados}, results}>}
- */
 export async function listarPeriodosPaginado({ situacao, escola, page = 1, pageSize } = {}) {
   return getJson(
     comQuery('/periodos-avaliativos/', { situacao, escola, page, page_size: pageSize }),
@@ -1168,29 +833,14 @@ export async function listarPeriodosPaginado({ situacao, escola, page = 1, pageS
   );
 }
 
-/**
- * Cria período. Admin/superadmin: `escola` é obrigatória. Coordenador: a escola
- * é sempre a dele. Datas do mesmo tipo que se cruzam na escola → erro 400.
- */
 export async function criarPeriodoAvaliativo(dados) {
   return enviarJson('/periodos-avaliativos/criar/', 'POST', dados, 'criar período avaliativo');
 }
 
-/** Atualiza período (PATCH parcial). A escola não muda. */
 export async function atualizarPeriodoAvaliativo(periodoId, dados) {
   return enviarJson(`/periodos-avaliativos/${periodoId}/atualizar/`, 'PATCH', dados, 'atualizar período avaliativo');
 }
 
-// ============================================================
-// Perguntas dos especialistas e campos de experiência
-// ============================================================
-
-/**
- * Listagem paginada (tela "Perguntas" do admin). Cada pergunta traz nome da
- * escola, do campo de experiência e o código/descrição da habilidade BNCC.
- * @param {Object} filtros - { status: 'ativa'|'inativa', escola, nivel, campo, busca, page, pageSize }
- * @returns {Promise<{count, pagina, total_paginas, page_size, totais: {ativas, inativas}, results}>}
- */
 export async function listarPerguntasEspecialistasPaginado({ status, escola, nivel, campo, busca, page = 1, pageSize } = {}) {
   return getJson(
     comQuery('/perguntas-especialistas/', { status, escola, nivel, campo, busca, page, page_size: pageSize }),
@@ -1198,24 +848,14 @@ export async function listarPerguntasEspecialistasPaginado({ status, escola, niv
   );
 }
 
-/**
- * Cria pergunta de especialista. `referencia_bncc` (código, ex.: "EI03EO01") é
- * obrigatória. Admin informa `escola`; coordenador e especialista usam a própria.
- */
 export async function criarPerguntaEspecialista(dados) {
   return enviarJson('/perguntas-especialistas/criar/', 'POST', dados, 'criar pergunta');
 }
 
-/** Atualiza pergunta de especialista (PATCH). Desativar: { status: 'inativa' }. */
 export async function atualizarPerguntaEspecialista(perguntaId, dados) {
   return enviarJson(`/perguntas-especialistas/${perguntaId}/atualizar/`, 'PATCH', dados, 'atualizar pergunta');
 }
 
-/**
- * Campos de experiência visíveis (oficiais + os das escolas do escopo).
- * @param {Object} filtros - { ativo: boolean, comUso: boolean } — `comUso` acrescenta
- *   `total_perguntas` a cada campo (perguntas visíveis, dos dois tipos, que o usam).
- */
 export async function listarCamposPedagogicos({ ativo, comUso } = {}) {
   return getJson(
     comQuery('/campos-pedagogicos/', { ativo, com_uso: comUso ? 1 : undefined }),
@@ -1223,16 +863,10 @@ export async function listarCamposPedagogicos({ ativo, comUso } = {}) {
   );
 }
 
-/** Atualiza campo de experiência (nome, ícone; reativar: { ativo: true }). Oficial: só superadmin. */
 export async function atualizarCampoPedagogico(campoId, dados) {
   return enviarJson(`/campos-pedagogicos/${campoId}/atualizar/`, 'PATCH', dados, 'atualizar campo de experiência');
 }
 
-/**
- * Desativa o campo. Se houver perguntas nele, `remanejarPara` (id de outro campo)
- * é obrigatório: elas passam para esse campo antes. Sem ele e com perguntas → erro 409
- * com `payload.total_vinculos`. Devolve { campo, perguntas_remanejadas }.
- */
 export async function desativarCampoPedagogico(campoId, remanejarPara = null) {
   return enviarJson(
     `/campos-pedagogicos/${campoId}/desativar/`, 'POST',
@@ -1240,16 +874,6 @@ export async function desativarCampoPedagogico(campoId, remanejarPara = null) {
   );
 }
 
-// ============================================================
-// Perguntas BNCC (oficiais + das escolas)
-// ============================================================
-
-/**
- * Listagem da tela de gestão BNCC (a `listarPerguntasBncc` acima, das telas de
- * observação, continua como está). Com `page`, devolve { count, pagina, total_paginas, totais,
- * pode_editar_oficiais, results }; sem `page`, o array completo (usado na exportação CSV).
- * @param {Object} filtros - { ativa, origem: 'oficial'|'escola', escola, campo, faixa_etaria, busca, page, pageSize }
- */
 export async function listarPerguntasBnccGestao({ ativa, origem, escola, campo, faixa_etaria, busca, page, pageSize } = {}) {
   return getJson(
     comQuery('/perguntas/', { ativa, origem, escola, campo, faixa_etaria, busca, page, page_size: pageSize }),
@@ -1257,25 +881,18 @@ export async function listarPerguntasBnccGestao({ ativa, origem, escola, campo, 
   );
 }
 
-/**
- * Cria pergunta BNCC. `referencia_bncc` (código) é obrigatória. Admin informa `escola`;
- * superadmin sem `escola` cria uma pergunta OFICIAL (vale para todas as escolas).
- */
 export async function criarPerguntaBncc(dados) {
   return enviarJson('/perguntas/criar/', 'POST', dados, 'criar pergunta BNCC');
 }
 
-/** Atualiza pergunta BNCC (PATCH). Desativar: { ativa: false }. Oficial: só superadmin. */
 export async function atualizarPerguntaBncc(perguntaId, dados) {
   return enviarJson(`/perguntas/${perguntaId}/atualizar/`, 'PATCH', dados, 'atualizar pergunta BNCC');
 }
 
-/** Cria campo de experiência na escola informada ({ nome, icone, escola }). */
 export async function criarCampoPedagogico(dados) {
   return enviarJson('/campos-pedagogicos/criar/', 'POST', dados, 'criar campo de experiência');
 }
 
-/** Exclui o período (o backend responde 204, sem corpo). */
 export async function excluirPeriodoAvaliativo(periodoId) {
   const response = await authFetch(
     `${API_BASE_URL}/periodos-avaliativos/${periodoId}/excluir/`,
@@ -1284,15 +901,6 @@ export async function excluirPeriodoAvaliativo(periodoId) {
   return parseJsonOrThrow(response, 'excluir período avaliativo');
 }
 
-// =============================================================================
-// PRODUÇÕES — ALTERADO: /producoes-criancas/ → /producoes/
-// =============================================================================
-
-/**
- * Lista produções. ALTERADO: filtros viraram `?turma=` e `?aluno=`;
- * `instituicao_id` é ignorado.
- * @param {Object} filtros - { crianca_id, turma_id }
- */
 export async function listarProducoesCrianca(filtros = {}) {
   return getJson(
     comQuery('/producoes/', { aluno: filtros.crianca_id, turma: filtros.turma_id }),
@@ -1300,11 +908,6 @@ export async function listarProducoesCrianca(filtros = {}) {
   );
 }
 
-/**
- * Cria produção. ALTERADO: no backend novo a produção pertence à TURMA e os
- * alunos são vinculados depois. Se vier `crianca_id`, faz o vínculo em seguida.
- * Professor, escola e instituição são definidos pelo backend.
- */
 export async function criarProducaoCrianca(dados) {
   const { crianca_id: alunoId, ...resto } = dados;
   const producao = await enviarJson('/producoes/criar/', 'POST', traduzirPayload(resto), 'criar produção');
@@ -1314,107 +917,60 @@ export async function criarProducaoCrianca(dados) {
   return producao;
 }
 
-/** Exclui produção. */
 export async function deletarProducaoCrianca(producaoId) {
   const response = await authFetch(`${API_BASE_URL}/producoes/${producaoId}/deletar/`, { method: 'DELETE' });
   return parseJsonOrThrow(response, 'excluir produção');
 }
 
-/**
- * REMOVIDO: producoes-criancas/upload/ (multipart). O /producoes/criar/ novo
- * recebe JSON com arquivo_url — falta um endpoint de upload no backend.
- */
 export async function uploadProducaoCrianca() {
   return endpointRemovido('producoes-criancas/upload/');
 }
 
-// =============================================================================
-// PROJETOS
-// =============================================================================
-
-/**
- * Lista projetos. Já vem recortado pelo tenant.
- * ALTERADO: o backend ignora query params; `status` é filtrado aqui no front.
- * @param {Object} filtros - { status }
- */
 export async function listarProjetos(filtros = {}) {
   const projetos = await getJson('/projetos/', 'listar projetos');
   return filtros.status ? projetos.filter((p) => p.status === filtros.status) : projetos;
 }
 
-/** Cria projeto (escola/instituição definidas pelo backend). */
 export async function criarProjeto(dados) {
   return enviarJson('/projetos/criar/', 'POST', traduzirPayload(dados), 'criar projeto');
 }
 
-/** Atualiza projeto. */
 export async function atualizarProjeto(projetoId, dados) {
   return enviarJson(`/projetos/${projetoId}/atualizar/`, 'PATCH', traduzirPayload(dados), 'atualizar projeto');
 }
 
-/** REMOVIDO: não existe rota de exclusão de projeto. VERIFICAR se basta mudar o status. */
 export async function deletarProjeto() {
   return endpointRemovido('projetos/<id>/deletar/');
 }
 
-// =============================================================================
-// INSTITUIÇÕES
-// =============================================================================
-
-/** Lista instituições (o backend decide quais o usuário pode ver). */
 export async function listarInstituicoes(filtros = {}) {
   return getJson(comQuery('/instituicoes/', { ativa: filtros.ativa }), 'listar instituições');
 }
 
-/** Detalhe de uma instituição. */
 export async function buscarInstituicao(instituicaoId) {
   return getJson(`/instituicoes/${instituicaoId}/`, 'buscar instituição');
 }
 
-/** Cria instituição (só perfis globais). */
 export async function criarInstituicao(dados) {
   return enviarJson('/instituicoes/criar/', 'POST', dados, 'criar instituição');
 }
 
-/** Atualiza instituição. */
 export async function atualizarInstituicao(instituicaoId, dados) {
   return enviarJson(`/instituicoes/${instituicaoId}/atualizar/`, 'PATCH', dados, 'atualizar instituição');
 }
 
-/** REMOVIDO: instituicoes/<id>/logo/ não existe no backend novo. */
 export async function uploadLogoInstituicao() {
   return endpointRemovido('instituicoes/<id>/logo/');
 }
 
-// =============================================================================
-// ESCOLAS
-// =============================================================================
-
-/** Escolas do escopo: admin → as da rede; coordenador → a dele; superadmin → todas. */
 export async function listarEscolas() {
   return getJson('/escolas/', 'listar escolas');
 }
 
-/**
- * Escolas do escopo do usuário com os totais para os cards do painel do admin:
- * [{ id, nome, tipo_unidade, cidade, estado, ativa, totais: { turmas, alunos, professores, coordenadores } }]
- * Só gestão (admin, coordenador, superadmin).
- */
 export async function listarResumoEscolas() {
   return getJson('/admin/dashboard/', 'carregar o dashboard do admin');
 }
 
-// =============================================================================
-// USUÁRIOS
-// =============================================================================
-
-/**
- * Lista usuários (array completo, sem paginação). Só gestão
- * (admin/coordenador/superadmin) tem acesso; os demais recebem 403 e devem usar /me/.
- * Os filtros são aplicados no servidor. O antigo `perfil` agora se chama `nivel`
- * (os dois nomes são aceitos aqui).
- * @param {Object} filtros - { nivel | perfil, ativo, escola }
- */
 export async function listarUsuarios(filtros = {}) {
   const ativo = filtros.ativo === undefined ? undefined : filtros.ativo === true || filtros.ativo === 'true';
   return getJson(
@@ -1423,12 +979,6 @@ export async function listarUsuarios(filtros = {}) {
   );
 }
 
-/**
- * Listagem paginada (tela de gestão de usuários). Cada usuário traz `turmas` e
- * `disciplinas` embutidas. A resposta também diz quais níveis quem está
- * logado pode atribuir (`niveis_permitidos`) e o id dele (`usuario_atual`).
- * @param {Object} filtros - { ativo, escola, nivel, busca, page, pageSize }
- */
 export async function listarUsuariosPaginado({ ativo, escola, nivel, busca, page = 1, pageSize } = {}) {
   return getJson(
     comQuery('/usuarios/', { ativo, escola, nivel, busca, page, page_size: pageSize }),
@@ -1436,30 +986,18 @@ export async function listarUsuariosPaginado({ ativo, escola, nivel, busca, page
   );
 }
 
-/** Detalhe de um usuário. */
 export async function buscarUsuario(usuarioId) {
   return getJson(`/usuarios/${usuarioId}/`, 'buscar usuário');
 }
 
-/**
- * Cria usuário (incluindo password). Opcionais, gravados na mesma transação:
- * `turmas` e `disciplinas` (ids) e `tipo_especialista`.
- */
 export async function criarUsuario(dados) {
   return enviarJson('/usuarios/criar/', 'POST', dados, 'criar usuário');
 }
 
-/**
- * Atualiza usuário (PATCH). Com `turmas`/`disciplinas`, os vínculos passam a ser
- * exatamente essas listas; sem elas, não mudam. Desativar: { is_active: false }.
- */
 export async function atualizarUsuario(usuarioId, dados) {
   return enviarJson(`/usuarios/${usuarioId}/atualizar/`, 'PATCH', dados, 'atualizar usuário');
 }
 
-/**
- * ALTERADO: não existe rota de exclusão. O soft delete é feito desativando.
- */
 export async function deletarUsuario(usuarioId) {
   return atualizarUsuario(usuarioId, { is_active: false });
 }

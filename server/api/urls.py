@@ -36,6 +36,8 @@ from .views.turma import (
     listar_professores_turma,
     vincular_professor_turma,
     desvincular_professor_turma,
+    listar_frequencias_registro,
+    atualizar_frequencia_registro,
 )
 from .views.disciplina import (
     listar_disciplinas,
@@ -280,6 +282,9 @@ urlpatterns = [
     # Turmas
     path('turmas/', listar_turmas, name='listar_turmas'),
     path('turmas/criar/', criar_turma, name='criar_turma'),
+    path('turmas/frequencia-registro/', listar_frequencias_registro, name='listar_frequencias_registro'),
+    path('turmas/frequencia-registro/atualizar/', atualizar_frequencia_registro,
+         name='atualizar_frequencia_registro'),
     path('turmas/<uuid:turma_id>/', detalhe_turma, name='detalhe_turma'),
     path('turmas/<uuid:turma_id>/atualizar/', atualizar_turma, name='atualizar_turma'),
     path('turmas/<uuid:turma_id>/professores/', listar_professores_turma, name='listar_professores_turma'),

@@ -883,6 +883,7 @@ class Migration(migrations.Migration):
                 ('ordem', models.IntegerField(blank=True, null=True)),
                 ('idade_min', models.IntegerField(blank=True, null=True)),
                 ('idade_max', models.IntegerField(blank=True, null=True)),
+                ('frequencia_registro', models.CharField(choices=[('semanal', 'Semanal'), ('quinzenal', 'Quinzenal'), ('mensal', 'Mensal')], default='semanal', max_length=20)),
                 ('criado_em', models.DateTimeField(auto_now_add=True)),
                 ('atualizado_em', models.DateTimeField(auto_now=True)),
                 ('escola', models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, related_name='turmas', to='api.escola')),

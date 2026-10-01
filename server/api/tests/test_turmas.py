@@ -8,6 +8,8 @@ Seções:
   * nome único — mesmo nome + escola + ano letivo (sem constraint no banco)
   * validações — idades, ano letivo, nome, escola desativada
   * vínculos   — endpoints avulsos de listar/vincular/desvincular professores
+  * frequência de registro — tela Registros: listagem enxuta e alteração
+    individual/em lote (substitui a tabela antiga `configuracoes_registro`)
 """
 from django.db import connection
 from django.test.utils import CaptureQueriesContext
@@ -18,6 +20,8 @@ from .base import CenarioMultiTenant
 
 URL_LISTAR = '/api/turmas/'
 URL_CRIAR = '/api/turmas/criar/'
+URL_FREQUENCIAS = '/api/turmas/frequencia-registro/'
+URL_ATUALIZAR_FREQUENCIA = '/api/turmas/frequencia-registro/atualizar/'
 
 
 def url_detalhe(turma):
@@ -376,3 +380,168 @@ class TurmasTests(CenarioMultiTenant):
         r = self.client.post(url_vincular(self.turma_a1), {'usuario': str(self.coord_a1.id)}, format='json')
         self.assertEqual(r.status_code, 403)
         self.assertEqual(self.client.delete(url_desvincular(self.turma_a1, self.prof_a1)).status_code, 403)
+
+    # =====================================================================
+    # Frequência de registro
+    # =====================================================================
+
+    def _listar_frequencias(self, usuario=None, **params):
+        self.entrar(usuario or self.admin_a)
+        r = self.client.get(URL_FREQUENCIAS, params)
+        self.assertEqual(r.status_code, 200, r.content)
+        return r.json()
+
+    def _patch_frequencia(self, usuario=None, **dados):
+        self.entrar(usuario or self.admin_a)
+        return self.client.patch(URL_ATUALIZAR_FREQUENCIA, dados, format='json')
+
+    def _criar_com_frequencia(self, qtd, frequencia, **kwargs):
+        turmas = self._criar_turmas(qtd, **kwargs)
+        Turma.objects.filter(pk__in=[t.pk for t in turmas]).update(frequencia_registro=frequencia)
+        return turmas
+
+    def _frequencia(self, turma):
+        turma.refresh_from_db()
+        return turma.frequencia_registro
+
+    @staticmethod
+    def _ids_resultado(dados):
+        return {t['id'] for t in dados['results']}
+
+    def test_frequencia_turma_nova_comeca_semanal(self):
+        self.assertEqual(self.turma_a1.frequencia_registro, 'semanal')
+        self.assertEqual(self._post_criar().json()['frequencia_registro'], 'semanal')
+
+    def test_frequencia_pode_ser_definida_no_cadastro_e_na_edicao(self):
+        r = self._post_criar(frequencia_registro='quinzenal')
+        self.assertEqual(r.status_code, 201, r.content)
+        self.assertEqual(r.json()['frequencia_registro'], 'quinzenal')
+
+        r = self._patch(self.turma_a1, frequencia_registro='mensal')
+        self.assertEqual(r.status_code, 200, r.content)
+        self.assertEqual(self._frequencia(self.turma_a1), 'mensal')
+
+        self.assertEqual(self._patch(self.turma_a1, frequencia_registro='anual').status_code, 400)
+
+    def test_frequencia_vem_na_listagem_de_turmas(self):
+        linha = self._listar(self.admin_a, page=1)['results'][0]
+        self.assertIn('frequencia_registro', linha)
+
+    def test_frequencias_escopo_admin_e_coordenador(self):
+        ids_admin = self._ids_resultado(self._listar_frequencias())
+        self.assertEqual(ids_admin, {str(self.turma_a1.id), str(self.turma_a2.id)})
+
+        ids_coord = self._ids_resultado(self._listar_frequencias(self.coord_a1))
+        self.assertEqual(ids_coord, {str(self.turma_a1.id)})
+
+    def test_frequencias_paginacao_de_10(self):
+        self._criar_turmas(15)
+        dados = self._listar_frequencias()
+        self.assertEqual(len(dados['results']), 10)
+        self.assertEqual(dados['count'], 17)  # 15 + turma_a1 + turma_a2
+        self.assertEqual(dados['total_paginas'], 2)
+        self.assertEqual(self._listar_frequencias(page=99)['pagina'], 2)
+
+    def test_frequencias_linha_e_enxuta(self):
+        linha = self._listar_frequencias()['results'][0]
+        self.assertEqual(
+            set(linha),
+            {'id', 'nome', 'turno', 'ano_letivo', 'etapa', 'ativa',
+             'escola', 'escola_nome', 'frequencia_registro'},
+        )
+
+    def test_frequencias_so_ativas_por_padrao(self):
+        inativa, = self._criar_turmas(1, ativa=False)
+        self.assertNotIn(str(inativa.id), self._ids_resultado(self._listar_frequencias()))
+        self.assertIn(str(inativa.id), self._ids_resultado(self._listar_frequencias(ativa='false')))
+
+    def test_frequencias_filtro_por_escola(self):
+        dados = self._listar_frequencias(escola=str(self.a2.id))
+        self.assertEqual(self._ids_resultado(dados), {str(self.turma_a2.id)})
+        self.assertEqual(self._listar_frequencias(escola=str(self.b1.id))['count'], 0)
+        self.assertEqual(self._listar_frequencias(escola='nao-e-uuid')['count'], 0)
+
+    def test_frequencias_filtro_e_totais(self):
+        self._criar_com_frequencia(3, 'quinzenal', prefixo='Q')
+        self._criar_com_frequencia(1, 'mensal', prefixo='M')
+        dados = self._listar_frequencias(frequencia='quinzenal')
+        self.assertEqual(dados['count'], 3)
+        # Os totais ignoram o filtro de frequência (são o resumo da tela).
+        self.assertEqual(dados['totais'], {'semanal': 2, 'quinzenal': 3, 'mensal': 1})
+        self.assertEqual(self._listar_frequencias(frequencia='anual')['count'], 0)
+
+    def test_frequencias_busca_por_nome(self):
+        self._criar_turmas(3, prefixo='Busca')
+        dados = self._listar_frequencias(busca='busca 01')
+        self.assertEqual([t['nome'] for t in dados['results']], ['Busca 01'])
+
+    def test_frequencias_numero_de_queries_nao_cresce_com_as_turmas(self):
+        self.entrar(self.admin_a)
+
+        def contar():
+            with CaptureQueriesContext(connection) as ctx:
+                self.assertEqual(self.client.get(URL_FREQUENCIAS, {'page': 1}).status_code, 200)
+            return len(ctx.captured_queries)
+
+        antes = contar()
+        self._criar_turmas(8, escola=self.a2)
+        self.assertEqual(contar(), antes)
+
+    def test_atualizar_frequencia_de_uma_e_de_varias_turmas(self):
+        r = self._patch_frequencia(turmas=[str(self.turma_a1.id)], frequencia_registro='quinzenal')
+        self.assertEqual(r.status_code, 200, r.content)
+        self.assertEqual(r.json(), {'atualizadas': 1, 'frequencia_registro': 'quinzenal'})
+        self.assertEqual(self._frequencia(self.turma_a1), 'quinzenal')
+        self.assertEqual(self._frequencia(self.turma_a2), 'semanal')
+
+        ids = [str(self.turma_a1.id), str(self.turma_a2.id)]
+        r = self._patch_frequencia(turmas=ids, frequencia_registro='mensal')
+        self.assertEqual(r.json()['atualizadas'], 2)
+        self.assertEqual(self._frequencia(self.turma_a2), 'mensal')
+
+    def test_atualizar_frequencia_muda_atualizado_em(self):
+        antes = self.turma_a1.atualizado_em
+        self._patch_frequencia(turmas=[str(self.turma_a1.id)], frequencia_registro='mensal')
+        self.turma_a1.refresh_from_db()
+        self.assertGreater(self.turma_a1.atualizado_em, antes)
+
+    def test_atualizar_frequencia_de_toda_a_escola_so_ativas(self):
+        inativa, = self._criar_turmas(1, ativa=False, prefixo='I')
+        ativas = self._criar_turmas(2, prefixo='A')
+        r = self._patch_frequencia(escola=str(self.a1.id), frequencia_registro='quinzenal')
+        self.assertEqual(r.json()['atualizadas'], 3)  # 2 novas + turma_a1
+        self.assertEqual(self._frequencia(ativas[0]), 'quinzenal')
+        self.assertEqual(self._frequencia(inativa), 'semanal')
+        self.assertEqual(self._frequencia(self.turma_a2), 'semanal')
+
+    def test_atualizar_frequencia_fora_do_escopo_nao_altera_nada(self):
+        ids = [str(self.turma_a1.id), str(self.turma_b1.id)]
+        self.assertEqual(self._patch_frequencia(turmas=ids, frequencia_registro='mensal').status_code, 404)
+        self.assertEqual(self._frequencia(self.turma_a1), 'semanal')
+        self.assertEqual(self._frequencia(self.turma_b1), 'semanal')
+
+        r = self._patch_frequencia(escola=str(self.b1.id), frequencia_registro='mensal')
+        self.assertEqual(r.status_code, 404)
+
+        r = self._patch_frequencia(self.coord_a1, turmas=[str(self.turma_a2.id)], frequencia_registro='mensal')
+        self.assertEqual(r.status_code, 404)
+        self.assertEqual(self._frequencia(self.turma_a2), 'semanal')
+
+    def test_professor_nao_altera_frequencia(self):
+        r = self._patch_frequencia(self.prof_a1, turmas=[str(self.turma_a1.id)], frequencia_registro='mensal')
+        self.assertEqual(r.status_code, 403)
+        self.assertEqual(self._frequencia(self.turma_a1), 'semanal')
+
+    def test_atualizar_frequencia_validacoes(self):
+        alvo = [str(self.turma_a1.id)]
+        casos = [
+            {'turmas': alvo, 'frequencia_registro': 'anual'},
+            {'turmas': alvo},
+            {'frequencia_registro': 'mensal'},
+            {'turmas': alvo, 'escola': str(self.a1.id), 'frequencia_registro': 'mensal'},
+            {'turmas': [], 'frequencia_registro': 'mensal'},
+            {'turmas': ['x'], 'frequencia_registro': 'mensal'},
+        ]
+        for dados in casos:
+            with self.subTest(dados=dados):
+                self.assertEqual(self._patch_frequencia(**dados).status_code, 400)
