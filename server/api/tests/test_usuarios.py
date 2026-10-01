@@ -25,8 +25,8 @@ def url_atualizar(u):
 
 class UsuariosTests(CenarioMultiTenant):
     """Cenário do base.py: rede A tem admin_a (sem escola), coord_a1, coord_a2
-    e prof_a1 (professor_infantil em A1). Aqui: turma_a1 (A1, com prof_a1),
-    turma_a2 (A2) e disciplinas Matemática (A1) e Português (A2)."""
+    e prof_a1 (professor_infantil em A1, JÁ vinculado à turma_a1 pelo base.py).
+    Aqui: disciplinas Matemática (A1) e Português (A2)."""
 
     @classmethod
     def setUpTestData(cls):
@@ -131,7 +131,6 @@ class UsuariosTests(CenarioMultiTenant):
         self.assertEqual(self.client.get(URL_LISTAR, {'page': 1}).status_code, 403)
 
     def test_listagem_traz_vinculos_e_metadados(self):
-        UsuarioTurma.objects.create(usuario=self.prof_a1, turma=self.turma_a1)
         dados = self._listar(self.admin_a, page=1, busca='prof.a1')
         prof = dados['results'][0]
         self.assertEqual(prof['turmas'], [{'turma': str(self.turma_a1.id), 'turma_nome': 'Nível 3A'}])
@@ -191,7 +190,7 @@ class UsuariosTests(CenarioMultiTenant):
         self.assertEqual(r.status_code, 400, r.content)
 
     def test_editar_sincroniza_turmas(self):
-        UsuarioTurma.objects.create(usuario=self.prof_a1, turma=self.turma_a1)
+        self.assertEqual(self._turmas(self.prof_a1), {self.turma_a1.id})  # vem do base.py
         outra = Turma.objects.create(nome='Nível 4A', escola=self.a1, instituicao=self.rede_a)
         self.assertEqual(self._patch(self.prof_a1, turmas=[str(outra.id)]).status_code, 200)
         self.assertEqual(self._turmas(self.prof_a1), {outra.id})
@@ -199,12 +198,11 @@ class UsuariosTests(CenarioMultiTenant):
         self.assertEqual(self._turmas(self.prof_a1), set())
 
     def test_editar_sem_listas_nao_mexe_nos_vinculos(self):
-        UsuarioTurma.objects.create(usuario=self.prof_a1, turma=self.turma_a1)
         self.assertEqual(self._patch(self.prof_a1, nome='Outro Nome').status_code, 200)
         self.assertEqual(self._turmas(self.prof_a1), {self.turma_a1.id})
 
     def test_mudar_de_escola_remove_vinculos_antigos(self):
-        UsuarioTurma.objects.create(usuario=self.prof_a1, turma=self.turma_a1)
+        self.assertEqual(self._turmas(self.prof_a1), {self.turma_a1.id})  # vem do base.py
         self.assertEqual(self._patch(self.prof_a1, escola=str(self.a2.id)).status_code, 200)
         self.assertEqual(self._turmas(self.prof_a1), set())
 
@@ -233,9 +231,10 @@ class UsuariosTests(CenarioMultiTenant):
     # =====================================================================
 
     def test_professor_nao_se_vincula_sozinho_a_turmas(self):
-        r = self._patch(self.prof_a1, self.prof_a1, nome='Novo Nome', turmas=[str(self.turma_a1.id)])
+        outra = Turma.objects.create(nome='Nível 4A', escola=self.a1, instituicao=self.rede_a)
+        r = self._patch(self.prof_a1, self.prof_a1, nome='Novo Nome', turmas=[str(outra.id)])
         self.assertEqual(r.status_code, 200, r.content)
-        self.assertEqual(self._turmas(self.prof_a1), set())
+        self.assertEqual(self._turmas(self.prof_a1), {self.turma_a1.id})  # nada mudou
         self.prof_a1.refresh_from_db()
         self.assertEqual(self.prof_a1.nome, 'Novo Nome')
 
@@ -256,8 +255,14 @@ class UsuariosTests(CenarioMultiTenant):
             self.prof_a1.refresh_from_db()
             self.assertEqual(self.prof_a1.is_active, ativo)
 
-    def test_coordenador_nao_edita_outro_coordenador(self):
-        self.assertEqual(self._patch(self.coord_a2, self.coord_a1, is_active=False).status_code, 403)
+    def test_coordenador_nao_edita_outro_coordenador_da_escola(self):
+        colega = self._novo('coord2.a1@x.com', 'coordenador', self.a1)
+        self.assertEqual(self._patch(colega, self.coord_a1, is_active=False).status_code, 403)
+        colega.refresh_from_db()
+        self.assertTrue(colega.is_active)
+
+    def test_coordenador_nao_ve_usuario_de_outra_escola(self):
+        self.assertEqual(self._patch(self.coord_a2, self.coord_a1, is_active=False).status_code, 404)
 
     def test_coordenador_nao_cria_admin(self):
         self.assertEqual(self._post_criar(self.coord_a1, nivel='admin').status_code, 403)

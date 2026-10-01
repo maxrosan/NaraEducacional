@@ -85,9 +85,10 @@ class PerguntasBnccTests(CenarioPerguntas):
         self.entrar(usuario or self.admin_a)
         return self.client.post(URL_BNCC_CRIAR, {k: v for k, v in dados.items() if v is not None}, format='json')
 
-    def _patch(self, pergunta, usuario=None, **dados):
+    # `alvo` (e não `pergunta`): `pergunta` é também um campo enviado em **dados.
+    def _patch(self, alvo, usuario=None, **dados):
         self.entrar(usuario or self.admin_a)
-        return self.client.patch(url_bncc_atualizar(pergunta), dados, format='json')
+        return self.client.patch(url_bncc_atualizar(alvo), dados, format='json')
 
     # --- listagem ---------------------------------------------------------
 
@@ -247,9 +248,10 @@ class PerguntasEspecialistasTests(CenarioPerguntas):
         self.entrar(usuario or self.admin_a)
         return self.client.post(URL_CRIAR, dados, format='json')
 
-    def _patch(self, pergunta, usuario=None, **dados):
+    # `alvo` (e não `pergunta`): `pergunta` é também um campo enviado em **dados.
+    def _patch(self, alvo, usuario=None, **dados):
         self.entrar(usuario or self.admin_a)
-        return self.client.patch(url_atualizar(pergunta), dados, format='json')
+        return self.client.patch(url_atualizar(alvo), dados, format='json')
 
     def _textos(self, dados):
         return [p['pergunta'] for p in dados['results']]
