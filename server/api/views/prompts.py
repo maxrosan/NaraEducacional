@@ -13,11 +13,17 @@ Qual escola: o coordenador sempre edita/vê a própria; admin e superadmin
 informam a escola (`escola` no body / `?escola_id=`), e o admin só as da
 própria rede.
 
+Visão da rede (`GET /prompts/rede/`): todas as categorias × todas as escolas
+que o usuário enxerga, dizendo quais escolas personalizaram cada categoria.
+É o que a tela do admin abre; o texto personalizado de uma escola só é
+buscado quando ela é aberta para edição (`/prompts/categorias/?escola_id=`).
+
 Todas as consultas usam `PromptTemplate._base_manager`: o TenantManager
 esconderia o global (sem escola) de quem tem escopo de escola.
 """
 
 from django.db.models import Prefetch, Q
+from django.db.models.functions import Length, Trim
 from rest_framework import serializers, status
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import IsAuthenticated
@@ -75,6 +81,17 @@ def _escola_do_contexto(user, escola_informada):
     return escola, None
 
 
+def _escolas_visiveis(user):
+    """Escolas ativas que o usuário enxerga. `Escola` não tem TenantManager,
+    por isso o recorte é feito aqui (mesma regra de `pode_ver_escola`)."""
+    escolas = Escola.objects.filter(ativa=True)
+    if is_superadmin(user):
+        return escolas
+    if user.nivel == 'admin':
+        return escolas.filter(instituicao_id=user.instituicao_id) if user.instituicao_id else escolas.none()
+    return escolas.filter(pk=user.escola_id) if user.escola_id else escolas.none()
+
+
 def _template_global(categoria, criar=False):
     tpl = PromptTemplate._base_manager.filter(_GLOBAL, categoria=categoria).order_by('-criado_em').first()
     if tpl is None and criar:
@@ -126,6 +143,93 @@ def listar_prompt_categorias(request):
 
     contexto = {'escola_id': escola.id if escola else None}
     return Response(PromptCategoriaSerializer(qs, many=True, context=contexto).data)
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def visao_rede_prompts(request):
+    """
+    GET /prompts/rede/ — admin: escolas da rede; coordenador: a própria;
+    superadmin: todas. Só categorias e escolas ativas.
+
+    Resposta:
+      {
+        "pode_editar_global": false,
+        "escolas": [{"id", "nome", "instituicao_nome"}],
+        "categorias": [{
+          "id", "titulo",
+          "global": {"texto", "atualizado_em"},          # texto vazio se não houver
+          "personalizadas": [{"escola", "atualizado_em"}] # só escolas com texto preenchido
+        }]
+      }
+
+    Os textos personalizados NÃO vêm aqui (a tela os busca por escola).
+    Personalizado só com espaços conta como não personalizado, igual ao
+    `resolver_prompt`. Havendo mais de um registro por categoria/escola,
+    vale o mais recente, também como no resolver.
+
+    Custo fixo: 4 queries (escolas, categorias, globais, personalizados).
+    """
+    user = request.user
+    if not pode_gerenciar(user):
+        return _sem_permissao()
+
+    escolas = list(
+        _escolas_visiveis(user).select_related('instituicao')
+        .only('id', 'nome', 'instituicao__nome')
+        .order_by('instituicao__nome', 'nome')
+    )
+    categorias = list(PromptCategoria.objects.filter(ativo=True).only('id', 'titulo').order_by('titulo'))
+    ids_categorias = [c.id for c in categorias]
+
+    globais = {}
+    for tpl in (
+        PromptTemplate._base_manager.filter(_GLOBAL, categoria_id__in=ids_categorias)
+        .only('categoria_id', 'prompt_global', 'atualizado_em', 'criado_em')
+        .order_by('-criado_em')
+    ):
+        globais.setdefault(tpl.categoria_id, tpl)
+
+    mais_recentes = {}
+    for linha in (
+        PromptTemplate._base_manager.filter(
+            categoria_id__in=ids_categorias, escola_id__in=[e.id for e in escolas],
+        )
+        .annotate(tamanho=Length(Trim('personalizado')))
+        .values('categoria_id', 'escola_id', 'tamanho', 'atualizado_em')
+        .order_by('-criado_em')
+    ):
+        mais_recentes.setdefault((linha['categoria_id'], linha['escola_id']), linha)
+
+    personalizadas = {}
+    for (categoria_id, escola_id), linha in mais_recentes.items():
+        if linha['tamanho']:
+            personalizadas.setdefault(categoria_id, []).append(
+                {'escola': escola_id, 'atualizado_em': linha['atualizado_em']},
+            )
+
+    def _global(categoria_id):
+        tpl = globais.get(categoria_id)
+        if tpl is None:
+            return {'texto': '', 'atualizado_em': None}
+        return {'texto': tpl.prompt_global, 'atualizado_em': tpl.atualizado_em}
+
+    return Response({
+        'pode_editar_global': is_superadmin(user),
+        'escolas': [
+            {'id': e.id, 'nome': e.nome, 'instituicao_nome': e.instituicao.nome}
+            for e in escolas
+        ],
+        'categorias': [
+            {
+                'id': c.id,
+                'titulo': c.titulo,
+                'global': _global(c.id),
+                'personalizadas': personalizadas.get(c.id, []),
+            }
+            for c in categorias
+        ],
+    })
 
 
 @api_view(['POST'])

@@ -967,6 +967,30 @@ export async function listarEscolas() {
   return getJson('/escolas/', 'listar escolas');
 }
 
+export async function listarPromptsRede() {
+  return getJson('/prompts/rede/', 'listar prompts da rede');
+}
+
+export async function listarPromptsDaEscola(escolaId) {
+  return getJson(comQuery('/prompts/categorias/', { escola_id: escolaId }), 'listar prompts da escola');
+}
+
+export async function salvarPromptPersonalizado(categoriaId, escolaId, texto) {
+  return enviarJson(
+    '/prompts/salvar/', 'POST',
+    { categoria: categoriaId, escola: escolaId, personalizado: texto },
+    'salvar prompt personalizado',
+  );
+}
+
+export async function salvarPromptGlobal(categoriaId, texto) {
+  return enviarJson(
+    '/prompts/salvar/', 'POST',
+    { categoria: categoriaId, prompt_global: texto },
+    'salvar prompt global',
+  );
+}
+
 export async function listarResumoEscolas() {
   return getJson('/admin/dashboard/', 'carregar o dashboard do admin');
 }

@@ -223,6 +223,7 @@ from .views.prompts import (
     criar_prompt_categoria,
     atualizar_prompt_categoria,
     deletar_prompt_categoria,
+    visao_rede_prompts,
 )
 from .views.analise_producao import (
     upload_e_analise_escrita,
@@ -515,4 +516,5 @@ urlpatterns = [
     path('prompts/categorias/<uuid:categoria_id>/atualizar/', atualizar_prompt_categoria, name='atualizar_prompt_categoria'),
     path('prompts/categorias/<uuid:categoria_id>/deletar/', deletar_prompt_categoria, name='deletar_prompt_categoria'),
     path('prompts/salvar/', salvar_prompt_template, name='salvar_prompt_template'),
+    path('prompts/rede/', visao_rede_prompts, name='visao_rede_prompts'),
 ]

@@ -2,7 +2,10 @@
 notificações — recursos em que usuários SEM escola (superadmin, suporte)
 convivem com o recorte por tenant.
 """
-from api.models import Notificacao, PromptCategoria, PromptTemplate, Ticket
+from django.db import connection
+from django.test.utils import CaptureQueriesContext
+
+from api.models import Escola, Notificacao, PromptCategoria, PromptTemplate, Ticket
 from api.services.prompt_resolver import resolver_prompt
 from api.tenancy import clear_current_tenant, set_current_tenant
 
@@ -15,10 +18,38 @@ class PromptTests(CenarioMultiTenant):
     @classmethod
     def setUpTestData(cls):
         super().setUpTestData()
-        cls.categoria = PromptCategoria.objects.create(titulo='Escrita')
+        # 'Escrita' já vem da migration 0003 (categorias e prompts padrão).
+        cls.categoria, _ = PromptCategoria.objects.get_or_create(titulo='Escrita')
         cls.tpl_global = PromptTemplate._base_manager.create(
             categoria=cls.categoria, prompt_global='GLOBAL', personalizado='',
         )
+
+    def test_categorias_padrao_criadas_pela_migration(self):
+        titulos = set(PromptCategoria.objects.filter(ativo=True).values_list('titulo', flat=True))
+        self.assertTrue({
+            'Relatórios - Atividades', 'Voz', 'Desenho', 'Planejamento', 'Escrita',
+            'Relatórios - Relato Individual', 'Relatórios - Produções', 'Relatórios - Conclusão',
+        } <= titulos)
+        self.assertEqual(PromptCategoria.objects.filter(titulo='Escrita').count(), 1)
+
+    def test_prompts_globais_carregados_pela_migration(self):
+        com_global = [
+            'Escrita', 'Desenho', 'Voz', 'Relatórios - Atividades', 'Relatórios - Relato Individual',
+            'Relatórios - Produções', 'Relatórios - Conclusão',
+        ]
+        for titulo in com_global:
+            with self.subTest(categoria=titulo):
+                self.assertTrue(
+                    PromptTemplate._base_manager.filter(
+                        categoria__titulo=titulo, escola__isnull=True, instituicao__isnull=True,
+                    ).exclude(prompt_global='').exists()
+                )
+        # Planejamento atende duas tarefas com fallbacks diferentes no código.
+        self.assertFalse(
+            PromptTemplate._base_manager.filter(categoria__titulo='Planejamento', escola__isnull=True).exists()
+        )
+        self.assertTrue(resolver_prompt('Voz').startswith('Você é um assistente'))
+        self.assertNotIn('{{', resolver_prompt('Voz'))
 
     def _salvar(self, **campos):
         return self.client.post('/api/prompts/salvar/', {'categoria': str(self.categoria.id), **campos}, format='json')
@@ -89,6 +120,98 @@ class PromptTests(CenarioMultiTenant):
         self.assertEqual(origem(), 'global')
         self._salvar(personalizado='Da A1')
         self.assertEqual(origem(), 'personalizado')
+
+    # --- visão da rede (GET /prompts/rede/) -------------------------------
+
+    def _rede(self, usuario):
+        self.entrar(usuario)
+        r = self.client.get('/api/prompts/rede/')
+        self.assertEqual(r.status_code, 200, r.content)
+        return r.json()
+
+    def _categoria_na_rede(self, dados, categoria=None):
+        categoria = categoria or self.categoria
+        return next(c for c in dados['categorias'] if c['id'] == str(categoria.id))
+
+    @staticmethod
+    def _escolas_personalizadas(categoria_dados):
+        return {p['escola'] for p in categoria_dados['personalizadas']}
+
+    def test_rede_admin_ve_as_escolas_da_propria_rede(self):
+        dados = self._rede(self.admin_a)
+        ids = {e['id'] for e in dados['escolas']}
+        self.assertIn(str(self.a1.id), ids)
+        self.assertIn(str(self.a2.id), ids)
+        self.assertNotIn(str(self.b1.id), ids)
+        self.assertFalse(dados['pode_editar_global'])
+
+    def test_rede_traz_o_global_e_comeca_sem_personalizacao(self):
+        cat = self._categoria_na_rede(self._rede(self.admin_a))
+        self.assertEqual(cat['global']['texto'], 'GLOBAL')
+        self.assertEqual(cat['personalizadas'], [])
+
+    def test_rede_marca_so_as_escolas_que_personalizaram(self):
+        self.entrar(self.admin_a)
+        self._salvar(personalizado='Da A2', escola=str(self.a2.id))
+        cat = self._categoria_na_rede(self._rede(self.admin_a))
+        self.assertEqual(self._escolas_personalizadas(cat), {str(self.a2.id)})
+        self.assertNotIn('personalizado', cat['personalizadas'][0])
+
+    def test_rede_personalizado_em_branco_conta_como_global(self):
+        self.entrar(self.admin_a)
+        self._salvar(personalizado='Da A1', escola=str(self.a1.id))
+        self._salvar(personalizado='   ', escola=str(self.a1.id))
+        cat = self._categoria_na_rede(self._rede(self.admin_a))
+        self.assertEqual(cat['personalizadas'], [])
+        self.assertEqual(resolver_prompt('Escrita', escola_id=self.a1.id), 'GLOBAL')
+
+    def test_rede_nao_mostra_personalizacao_de_outra_rede(self):
+        PromptTemplate._base_manager.create(
+            categoria=self.categoria, escola=self.b1, instituicao=self.rede_b,
+            prompt_global='', personalizado='Da B1',
+        )
+        cat = self._categoria_na_rede(self._rede(self.admin_a))
+        self.assertNotIn(str(self.b1.id), self._escolas_personalizadas(cat))
+
+    def test_rede_coordenador_ve_so_a_propria_escola(self):
+        dados = self._rede(self.coord_a1)
+        self.assertEqual([e['id'] for e in dados['escolas']], [str(self.a1.id)])
+
+    def test_rede_superadmin_ve_todas_e_pode_editar_o_global(self):
+        dados = self._rede(self.superadmin)
+        ids = {e['id'] for e in dados['escolas']}
+        self.assertTrue({str(self.a1.id), str(self.b1.id)} <= ids)
+        self.assertTrue(dados['pode_editar_global'])
+
+    def test_rede_ignora_categoria_e_escola_inativas(self):
+        inativa = PromptCategoria.objects.create(titulo='Antiga', ativo=False)
+        Escola.objects.filter(pk=self.a2.pk).update(ativa=False)
+        dados = self._rede(self.admin_a)
+        self.assertNotIn(str(inativa.id), {c['id'] for c in dados['categorias']})
+        self.assertNotIn(str(self.a2.id), {e['id'] for e in dados['escolas']})
+
+    def test_rede_professor_nao_acessa(self):
+        self.entrar(self.prof_a1)
+        self.assertEqual(self.client.get('/api/prompts/rede/').status_code, 403)
+
+    def test_rede_numero_de_queries_nao_cresce(self):
+        self.entrar(self.admin_a)
+
+        def contar():
+            with CaptureQueriesContext(connection) as ctx:
+                self.assertEqual(self.client.get('/api/prompts/rede/').status_code, 200)
+            return len(ctx.captured_queries)
+
+        antes = contar()
+        for i in range(3):
+            categoria = PromptCategoria.objects.create(titulo=f'Extra {i}')
+            PromptTemplate._base_manager.create(categoria=categoria, prompt_global=f'G{i}', personalizado='')
+            for escola in (self.a1, self.a2):
+                PromptTemplate._base_manager.create(
+                    categoria=categoria, escola=escola, instituicao_id=escola.instituicao_id,
+                    prompt_global='', personalizado=f'P{i}',
+                )
+        self.assertEqual(contar(), antes)
 
 
 class TicketTests(CenarioMultiTenant):
