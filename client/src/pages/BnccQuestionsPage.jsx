@@ -661,7 +661,14 @@ const EditarPerguntaForm = ({ isOpen, onClose, pergunta, onSave, existingCampos,
   );
 };
 
-const BnccQuestionsPage = () => {
+/**
+ * Gestão das perguntas BNCC.
+ *
+ * `embutida`: renderiza só o conteúdo (título, ações e lista), para aparecer
+ * como aba do painel do admin (/admin/bncc), com o menu do painel. Sem ela, é
+ * a página avulsa antiga (/admin/perguntas-bncc), com cabeçalho próprio.
+ */
+const BnccQuestionsPage = ({ embutida = false }) => {
   const navigate = useNavigate();
   const { toast } = useToast();
 
@@ -1090,182 +1097,205 @@ const BnccQuestionsPage = () => {
     setEditingPergunta(null);
   };
 
+  const acoesCabecalho = (
+    <div className="flex items-center gap-2">
+      <Button variant="outline" onClick={() => setIsCampoManagerOpen(true)}>
+        <Settings className="h-4 w-4 mr-2" />
+        Gerenciar Campos
+      </Button>
+      <Button onClick={() => setIsNewModalOpen(true)}>
+        <PlusCircle className="h-4 w-4 mr-2" />
+        Nova Pergunta
+      </Button>
+    </div>
+  );
+
+  const cartaoPerguntas = (
+    <Card className="shadow-lg">
+      <CardHeader>
+        <CardTitle>Perguntas da BNCC</CardTitle>
+        <CardDescription>
+          <span>{filteredPerguntas.length} pergunta(s) encontrada(s)</span>
+          {(nivelFilter || campoFilter) && <span> com os filtros aplicados</span>}
+        </CardDescription>
+      </CardHeader>
+      <CardContent>
+        {/* Filtros e Ações */}
+        <div className="space-y-4 mb-6">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <Select value={nivelFilter} onValueChange={(value) => setNivelFilter(value === 'all-levels' ? '' : value)}>
+              <SelectTrigger>
+                <SelectValue placeholder="Filtrar por Nível/Faixa Etária" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all-levels">Todos os Níveis</SelectItem>
+                {educationLevels.map(n => <SelectItem key={n} value={n}>{n}</SelectItem>)}
+              </SelectContent>
+            </Select>
+
+            <Select value={campoFilter} onValueChange={(value) => setCampoFilter(value === 'all-fields' ? '' : value)}>
+              <SelectTrigger>
+                <SelectValue placeholder="Filtrar por Campo de Experiência" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all-fields">Todos os Campos</SelectItem>
+                {existingCampos.map(campo => (
+                  <SelectItem key={campo} value={campo}>
+                    {campoExperienciaMap[campo]?.name || campo}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2">
+            <Button variant="outline" size="sm" onClick={handleExpandAll}>
+              <ChevronsUpDown className="h-4 w-4 mr-2" />Expandir Tudo
+            </Button>
+            <Button variant="outline" size="sm" onClick={handleCollapseAll}>
+              <ChevronsDownUp className="h-4 w-4 mr-2" />Recolher Tudo
+            </Button>
+            <Button variant="outline" size="sm" onClick={() => toast({ title: 'Funcionalidade em breve!' })}>
+              <FileUp className="h-4 w-4 mr-2" />Importar CSV
+            </Button>
+            <Button variant="outline" size="sm" onClick={handleExportCSV}>
+              <FileDown className="h-4 w-4 mr-2" />Exportar CSV
+            </Button>
+          </div>
+        </div>
+
+        {/* Lista de Perguntas */}
+        {loading ? (
+          <div className="flex justify-center items-center h-64">
+            <Loader2 className="h-8 w-8 animate-spin text-purple-500" />
+          </div>
+        ) : Object.keys(groupedPerguntas).length === 0 ? (
+          <div className="text-center py-12 text-gray-500">
+            <BookOpen className="h-12 w-12 mx-auto mb-4 text-gray-300" />
+            <p>Nenhuma pergunta encontrada.</p>
+            <Button className="mt-4" onClick={() => setIsNewModalOpen(true)}>
+              <PlusCircle className="h-4 w-4 mr-2" />
+              Criar primeira pergunta
+            </Button>
+          </div>
+        ) : (
+          <Accordion type="multiple" value={expanded} onValueChange={setExpanded}>
+            {Object.entries(groupedPerguntas).map(([campo, perguntasDoCampo]) => {
+              const Icon = resolveCampoIcon(campo, customIconMap[campo]);
+              return (
+                <AccordionItem key={campo} value={campo}>
+                  <AccordionTrigger className="text-lg font-bold text-purple-700 hover:no-underline">
+                    <div className="flex items-center gap-3">
+                      <Icon className="h-6 w-6" />
+                      <span>{campoExperienciaMap[campo]?.name || campo}</span>
+                      <span className="text-sm font-normal text-gray-500">
+                        ({perguntasDoCampo.length} pergunta{perguntasDoCampo.length !== 1 ? 's' : ''})
+                      </span>
+                    </div>
+                  </AccordionTrigger>
+                  <AccordionContent>
+                    <div className="space-y-3 pl-9">
+                      {perguntasDoCampo.map(p => (
+                        <div key={p.id} className="p-4 bg-gray-50 rounded-lg border hover:border-purple-200 transition-colors">
+                          <div className="flex items-start justify-between gap-4">
+                            <div className="flex-1">
+                              <p className="font-semibold text-gray-800">{p.pergunta}</p>
+                              {p.pergunta_norma && (
+                                <div className="mt-2 p-2 bg-blue-50 border-l-2 border-blue-400 rounded">
+                                  <p className="text-xs text-blue-600 font-medium">Referência na Norma BNCC:</p>
+                                  <p className="text-sm text-blue-800">{p.pergunta_norma}</p>
+                                </div>
+                              )}
+                              <div className="flex flex-wrap items-center gap-2 text-xs text-gray-500 mt-2">
+                                <span className="font-medium bg-purple-100 text-purple-800 px-2 py-0.5 rounded">
+                                  {p.faixa_etaria}
+                                </span>
+                                {p.habilidade_bncc && (
+                                  <span className="font-mono bg-green-100 text-green-800 px-2 py-0.5 rounded">
+                                    {p.habilidade_bncc}
+                                  </span>
+                                )}
+                                {p.area_conhecimento && (
+                                  <span className="bg-gray-100 text-gray-700 px-2 py-0.5 rounded">
+                                    {p.area_conhecimento}
+                                  </span>
+                                )}
+                              </div>
+                            </div>
+                            <div className="flex items-center gap-1">
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                onClick={() => handleEditClick(p)}
+                                title="Editar"
+                              >
+                                <Edit className="h-4 w-4 text-gray-500 hover:text-purple-600" />
+                              </Button>
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                onClick={() => setDeleteConfirmId(p.id)}
+                                title="Excluir"
+                              >
+                                <Trash2 className="h-4 w-4 text-gray-500 hover:text-red-600" />
+                              </Button>
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </AccordionContent>
+                </AccordionItem>
+              );
+            })}
+          </Accordion>
+        )}
+      </CardContent>
+    </Card>
+  );
+
   return (
     <>
-      <Helmet>
-        <title>NARA - Gestão de Perguntas BNCC</title>
-        <meta name="description" content="Gerencie as perguntas pedagógicas baseadas na BNCC." />
-      </Helmet>
-
-      <div className="bg-[#F5F3FA] min-h-screen">
-        <header className="bg-white/80 backdrop-blur-sm shadow-sm sticky top-0 z-10">
-          <div className="container mx-auto px-4 sm:px-6 lg:px-8 py-4 flex items-center justify-between">
-            <div className="flex items-center gap-4">
-              <Button variant="ghost" size="icon" onClick={() => navigate('/admin/perguntas')}>
-                <ArrowLeft className="h-6 w-6" />
-              </Button>
-              <div>
-                <h1 className="text-xl font-bold text-gray-800">Gestão de Perguntas BNCC</h1>
-                <p className="text-sm text-gray-500">Administre as perguntas pedagógicas por Campo de Experiência</p>
-              </div>
+      {embutida ? (
+        <div className="space-y-4">
+          <div className="flex flex-wrap items-center justify-between gap-4">
+            <div>
+              <h3 className="text-xl font-bold text-gray-800">Gestão de Perguntas BNCC</h3>
+              <p className="text-sm text-gray-500">Administre as perguntas pedagógicas por Campo de Experiência</p>
             </div>
-            <div className="flex items-center gap-2">
-              <Button variant="outline" onClick={() => setIsCampoManagerOpen(true)}>
-                <Settings className="h-4 w-4 mr-2" />
-                Gerenciar Campos
-              </Button>
-              <Button onClick={() => setIsNewModalOpen(true)}>
-                <PlusCircle className="h-4 w-4 mr-2" />
-                Nova Pergunta
-              </Button>
-            </div>
+            {acoesCabecalho}
           </div>
-        </header>
+          {cartaoPerguntas}
+        </div>
+      ) : (
+        <>
+          <Helmet>
+            <title>NARA - Gestão de Perguntas BNCC</title>
+            <meta name="description" content="Gerencie as perguntas pedagógicas baseadas na BNCC." />
+          </Helmet>
 
-        <main className="container mx-auto px-4 sm:px-6 lg:px-8 py-8">
-          <Card className="shadow-lg">
-            <CardHeader>
-              <CardTitle>Perguntas da BNCC</CardTitle>
-              <CardDescription>
-                <span>{filteredPerguntas.length} pergunta(s) encontrada(s)</span>
-                {(nivelFilter || campoFilter) && <span> com os filtros aplicados</span>}
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              {/* Filtros e Ações */}
-              <div className="space-y-4 mb-6">
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <Select value={nivelFilter} onValueChange={(value) => setNivelFilter(value === 'all-levels' ? '' : value)}>
-                    <SelectTrigger>
-                      <SelectValue placeholder="Filtrar por Nível/Faixa Etária" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="all-levels">Todos os Níveis</SelectItem>
-                      {educationLevels.map(n => <SelectItem key={n} value={n}>{n}</SelectItem>)}
-                    </SelectContent>
-                  </Select>
-
-                  <Select value={campoFilter} onValueChange={(value) => setCampoFilter(value === 'all-fields' ? '' : value)}>
-                    <SelectTrigger>
-                      <SelectValue placeholder="Filtrar por Campo de Experiência" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="all-fields">Todos os Campos</SelectItem>
-                      {existingCampos.map(campo => (
-                        <SelectItem key={campo} value={campo}>
-                          {campoExperienciaMap[campo]?.name || campo}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+          <div className="bg-[#F5F3FA] min-h-screen">
+            <header className="bg-white/80 backdrop-blur-sm shadow-sm sticky top-0 z-10">
+              <div className="container mx-auto px-4 sm:px-6 lg:px-8 py-4 flex items-center justify-between">
+                <div className="flex items-center gap-4">
+                  <Button variant="ghost" size="icon" onClick={() => navigate('/admin/dashboard')}>
+                    <ArrowLeft className="h-6 w-6" />
+                  </Button>
+                  <div>
+                    <h1 className="text-xl font-bold text-gray-800">Gestão de Perguntas BNCC</h1>
+                    <p className="text-sm text-gray-500">Administre as perguntas pedagógicas por Campo de Experiência</p>
+                  </div>
                 </div>
-
-                <div className="flex flex-wrap items-center gap-2">
-                  <Button variant="outline" size="sm" onClick={handleExpandAll}>
-                    <ChevronsUpDown className="h-4 w-4 mr-2" />Expandir Tudo
-                  </Button>
-                  <Button variant="outline" size="sm" onClick={handleCollapseAll}>
-                    <ChevronsDownUp className="h-4 w-4 mr-2" />Recolher Tudo
-                  </Button>
-                  <Button variant="outline" size="sm" onClick={() => toast({ title: 'Funcionalidade em breve!' })}>
-                    <FileUp className="h-4 w-4 mr-2" />Importar CSV
-                  </Button>
-                  <Button variant="outline" size="sm" onClick={handleExportCSV}>
-                    <FileDown className="h-4 w-4 mr-2" />Exportar CSV
-                  </Button>
-                </div>
+                {acoesCabecalho}
               </div>
+            </header>
 
-              {/* Lista de Perguntas */}
-              {loading ? (
-                <div className="flex justify-center items-center h-64">
-                  <Loader2 className="h-8 w-8 animate-spin text-purple-500" />
-                </div>
-              ) : Object.keys(groupedPerguntas).length === 0 ? (
-                <div className="text-center py-12 text-gray-500">
-                  <BookOpen className="h-12 w-12 mx-auto mb-4 text-gray-300" />
-                  <p>Nenhuma pergunta encontrada.</p>
-                  <Button className="mt-4" onClick={() => setIsNewModalOpen(true)}>
-                    <PlusCircle className="h-4 w-4 mr-2" />
-                    Criar primeira pergunta
-                  </Button>
-                </div>
-              ) : (
-                <Accordion type="multiple" value={expanded} onValueChange={setExpanded}>
-                  {Object.entries(groupedPerguntas).map(([campo, perguntasDoCampo]) => {
-                    const Icon = resolveCampoIcon(campo, customIconMap[campo]);
-                    return (
-                      <AccordionItem key={campo} value={campo}>
-                        <AccordionTrigger className="text-lg font-bold text-purple-700 hover:no-underline">
-                          <div className="flex items-center gap-3">
-                            <Icon className="h-6 w-6" />
-                            <span>{campoExperienciaMap[campo]?.name || campo}</span>
-                            <span className="text-sm font-normal text-gray-500">
-                              ({perguntasDoCampo.length} pergunta{perguntasDoCampo.length !== 1 ? 's' : ''})
-                            </span>
-                          </div>
-                        </AccordionTrigger>
-                        <AccordionContent>
-                          <div className="space-y-3 pl-9">
-                            {perguntasDoCampo.map(p => (
-                              <div key={p.id} className="p-4 bg-gray-50 rounded-lg border hover:border-purple-200 transition-colors">
-                                <div className="flex items-start justify-between gap-4">
-                                  <div className="flex-1">
-                                    <p className="font-semibold text-gray-800">{p.pergunta}</p>
-                                    {p.pergunta_norma && (
-                                      <div className="mt-2 p-2 bg-blue-50 border-l-2 border-blue-400 rounded">
-                                        <p className="text-xs text-blue-600 font-medium">Referência na Norma BNCC:</p>
-                                        <p className="text-sm text-blue-800">{p.pergunta_norma}</p>
-                                      </div>
-                                    )}
-                                    <div className="flex flex-wrap items-center gap-2 text-xs text-gray-500 mt-2">
-                                      <span className="font-medium bg-purple-100 text-purple-800 px-2 py-0.5 rounded">
-                                        {p.faixa_etaria}
-                                      </span>
-                                      {p.habilidade_bncc && (
-                                        <span className="font-mono bg-green-100 text-green-800 px-2 py-0.5 rounded">
-                                          {p.habilidade_bncc}
-                                        </span>
-                                      )}
-                                      {p.area_conhecimento && (
-                                        <span className="bg-gray-100 text-gray-700 px-2 py-0.5 rounded">
-                                          {p.area_conhecimento}
-                                        </span>
-                                      )}
-                                    </div>
-                                  </div>
-                                  <div className="flex items-center gap-1">
-                                    <Button
-                                      variant="ghost"
-                                      size="icon"
-                                      onClick={() => handleEditClick(p)}
-                                      title="Editar"
-                                    >
-                                      <Edit className="h-4 w-4 text-gray-500 hover:text-purple-600" />
-                                    </Button>
-                                    <Button
-                                      variant="ghost"
-                                      size="icon"
-                                      onClick={() => setDeleteConfirmId(p.id)}
-                                      title="Excluir"
-                                    >
-                                      <Trash2 className="h-4 w-4 text-gray-500 hover:text-red-600" />
-                                    </Button>
-                                  </div>
-                                </div>
-                              </div>
-                            ))}
-                          </div>
-                        </AccordionContent>
-                      </AccordionItem>
-                    );
-                  })}
-                </Accordion>
-              )}
-            </CardContent>
-          </Card>
-        </main>
-      </div>
+            <main className="container mx-auto px-4 sm:px-6 lg:px-8 py-8">
+              {cartaoPerguntas}
+            </main>
+          </div>
+        </>
+      )}
 
       {/* Modal de Gerenciamento de Campos */}
       <Dialog

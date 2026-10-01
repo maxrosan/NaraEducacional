@@ -1161,6 +1161,46 @@ export async function atualizarPeriodoAvaliativo(periodoId, dados) {
   return enviarJson(`/periodos-avaliativos/${periodoId}/atualizar/`, 'PATCH', dados, 'atualizar período avaliativo');
 }
 
+// ============================================================
+// Perguntas dos especialistas e campos de experiência
+// ============================================================
+
+/**
+ * Listagem paginada (tela "Perguntas" do admin). Cada pergunta traz nome da
+ * escola, do campo de experiência e o código/descrição da habilidade BNCC.
+ * @param {Object} filtros - { status: 'ativa'|'inativa', escola, nivel, campo, busca, page, pageSize }
+ * @returns {Promise<{count, pagina, total_paginas, page_size, totais: {ativas, inativas}, results}>}
+ */
+export async function listarPerguntasEspecialistasPaginado({ status, escola, nivel, campo, busca, page = 1, pageSize } = {}) {
+  return getJson(
+    comQuery('/perguntas-especialistas/', { status, escola, nivel, campo, busca, page, page_size: pageSize }),
+    'listar perguntas',
+  );
+}
+
+/**
+ * Cria pergunta de especialista. `referencia_bncc` (código, ex.: "EI03EO01") é
+ * obrigatória. Admin informa `escola`; coordenador e especialista usam a própria.
+ */
+export async function criarPerguntaEspecialista(dados) {
+  return enviarJson('/perguntas-especialistas/criar/', 'POST', dados, 'criar pergunta');
+}
+
+/** Atualiza pergunta de especialista (PATCH). Desativar: { status: 'inativa' }. */
+export async function atualizarPerguntaEspecialista(perguntaId, dados) {
+  return enviarJson(`/perguntas-especialistas/${perguntaId}/atualizar/`, 'PATCH', dados, 'atualizar pergunta');
+}
+
+/** Campos de experiência visíveis (oficiais + os das escolas do escopo). */
+export async function listarCamposPedagogicos() {
+  return getJson('/campos-pedagogicos/', 'listar campos de experiência');
+}
+
+/** Cria campo de experiência na escola informada ({ nome, icone, escola }). */
+export async function criarCampoPedagogico(dados) {
+  return enviarJson('/campos-pedagogicos/criar/', 'POST', dados, 'criar campo de experiência');
+}
+
 /** Exclui o período (o backend responde 204, sem corpo). */
 export async function excluirPeriodoAvaliativo(periodoId) {
   const response = await authFetch(

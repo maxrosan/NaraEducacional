@@ -4,7 +4,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import {
   Building, Users, BookUser, CalendarDays, ClipboardList, FileCog,
   HelpCircle, UserPlus, GraduationCap, Activity, Wand2,
-  ChevronDown, LogOut, User, ShieldCheck, Menu, X,
+  ChevronDown, ChevronRight, LogOut, User, ShieldCheck, Menu, X,
 } from 'lucide-react';
 import { useNavigate, useParams, useLocation } from 'react-router-dom';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -18,6 +18,7 @@ import DisciplinasTab from '@/components/admin/DisciplinasTab';
 import EscolasTab from '@/components/admin/EscolasTab';
 import { useAuth } from '@/contexts/AuthContext';
 import OpenAIUsagePage from '@/pages/OpenAIUsagePage';
+import BnccQuestionsPage from '@/pages/BnccQuestionsPage';
 
 // ─── Nav items ────────────────────────────────────────────────────────────────
 
@@ -38,7 +39,13 @@ const NAV_ITEMS = [
     children: [
       { label: "Períodos",   tab: "periodos"          },
       { label: "Usuários",   tab: "usuarios"          },
-      { label: "Perguntas",  tab: "perguntas"         },
+      {
+        label: "Perguntas",
+        children: [
+          { label: "BNCC",         tab: "bncc"      },
+          { label: "Especialista", tab: "perguntas" },
+        ],
+      },
       { label: "Registros",  tab: "registros"         },
       { label: "OpenAI",     tab: "openai"            },
       { label: "Prompts",    tab: "prompts"           },
@@ -46,6 +53,11 @@ const NAV_ITEMS = [
     ],
   },
 ];
+
+/** O item (ou algum descendente dele) aponta para `tab`. */
+function contemTab(item, tab) {
+  return item.tab === tab || (item.children ?? []).some((c) => contemTab(c, tab));
+}
 
 // ─── Helpers de usuário ───────────────────────────────────────────────────────
 
@@ -94,12 +106,72 @@ function Dropdown({ trigger, children, align = "left" }) {
   );
 }
 
+// ─── Submenu dentro de um dropdown (desktop) ─────────────────────────────────
+// Abre ao lado ao passar o mouse ou ao clicar (clique também serve no touch).
+
+function SubmenuDesktop({ item, tabAtiva, onSelect }) {
+  const [aberto, setAberto] = useState(false);
+  const filhoAtivo = contemTab(item, tabAtiva);
+
+  return (
+    <div
+      className="relative"
+      onMouseEnter={() => setAberto(true)}
+      onMouseLeave={() => setAberto(false)}
+    >
+      <button
+        type="button"
+        aria-haspopup="menu"
+        aria-expanded={aberto}
+        onClick={() => setAberto((v) => !v)}
+        className={`flex w-full items-center justify-between px-5 py-2.5 text-sm transition-colors ${
+          filhoAtivo || aberto
+            ? "bg-purple-50 font-medium text-purple-700"
+            : "text-gray-600 hover:bg-gray-50 hover:text-gray-900"
+        }`}
+      >
+        <span className="flex items-center">
+          {filhoAtivo && <span className="mr-2 h-1.5 w-1.5 rounded-full bg-purple-600" />}
+          {item.label}
+        </span>
+        <ChevronRight size={14} className={aberto ? "text-purple-600" : "text-gray-400"} />
+      </button>
+      {aberto && (
+        // pl-1 (e não ml-1): o espaço entre os menus faz parte da área de hover.
+        <div className="absolute left-full top-0 z-50 -mt-2 pl-1">
+        <div role="menu" className="min-w-[160px] rounded-xl border border-gray-100 bg-white py-2 shadow-xl shadow-gray-200/60">
+          {item.children.map((child) => {
+            const ativo = tabAtiva === child.tab;
+            return (
+              <button
+                key={child.label}
+                role="menuitem"
+                onClick={() => onSelect(child.tab)}
+                className={`flex w-full items-center px-5 py-2.5 text-sm transition-colors ${
+                  ativo
+                    ? "bg-purple-50 font-medium text-purple-700"
+                    : "text-gray-600 hover:bg-gray-50 hover:text-gray-900"
+                }`}
+              >
+                {ativo && <span className="mr-2 h-1.5 w-1.5 rounded-full bg-purple-600" />}
+                {child.label}
+              </button>
+            );
+          })}
+        </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─── Navbar ───────────────────────────────────────────────────────────────────
 
 function Navbar({ onTabChange, tabAtiva }) {
   const { user, signOut } = useAuth();
   const [menuAberto, setMenuAberto] = useState(false);
   const [grupoAberto, setGrupoAberto] = useState(null); // label do grupo expandido no mobile
+  const [subgrupoAberto, setSubgrupoAberto] = useState(null); // label do submenu expandido no mobile
 
   const nomeCompleto = user?.user_metadata?.full_name || user?.nome || user?.email || "Usuário";
   const email        = user?.email ?? "";
@@ -150,7 +222,7 @@ function Navbar({ onTabChange, tabAtiva }) {
               );
             }
 
-            const filhoAtivo = item.children.some((c) => c.tab === tabAtiva);
+            const filhoAtivo = contemTab(item, tabAtiva);
             return (
               <Dropdown
                 key={item.label}
@@ -167,6 +239,16 @@ function Navbar({ onTabChange, tabAtiva }) {
               >
                 {(close) =>
                   item.children.map((child) => {
+                    if (child.children) {
+                      return (
+                        <SubmenuDesktop
+                          key={child.label}
+                          item={child}
+                          tabAtiva={tabAtiva}
+                          onSelect={(tab) => handleNavClick(tab, close)}
+                        />
+                      );
+                    }
                     const ativo = tabAtiva === child.tab;
                     return (
                       <button
@@ -317,7 +399,7 @@ function Navbar({ onTabChange, tabAtiva }) {
                     );
                   }
 
-                  const filhoAtivo = item.children.some((c) => c.tab === tabAtiva);
+                  const filhoAtivo = contemTab(item, tabAtiva);
                   const esteGrupoAberto = grupoAberto === item.label;
 
                   return (
@@ -344,6 +426,46 @@ function Navbar({ onTabChange, tabAtiva }) {
                           >
                             <div className="ml-4 mt-0.5 space-y-0.5 border-l-2 border-gray-100 pl-3">
                               {item.children.map((child) => {
+                                if (child.children) {
+                                  const subAberto = subgrupoAberto === child.label;
+                                  const subAtivo = contemTab(child, tabAtiva);
+                                  return (
+                                    <div key={child.label}>
+                                      <button
+                                        onClick={() => setSubgrupoAberto(subAberto ? null : child.label)}
+                                        className={`flex w-full items-center justify-between rounded-lg px-3 py-2 text-sm transition-colors ${
+                                          subAtivo || subAberto
+                                            ? "bg-purple-50 font-medium text-purple-700"
+                                            : "text-gray-500 hover:bg-gray-50 hover:text-gray-700"
+                                        }`}
+                                      >
+                                        {child.label}
+                                        <ChevronDown size={13} className={`transition-transform ${subAberto ? "rotate-180" : ""}`} />
+                                      </button>
+                                      {subAberto && (
+                                        <div className="ml-3 mt-0.5 space-y-0.5 border-l-2 border-gray-100 pl-3">
+                                          {child.children.map((neto) => {
+                                            const ativo = tabAtiva === neto.tab;
+                                            return (
+                                              <button
+                                                key={neto.label}
+                                                onClick={() => handleNavClick(neto.tab, null)}
+                                                className={`flex w-full items-center rounded-lg px-3 py-2 text-sm transition-colors ${
+                                                  ativo
+                                                    ? "bg-purple-50 font-medium text-purple-700"
+                                                    : "text-gray-500 hover:bg-gray-50 hover:text-gray-700"
+                                                }`}
+                                              >
+                                                {ativo && <span className="mr-2 h-1.5 w-1.5 rounded-full bg-purple-600" />}
+                                                {neto.label}
+                                              </button>
+                                            );
+                                          })}
+                                        </div>
+                                      )}
+                                    </div>
+                                  );
+                                }
                                 const ativo = tabAtiva === child.tab;
                                 return (
                                   <button
@@ -448,7 +570,8 @@ const AdminPage = () => {
               <TabsTrigger value="relatorios">Relatórios</TabsTrigger>
               <TabsTrigger value="periodos">Períodos</TabsTrigger>
               <TabsTrigger value="usuarios">Usuários</TabsTrigger>
-              <TabsTrigger value="perguntas">Perguntas</TabsTrigger>
+              <TabsTrigger value="bncc">Perguntas BNCC</TabsTrigger>
+              <TabsTrigger value="perguntas">Perguntas Especialista</TabsTrigger>
               <TabsTrigger value="registros">Registros</TabsTrigger>
               <TabsTrigger value="openai">OpenAI</TabsTrigger>
               <TabsTrigger value="prompts">Prompts</TabsTrigger>
@@ -472,6 +595,7 @@ const AdminPage = () => {
                 <TabsContent value="relatorios"><RelatoriosConfigTab /></TabsContent>
                 <TabsContent value="periodos"><PeriodosTab /></TabsContent>
                 <TabsContent value="usuarios"><UsuariosTab /></TabsContent>
+                <TabsContent value="bncc"><BnccQuestionsPage embutida /></TabsContent>
                 <TabsContent value="perguntas"><PerguntasTab /></TabsContent>
                 <TabsContent value="registros"><RegistrosTab /></TabsContent>
                 <TabsContent value="openai"><OpenAIUsagePage /></TabsContent>

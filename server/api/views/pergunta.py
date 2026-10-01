@@ -8,8 +8,16 @@ O `campo_experiencia` de uma pergunta segue a mesma regra: precisa ser um
 campo oficial ou da própria escola da pergunta (pergunta oficial → só campo
 oficial). O serializer aceita qualquer id (`CampoPedagogico.todos`) para não
 barrar os oficiais; o recorte é feito aqui, em `_campo_invalido`.
+
+PerguntaEspecialista tem referência BNCC obrigatória (ver
+PerguntaEspecialistaSerializer). Não há exclusão: registros de observação
+apontam para a pergunta, então ela é desativada (status = inativa).
 """
 
+import uuid
+
+from django.core.paginator import Paginator
+from django.db.models import Count, Q
 from rest_framework import status
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import IsAuthenticated
@@ -17,9 +25,9 @@ from rest_framework.response import Response
 
 from api.escopo import (
     SEM_ESCOLA_OFICIAL, buscar_no_escopo, buscar_oficial_ou_da_escola, buscar_visivel, dono_ou_gestao,
-    eh_especialista, filtro_visiveis, pode_editar, pode_gerenciar, resolver_escopo_criacao,
+    eh_especialista, filtrar_por, filtro_visiveis, pode_editar, pode_gerenciar, resolver_escopo_criacao,
 )
-from api.models import CampoPedagogico, Pergunta, PerguntaEspecialista
+from api.models import CampoPedagogico, Escola, Pergunta, PerguntaEspecialista
 from api.serializers import PerguntaSerializer, PerguntaEspecialistaSerializer
 
 
@@ -29,6 +37,18 @@ def _sem_permissao():
 
 def _nao_encontrado():
     return Response({'error': 'Pergunta não encontrada.'}, status=status.HTTP_404_NOT_FOUND)
+
+
+PERGUNTAS_POR_PAGINA = 10
+PERGUNTAS_POR_PAGINA_MAX = 50
+STATUS_PERGUNTA = ('ativa', 'inativa')
+
+
+def _param_int(valor, padrao, minimo, maximo):
+    try:
+        return max(minimo, min(int(valor), maximo))
+    except (TypeError, ValueError):
+        return padrao
 
 
 def _campo_invalido(request, escola_id):
@@ -126,28 +146,112 @@ def atualizar_pergunta(request, pergunta_id):
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
 def listar_perguntas_especialistas(request):
-    perguntas = PerguntaEspecialista.objects.all().order_by('-criado_em')
-    return Response(PerguntaEspecialistaSerializer(perguntas, many=True).data)
+    """
+    GET /perguntas-especialistas/ — já vem recortado pelo TenantManager.
+
+    Query params (todos opcionais):
+      status=ativa|inativa   filtra pelo status
+      escola=<uuid>          fora do escopo/malformado → vazio
+      nivel=<texto>          ex.: "Nível 3", "2º ANO"
+      campo=<uuid>           campo de experiência
+      busca=<texto>          parte da pergunta ou do código BNCC
+      page=<n>               liga a paginação (fora do intervalo → última)
+      page_size=<n>          padrão 10, máximo 50
+
+    SEM `page`: array simples (mais recentes primeiro), como antes — o
+    formulário de observação usa a lista completa.
+
+    COM `page`:
+      {
+        "count": 37, "pagina": 1, "total_paginas": 4, "page_size": 10,
+        "totais": {"ativas": 30, "inativas": 7},   # p/ as abas
+        "results": [ ...PerguntaEspecialistaSerializer... ]
+      }
+    """
+    base = filtrar_por(PerguntaEspecialista.objects.all(), request, 'escola', Escola, 'escola')
+    # Campo oficial não passa pelo TenantManager; como `base` já está no escopo,
+    # filtrar pelo id é seguro. Id malformado → vazio.
+    campo_id = request.query_params.get('campo')
+    if campo_id:
+        try:
+            base = base.filter(campo_experiencia_id=uuid.UUID(str(campo_id)))
+        except ValueError:
+            base = base.none()
+    nivel = (request.query_params.get('nivel') or '').strip()
+    if nivel:
+        base = base.filter(nivel=nivel)
+    busca = (request.query_params.get('busca') or '').strip()
+    if busca:
+        base = base.filter(
+            Q(pergunta__icontains=busca) | Q(pergunta_facilitadora__icontains=busca)
+            | Q(habilidade_bncc__codigo__icontains=busca)
+        )
+
+    status_pedido = request.query_params.get('status')
+    perguntas = base.filter(status=status_pedido) if status_pedido in STATUS_PERGUNTA else base
+    perguntas = perguntas.select_related(
+        'campo_experiencia', 'habilidade_bncc', 'escola', 'usuario_especialista',
+    ).order_by('-criado_em', 'id')
+
+    if 'page' not in request.query_params:
+        return Response(PerguntaEspecialistaSerializer(perguntas, many=True).data)
+
+    page_size = _param_int(
+        request.query_params.get('page_size'),
+        PERGUNTAS_POR_PAGINA, 1, PERGUNTAS_POR_PAGINA_MAX,
+    )
+    pagina = Paginator(perguntas, page_size).get_page(request.query_params.get('page'))
+
+    # Totais das abas respeitam os outros filtros, mas não o de status.
+    totais = base.aggregate(
+        ativas=Count('id', filter=Q(status='ativa')),
+        inativas=Count('id', filter=Q(status='inativa')),
+    )
+    totais = {chave: valor or 0 for chave, valor in totais.items()}
+
+    return Response({
+        'count': pagina.paginator.count,
+        'pagina': pagina.number,
+        'total_paginas': pagina.paginator.num_pages,
+        'page_size': page_size,
+        'totais': totais,
+        'results': PerguntaEspecialistaSerializer(pagina.object_list, many=True).data,
+    })
 
 
 @api_view(['POST'])
 @permission_classes([IsAuthenticated])
 def criar_pergunta_especialista(request):
+    """Gestão (admin/coordenador/superadmin) cria na escola escolhida, pela
+    mesma regra dos outros cadastros (coordenador: sempre a própria escola).
+    Especialista cria na própria escola. Quem cria fica registrado em
+    `usuario_especialista`."""
     user = request.user
-    if not (eh_especialista(user) or pode_gerenciar(user)):
+    if pode_gerenciar(user):
+        escola_id, instituicao_id, erro = resolver_escopo_criacao(user, request.data)
+        if erro:
+            return erro
+    elif eh_especialista(user):
+        if user.escola_id is None or user.instituicao_id is None:
+            return Response({'error': 'Usuário sem escola/instituição vinculada.'},
+                            status=status.HTTP_400_BAD_REQUEST)
+        escola_id, instituicao_id = user.escola_id, user.instituicao_id
+    else:
         return _sem_permissao()
 
-    if user.escola_id is None or user.instituicao_id is None:
-        return Response({'error': 'Usuário sem escola/instituição vinculada.'}, status=status.HTTP_400_BAD_REQUEST)
+    # _base_manager: a escola já foi resolvida dentro do escopo do usuário.
+    if not Escola._base_manager.filter(id=escola_id, ativa=True).exists():
+        return Response({'error': 'Não é possível criar perguntas em uma escola desativada.'},
+                        status=status.HTTP_400_BAD_REQUEST)
 
-    erro = _campo_invalido(request, user.escola_id)
+    erro = _campo_invalido(request, escola_id)
     if erro:
         return erro
 
     serializer = PerguntaEspecialistaSerializer(data=request.data)
     serializer.is_valid(raise_exception=True)
     pergunta = serializer.save(
-        usuario_especialista=user, escola_id=user.escola_id, instituicao_id=user.instituicao_id,
+        usuario_especialista=user, escola_id=escola_id, instituicao_id=instituicao_id,
     )
     return Response(PerguntaEspecialistaSerializer(pergunta).data, status=status.HTTP_201_CREATED)
 
