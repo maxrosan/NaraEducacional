@@ -4,7 +4,7 @@ registros para fora do próprio escopo (rede do admin, escola do coordenador).
 Critério de "bloqueado": a API recusa (400/403/404) E o banco não muda.
 """
 from api.models import (
-    CampoPedagogico, PeriodoAvaliativo, Pergunta, RelatorioTemplate,
+    CampoPedagogico, HabilidadeBNCC, PeriodoAvaliativo, Pergunta, RelatorioTemplate,
     TemplateDocumento,
 )
 
@@ -74,8 +74,14 @@ class CriacaoComEscolaDeOutraRedeTests(CenarioMultiTenant):
          {'descricao': '1º Bim', 'tipo_periodo': 'bimestral', 'data_inicio': '2026-02-01', 'data_fim': '2026-04-30'}),
         ('/api/relatorio-templates/criar/', RelatorioTemplate, {'nome': 'Capa', 'modelo': 'classico'}),
         ('/api/campos-pedagogicos/criar/', CampoPedagogico, {'nome': 'Corpo, gestos e movimentos'}),
-        ('/api/perguntas/criar/', Pergunta, {'pergunta': 'Reconhece o próprio nome?'}),
+        # Toda pergunta tem referência BNCC (habilidade criada em setUpTestData).
+        ('/api/perguntas/criar/', Pergunta, {'pergunta': 'Reconhece o próprio nome?', 'referencia_bncc': 'EI03EO01'}),
     ]
+
+    @classmethod
+    def setUpTestData(cls):
+        super().setUpTestData()
+        HabilidadeBNCC._base_manager.create(codigo='EI03EO01', descricao='Demonstrar empatia.')
 
     def _manager(self, model):
         return getattr(model, 'todos', model._base_manager)

@@ -1211,9 +1211,63 @@ export async function atualizarPerguntaEspecialista(perguntaId, dados) {
   return enviarJson(`/perguntas-especialistas/${perguntaId}/atualizar/`, 'PATCH', dados, 'atualizar pergunta');
 }
 
-/** Campos de experiência visíveis (oficiais + os das escolas do escopo). */
-export async function listarCamposPedagogicos() {
-  return getJson('/campos-pedagogicos/', 'listar campos de experiência');
+/**
+ * Campos de experiência visíveis (oficiais + os das escolas do escopo).
+ * @param {Object} filtros - { ativo: boolean, comUso: boolean } — `comUso` acrescenta
+ *   `total_perguntas` a cada campo (perguntas visíveis, dos dois tipos, que o usam).
+ */
+export async function listarCamposPedagogicos({ ativo, comUso } = {}) {
+  return getJson(
+    comQuery('/campos-pedagogicos/', { ativo, com_uso: comUso ? 1 : undefined }),
+    'listar campos de experiência',
+  );
+}
+
+/** Atualiza campo de experiência (nome, ícone; reativar: { ativo: true }). Oficial: só superadmin. */
+export async function atualizarCampoPedagogico(campoId, dados) {
+  return enviarJson(`/campos-pedagogicos/${campoId}/atualizar/`, 'PATCH', dados, 'atualizar campo de experiência');
+}
+
+/**
+ * Desativa o campo. Se houver perguntas nele, `remanejarPara` (id de outro campo)
+ * é obrigatório: elas passam para esse campo antes. Sem ele e com perguntas → erro 409
+ * com `payload.total_vinculos`. Devolve { campo, perguntas_remanejadas }.
+ */
+export async function desativarCampoPedagogico(campoId, remanejarPara = null) {
+  return enviarJson(
+    `/campos-pedagogicos/${campoId}/desativar/`, 'POST',
+    { remanejar_para: remanejarPara }, 'desativar campo de experiência',
+  );
+}
+
+// ============================================================
+// Perguntas BNCC (oficiais + das escolas)
+// ============================================================
+
+/**
+ * Listagem da tela de gestão BNCC (a `listarPerguntasBncc` acima, das telas de
+ * observação, continua como está). Com `page`, devolve { count, pagina, total_paginas, totais,
+ * pode_editar_oficiais, results }; sem `page`, o array completo (usado na exportação CSV).
+ * @param {Object} filtros - { ativa, origem: 'oficial'|'escola', escola, campo, faixa_etaria, busca, page, pageSize }
+ */
+export async function listarPerguntasBnccGestao({ ativa, origem, escola, campo, faixa_etaria, busca, page, pageSize } = {}) {
+  return getJson(
+    comQuery('/perguntas/', { ativa, origem, escola, campo, faixa_etaria, busca, page, page_size: pageSize }),
+    'listar perguntas BNCC',
+  );
+}
+
+/**
+ * Cria pergunta BNCC. `referencia_bncc` (código) é obrigatória. Admin informa `escola`;
+ * superadmin sem `escola` cria uma pergunta OFICIAL (vale para todas as escolas).
+ */
+export async function criarPerguntaBncc(dados) {
+  return enviarJson('/perguntas/criar/', 'POST', dados, 'criar pergunta BNCC');
+}
+
+/** Atualiza pergunta BNCC (PATCH). Desativar: { ativa: false }. Oficial: só superadmin. */
+export async function atualizarPerguntaBncc(perguntaId, dados) {
+  return enviarJson(`/perguntas/${perguntaId}/atualizar/`, 'PATCH', dados, 'atualizar pergunta BNCC');
 }
 
 /** Cria campo de experiência na escola informada ({ nome, icone, escola }). */

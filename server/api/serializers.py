@@ -852,8 +852,62 @@ class HabilidadeBNCCSerializer(serializers.ModelSerializer):
         read_only_fields = ['id', 'criado_em', 'atualizado_em']
 
 
-class PerguntaSerializer(serializers.ModelSerializer):
+class _ReferenciaBNCCMixin:
+    """Referência BNCC obrigatória, comum às duas perguntas (Pergunta e
+    PerguntaEspecialista).
+
+    A tela informa o CÓDIGO em `referencia_bncc` (ex.: "EI03EO01"); a
+    habilidade é localizada no catálogo sem diferenciar maiúsculas. O id em
+    `habilidade_bncc` também é aceito.
+    - Criação: referência obrigatória.
+    - Edição: não pode ser removida; registros antigos sem referência
+      continuam editáveis (ex.: desativar) até alguém informá-la.
+    - Habilidade desativada no catálogo não pode ser escolhida de novo; quem
+      já a usa continua como está.
+    """
+
+    def _validar_referencia(self, attrs):
+        if 'referencia_bncc' in attrs:
+            codigo = (attrs.pop('referencia_bncc') or '').strip()
+            if not codigo:
+                raise serializers.ValidationError({'referencia_bncc': ['Informe a referência BNCC.']})
+            habilidade = HabilidadeBNCC._base_manager.filter(codigo__iexact=codigo).first()
+            if habilidade is None:
+                raise serializers.ValidationError(
+                    {'referencia_bncc': [f'O código "{codigo}" não foi encontrado no catálogo da BNCC.']}
+                )
+            attrs['habilidade_bncc'] = habilidade
+
+        habilidade = attrs.get('habilidade_bncc')
+        if self.instance is None:
+            if habilidade is None:
+                raise serializers.ValidationError({'referencia_bncc': ['Informe a referência BNCC.']})
+        elif 'habilidade_bncc' in attrs and habilidade is None:
+            raise serializers.ValidationError({'referencia_bncc': ['A referência BNCC não pode ser removida.']})
+
+        mudou = habilidade is not None and (
+            self.instance is None or habilidade.pk != self.instance.habilidade_bncc_id
+        )
+        if mudou and not habilidade.ativa:
+            raise serializers.ValidationError(
+                {'referencia_bncc': [f'A habilidade {habilidade.codigo} está desativada no catálogo da BNCC.']}
+            )
+        return attrs
+
+
+class PerguntaSerializer(_ReferenciaBNCCMixin, serializers.ModelSerializer):
+    """
+    Pergunta BNCC: oficial (escola nula, vale para todas) ou da escola.
+    Referência BNCC obrigatória (ver _ReferenciaBNCCMixin).
+
+    Em listas, a view faz select_related('campo_experiencia', 'habilidade_bncc', 'escola').
+    """
     escola_nome = serializers.CharField(source='escola.nome', read_only=True, default=None)
+    campo_experiencia_nome = serializers.CharField(source='campo_experiencia.nome', read_only=True, default=None)
+    campo_experiencia_icone = serializers.CharField(source='campo_experiencia.icone', read_only=True, default=None)
+    habilidade_bncc_codigo = serializers.CharField(source='habilidade_bncc.codigo', read_only=True, default=None)
+    habilidade_bncc_descricao = serializers.CharField(source='habilidade_bncc.descricao', read_only=True, default=None)
+    referencia_bncc = serializers.CharField(write_only=True, required=False, allow_blank=True, max_length=20)
     # `todos`: o TenantManager esconderia os campos oficiais (escola nula).
     # O recorte oficial + escola da pergunta é feito na view (_campo_invalido).
     campo_experiencia = serializers.PrimaryKeyRelatedField(
@@ -863,24 +917,22 @@ class PerguntaSerializer(serializers.ModelSerializer):
     class Meta:
         model = Pergunta
         fields = [
-            'id', 'pergunta', 'pergunta_norma', 'area_conhecimento', 'origem', 'ativa',
-            'faixa_etaria', 'campo_experiencia', 'habilidade_bncc',
+            'id', 'pergunta', 'pergunta_norma', 'area_conhecimento', 'origem', 'ativa', 'faixa_etaria',
+            'campo_experiencia', 'campo_experiencia_nome', 'campo_experiencia_icone',
+            'habilidade_bncc', 'habilidade_bncc_codigo', 'habilidade_bncc_descricao', 'referencia_bncc',
             'escola', 'escola_nome', 'instituicao', 'criado_em', 'atualizado_em',
         ]
         read_only_fields = ['id', 'criado_em', 'atualizado_em', 'escola', 'instituicao']
 
+    def validate(self, attrs):
+        return self._validar_referencia(attrs)
 
-class PerguntaEspecialistaSerializer(serializers.ModelSerializer):
+
+class PerguntaEspecialistaSerializer(_ReferenciaBNCCMixin, serializers.ModelSerializer):
     """
     Pergunta livre de especialista (tela "Perguntas" do admin).
 
-    Referência BNCC obrigatória: toda pergunta aponta para uma HabilidadeBNCC.
-    A tela informa o CÓDIGO (`referencia_bncc`, ex.: "EI03EO01"); o serializer
-    localiza a habilidade no catálogo (sem diferenciar maiúsculas). Também
-    aceita o id direto em `habilidade_bncc`.
-    - Criação: referência obrigatória.
-    - Edição: não pode ser removida; perguntas antigas sem referência continuam
-      editáveis (ex.: desativar) até alguém informá-la.
+    Referência BNCC obrigatória (ver _ReferenciaBNCCMixin).
 
     Em listas, a view faz select_related('campo_experiencia', 'habilidade_bncc',
     'escola', 'usuario_especialista') por causa dos campos *_nome/_codigo.
@@ -912,34 +964,7 @@ class PerguntaEspecialistaSerializer(serializers.ModelSerializer):
         ]
 
     def validate(self, attrs):
-        if 'referencia_bncc' in attrs:
-            codigo = (attrs.pop('referencia_bncc') or '').strip()
-            if not codigo:
-                raise serializers.ValidationError({'referencia_bncc': ['Informe a referência BNCC.']})
-            habilidade = HabilidadeBNCC._base_manager.filter(codigo__iexact=codigo).first()
-            if habilidade is None:
-                raise serializers.ValidationError(
-                    {'referencia_bncc': [f'O código "{codigo}" não foi encontrado no catálogo da BNCC.']}
-                )
-            attrs['habilidade_bncc'] = habilidade
-
-        habilidade = attrs.get('habilidade_bncc')
-        if self.instance is None:
-            if habilidade is None:
-                raise serializers.ValidationError({'referencia_bncc': ['Informe a referência BNCC.']})
-        elif 'habilidade_bncc' in attrs and habilidade is None:
-            raise serializers.ValidationError({'referencia_bncc': ['A referência BNCC não pode ser removida.']})
-
-        # Habilidade desativada no catálogo não pode ser escolhida de novo;
-        # quem já a usa continua como está.
-        mudou = habilidade is not None and (
-            self.instance is None or habilidade.pk != self.instance.habilidade_bncc_id
-        )
-        if mudou and not habilidade.ativa:
-            raise serializers.ValidationError(
-                {'referencia_bncc': [f'A habilidade {habilidade.codigo} está desativada no catálogo da BNCC.']}
-            )
-        return attrs
+        return self._validar_referencia(attrs)
 
 
 class RegistroObservacaoSerializer(serializers.ModelSerializer):

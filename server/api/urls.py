@@ -93,6 +93,7 @@ from .views.campo_pedagogico import (
     criar_campo_pedagogico,
     detalhe_campo_pedagogico,
     atualizar_campo_pedagogico,
+    desativar_campo_pedagogico,
     listar_habilidades_bncc,
     criar_habilidade_bncc,
     detalhe_habilidade_bncc,
@@ -356,6 +357,7 @@ urlpatterns = [
     path('campos-pedagogicos/criar/', criar_campo_pedagogico, name='criar_campo_pedagogico'),
     path('campos-pedagogicos/<uuid:campo_id>/', detalhe_campo_pedagogico, name='detalhe_campo_pedagogico'),
     path('campos-pedagogicos/<uuid:campo_id>/atualizar/', atualizar_campo_pedagogico, name='atualizar_campo_pedagogico'),
+    path('campos-pedagogicos/<uuid:campo_id>/desativar/', desativar_campo_pedagogico, name='desativar_campo_pedagogico'),
 
     # Habilidades BNCC (catálogo global)
     path('habilidades-bncc/', listar_habilidades_bncc, name='listar_habilidades_bncc'),

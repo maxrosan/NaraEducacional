@@ -17,7 +17,7 @@ apontam para a pergunta, então ela é desativada (status = inativa).
 import uuid
 
 from django.core.paginator import Paginator
-from django.db.models import Count, Q
+from django.db.models import Count, F, Q
 from rest_framework import status
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import IsAuthenticated
@@ -29,6 +29,7 @@ from api.escopo import (
 )
 from api.models import CampoPedagogico, Escola, Pergunta, PerguntaEspecialista
 from api.serializers import PerguntaSerializer, PerguntaEspecialistaSerializer
+from api.tenancy import is_superadmin
 
 
 def _sem_permissao():
@@ -49,6 +50,17 @@ def _param_int(valor, padrao, minimo, maximo):
         return max(minimo, min(int(valor), maximo))
     except (TypeError, ValueError):
         return padrao
+
+
+def _filtrar_por_id(qs, valor, campo):
+    """Filtra `qs` por um UUID vindo da query string; malformado → vazio.
+    Só use em querysets já recortados pelo escopo do usuário."""
+    if not valor:
+        return qs
+    try:
+        return qs.filter(**{campo: uuid.UUID(str(valor))})
+    except ValueError:
+        return qs.none()
 
 
 def _campo_invalido(request, escola_id):
@@ -79,13 +91,82 @@ def _salvar_edicao(request, obj, serializer_class):
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
 def listar_perguntas(request):
-    perguntas = Pergunta.todos.filter(filtro_visiveis(request.user))
+    """
+    GET /perguntas/ — oficiais + as do escopo do usuário (filtro_visiveis).
+
+    Query params (todos opcionais):
+      faixa_etaria=<texto>   ex.: "Nível 3"
+      ativa=true|false       filtra pelo status
+      origem=oficial|escola  oficiais (sem escola) ou criadas pelas escolas
+      escola=<uuid>          perguntas daquela escola
+      campo=<uuid>           campo de experiência
+      busca=<texto>          parte da pergunta ou do código BNCC
+      page=<n>, page_size=<n> liga a paginação (padrão 10, máximo 50)
+
+    SEM `page`: array simples, como antes — o formulário de observação usa a
+    lista completa (geralmente com ?faixa_etaria=&ativa=true).
+
+    COM `page`:
+      {
+        "count", "pagina", "total_paginas", "page_size",
+        "totais": {"ativas", "inativas"},          # p/ as abas
+        "pode_editar_oficiais": bool,              # só superadmin edita oficiais
+        "results": [ ...PerguntaSerializer... ]
+      }
+    """
+    base = Pergunta.todos.filter(filtro_visiveis(request.user))
 
     faixa_etaria = request.query_params.get('faixa_etaria')
     if faixa_etaria:
-        perguntas = perguntas.filter(faixa_etaria=faixa_etaria)
+        base = base.filter(faixa_etaria=faixa_etaria)
+    origem = request.query_params.get('origem')
+    if origem == 'oficial':
+        base = base.filter(escola__isnull=True)
+    elif origem == 'escola':
+        base = base.filter(escola__isnull=False)
+    # `base` já está no escopo: filtrar por qualquer id é seguro.
+    base = _filtrar_por_id(base, request.query_params.get('escola'), 'escola_id')
+    base = _filtrar_por_id(base, request.query_params.get('campo'), 'campo_experiencia_id')
+    busca = (request.query_params.get('busca') or '').strip()
+    if busca:
+        base = base.filter(
+            Q(pergunta__icontains=busca) | Q(pergunta_norma__icontains=busca)
+            | Q(habilidade_bncc__codigo__icontains=busca)
+        )
 
-    return Response(PerguntaSerializer(perguntas, many=True).data)
+    ativa = request.query_params.get('ativa')
+    perguntas = base
+    if ativa in ('true', 'false'):
+        perguntas = base.filter(ativa=(ativa == 'true'))
+    perguntas = perguntas.select_related('campo_experiencia', 'habilidade_bncc', 'escola').order_by(
+        F('campo_experiencia__nome').asc(nulls_last=True), 'faixa_etaria', 'pergunta', 'id',
+    )
+
+    if 'page' not in request.query_params:
+        return Response(PerguntaSerializer(perguntas, many=True).data)
+
+    page_size = _param_int(
+        request.query_params.get('page_size'),
+        PERGUNTAS_POR_PAGINA, 1, PERGUNTAS_POR_PAGINA_MAX,
+    )
+    pagina = Paginator(perguntas, page_size).get_page(request.query_params.get('page'))
+
+    # Totais das abas respeitam os outros filtros, mas não o de status.
+    totais = base.aggregate(
+        ativas=Count('id', filter=Q(ativa=True)),
+        inativas=Count('id', filter=Q(ativa=False)),
+    )
+    totais = {chave: valor or 0 for chave, valor in totais.items()}
+
+    return Response({
+        'count': pagina.paginator.count,
+        'pagina': pagina.number,
+        'total_paginas': pagina.paginator.num_pages,
+        'page_size': page_size,
+        'totais': totais,
+        'pode_editar_oficiais': is_superadmin(request.user),
+        'results': PerguntaSerializer(pagina.object_list, many=True).data,
+    })
 
 
 @api_view(['POST'])
@@ -171,12 +252,7 @@ def listar_perguntas_especialistas(request):
     base = filtrar_por(PerguntaEspecialista.objects.all(), request, 'escola', Escola, 'escola')
     # Campo oficial não passa pelo TenantManager; como `base` já está no escopo,
     # filtrar pelo id é seguro. Id malformado → vazio.
-    campo_id = request.query_params.get('campo')
-    if campo_id:
-        try:
-            base = base.filter(campo_experiencia_id=uuid.UUID(str(campo_id)))
-        except ValueError:
-            base = base.none()
+    base = _filtrar_por_id(base, request.query_params.get('campo'), 'campo_experiencia_id')
     nivel = (request.query_params.get('nivel') or '').strip()
     if nivel:
         base = base.filter(nivel=nivel)

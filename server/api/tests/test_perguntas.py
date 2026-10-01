@@ -80,7 +80,8 @@ class PerguntasBnccTests(CenarioPerguntas):
         return {p['pergunta'] for p in r.json()}
 
     def _post_criar(self, usuario=None, **extra):
-        dados = {'escola': str(self.a1.id), 'pergunta': 'Nova BNCC?', 'faixa_etaria': 'Nível 3'}
+        dados = {'escola': str(self.a1.id), 'pergunta': 'Nova BNCC?', 'faixa_etaria': 'Nível 3',
+                 'referencia_bncc': 'EI03EO01'}
         dados.update(extra)
         self.entrar(usuario or self.admin_a)
         return self.client.post(URL_BNCC_CRIAR, {k: v for k, v in dados.items() if v is not None}, format='json')
@@ -198,6 +199,72 @@ class PerguntasBnccTests(CenarioPerguntas):
         self.assertEqual(self._patch(self.da_a1, escola=str(self.a2.id), pergunta='Da A1').status_code, 200)
         self.da_a1.refresh_from_db()
         self.assertEqual(self.da_a1.escola_id, self.a1.id)
+
+    # --- listagem paginada (tela BNCC do admin) ---------------------------
+
+    def _pagina(self, usuario, **params):
+        self.entrar(usuario)
+        r = self.client.get(URL_BNCC_LISTAR, {'page': 1, **params})
+        self.assertEqual(r.status_code, 200, r.content)
+        return r.json()
+
+    def test_paginada_com_totais_e_permissao_de_editar_oficiais(self):
+        Pergunta.todos.filter(pk=self.da_a2.pk).update(ativa=False)
+        dados = self._pagina(self.admin_a, ativa='true')
+        self.assertEqual({p['pergunta'] for p in dados['results']}, {'Oficial', 'Da A1'})
+        self.assertEqual(dados['totais'], {'ativas': 2, 'inativas': 1})
+        self.assertFalse(dados['pode_editar_oficiais'])
+        self.assertTrue(self._pagina(self.superadmin)['pode_editar_oficiais'])
+
+    def test_paginada_filtros(self):
+        self.assertEqual({p['pergunta'] for p in self._pagina(self.admin_a, origem='oficial')['results']}, {'Oficial'})
+        self.assertEqual({p['pergunta'] for p in self._pagina(self.admin_a, origem='escola')['results']}, {'Da A1', 'Da A2'})
+        self.assertEqual({p['pergunta'] for p in self._pagina(self.admin_a, escola=str(self.a2.id))['results']}, {'Da A2'})
+        self.assertEqual(
+            {p['pergunta'] for p in self._pagina(self.admin_a, campo=str(self.campo_oficial.id))['results']}, {'Oficial'},
+        )
+        self.assertEqual(self._pagina(self.admin_a, campo='nao-e-uuid')['count'], 0)
+        self.assertEqual(self._pagina(self.admin_a, escola=str(self.b1.id))['count'], 0)  # fora do escopo
+        self.assertEqual(self._pagina(self.admin_a, busca='ei03eo')['count'], 3)
+
+    def test_paginada_traz_nomes_e_referencia(self):
+        p = next(p for p in self._pagina(self.admin_a)['results'] if p['pergunta'] == 'Da A1')
+        self.assertEqual(
+            (p['campo_experiencia_nome'], p['habilidade_bncc_codigo'], p['escola_nome']), ('Campo A1', 'EI03EO01', 'A1'),
+        )
+
+    def test_paginada_numero_de_queries_nao_cresce(self):
+        def contar():
+            self.entrar(self.admin_a)
+            with CaptureQueriesContext(connection) as ctx:
+                self.assertEqual(self.client.get(URL_BNCC_LISTAR, {'page': 1}).status_code, 200)
+            return len(ctx.captured_queries)
+
+        antes = contar()
+        for i in range(5):
+            self._pergunta_bncc(f'Extra {i}', self.a1 if i % 2 else self.a2, campo=self.campo_oficial)
+        self.assertEqual(contar(), antes)
+
+    # --- referência BNCC ---------------------------------------------------
+
+    def test_referencia_obrigatoria(self):
+        r = self._post_criar(referencia_bncc='')
+        self.assertEqual(r.status_code, 400, r.content)
+        self.assertIn('referencia_bncc', r.json())
+        self.assertEqual(self._post_criar(referencia_bncc='XX99').status_code, 400)
+        self.assertEqual(self._post_criar(referencia_bncc='EI03EO99').status_code, 400)  # desativada
+
+    def test_referencia_pelo_codigo(self):
+        r = self._post_criar(referencia_bncc=' ei03eo01 ')
+        self.assertEqual(r.status_code, 201, r.content)
+        self.assertEqual(r.json()['habilidade_bncc_codigo'], 'EI03EO01')
+
+    def test_referencia_nao_pode_ser_removida(self):
+        self.assertEqual(self._patch(self.da_a1, referencia_bncc='').status_code, 400)
+
+    def test_pergunta_antiga_sem_referencia_continua_editavel(self):
+        antiga = Pergunta.todos.create(pergunta='Antiga', escola=self.a1, instituicao=self.rede_a, origem='escola')
+        self.assertEqual(self._patch(antiga, ativa=False).status_code, 200)
 
 
 # =============================================================================
@@ -413,3 +480,116 @@ class PerguntasEspecialistasTests(CenarioPerguntas):
 
     def test_admin_nao_edita_de_outra_rede(self):
         self.assertEqual(self._patch(self.p_b1, status='inativa').status_code, 404)
+
+
+# =============================================================================
+# Campos de experiência (gerenciador da tela BNCC)
+# =============================================================================
+
+URL_CAMPOS = '/api/campos-pedagogicos/'
+
+
+def url_campo_desativar(c):
+    return f'/api/campos-pedagogicos/{c.id}/desativar/'
+
+
+class CamposPedagogicosTests(CenarioPerguntas):
+    """Perguntas usando os campos: BNCC 'Da A1' (Campo A1), 'Oficial' (campo
+    oficial), 'Da B1' (campo oficial, outra rede); de especialista 'Esp A1'
+    (Campo A1)."""
+
+    @classmethod
+    def setUpTestData(cls):
+        super().setUpTestData()
+        cls.campo_a1_extra = CampoPedagogico.todos.create(nome='Campo A1 Extra', escola=cls.a1, instituicao=cls.rede_a)
+        cls.campo_oficial_2 = CampoPedagogico.todos.create(nome='Corpo, gestos e movimentos')
+        cls.p_da_a1 = Pergunta.todos.create(
+            pergunta='Da A1', escola=cls.a1, instituicao=cls.rede_a, origem='escola',
+            campo_experiencia=cls.campo_a1, habilidade_bncc=cls.hab,
+        )
+        cls.p_oficial = Pergunta.todos.create(pergunta='Oficial', origem='bncc', campo_experiencia=cls.campo_oficial)
+        cls.p_da_b1 = Pergunta.todos.create(
+            pergunta='Da B1', escola=cls.b1, instituicao=cls.rede_b, origem='escola',
+            campo_experiencia=cls.campo_oficial,
+        )
+        cls.p_esp_a1 = PerguntaEspecialista._base_manager.create(
+            pergunta='Esp A1', escola=cls.a1, instituicao=cls.rede_a, usuario_especialista=cls.esp_a1,
+            campo_experiencia=cls.campo_a1, habilidade_bncc=cls.hab,
+        )
+
+    def _desativar(self, campo, usuario=None, **dados):
+        self.entrar(usuario or self.admin_a)
+        return self.client.post(url_campo_desativar(campo), dados, format='json')
+
+    # --- listagem -----------------------------------------------------------
+
+    def test_listar_com_uso_conta_so_o_que_o_usuario_ve(self):
+        self.entrar(self.admin_a)
+        dados = {c['nome']: c for c in self.client.get(URL_CAMPOS, {'com_uso': 1}).json()}
+        self.assertEqual(dados['Campo A1']['total_perguntas'], 2)            # BNCC + especialista
+        self.assertEqual(dados['O eu, o outro e o nós']['total_perguntas'], 1)  # 'Da B1' é de outra rede
+        self.assertNotIn('total_perguntas', self.client.get(URL_CAMPOS).json()[0])
+
+    def test_listar_filtra_por_ativo(self):
+        CampoPedagogico.todos.filter(pk=self.campo_a1_extra.pk).update(ativo=False)
+        self.entrar(self.admin_a)
+        nomes = {c['nome'] for c in self.client.get(URL_CAMPOS, {'ativo': 'false'}).json()}
+        self.assertEqual(nomes, {'Campo A1 Extra'})
+
+    # --- desativar ------------------------------------------------------------
+
+    def test_desativar_campo_sem_perguntas(self):
+        r = self._desativar(self.campo_a1_extra)
+        self.assertEqual(r.status_code, 200, r.content)
+        self.campo_a1_extra.refresh_from_db()
+        self.assertFalse(self.campo_a1_extra.ativo)
+
+    def test_campo_com_perguntas_exige_destino(self):
+        r = self._desativar(self.campo_a1)
+        self.assertEqual(r.status_code, 409, r.content)
+        self.assertEqual(r.json()['total_vinculos'], 2)
+        self.campo_a1.refresh_from_db()
+        self.assertTrue(self.campo_a1.ativo)
+
+    def test_remaneja_os_dois_tipos_de_pergunta_e_desativa(self):
+        r = self._desativar(self.campo_a1, remanejar_para=str(self.campo_a1_extra.id))
+        self.assertEqual(r.status_code, 200, r.content)
+        self.assertEqual(r.json()['perguntas_remanejadas'], 2)
+        self.p_da_a1.refresh_from_db()
+        self.p_esp_a1.refresh_from_db()
+        self.assertEqual(self.p_da_a1.campo_experiencia_id, self.campo_a1_extra.id)
+        self.assertEqual(self.p_esp_a1.campo_experiencia_id, self.campo_a1_extra.id)
+
+    def test_destino_oficial_serve_para_campo_da_escola(self):
+        r = self._desativar(self.campo_a1, remanejar_para=str(self.campo_oficial.id))
+        self.assertEqual(r.status_code, 200, r.content)
+
+    def test_destino_invalido(self):
+        CampoPedagogico.todos.filter(pk=self.campo_oficial_2.pk).update(ativo=False)
+        for destino in (self.campo_a2, self.campo_a1, self.campo_oficial_2):  # outra escola; o mesmo; desativado
+            r = self._desativar(self.campo_a1, remanejar_para=str(destino.id))
+            self.assertEqual(r.status_code, 400, (destino.nome, r.content))
+        self.assertEqual(self._desativar(self.campo_a1, remanejar_para='nao-e-uuid').status_code, 404)
+        self.campo_a1.refresh_from_db()
+        self.assertTrue(self.campo_a1.ativo)
+
+    def test_campo_oficial_so_superadmin(self):
+        self.assertEqual(self._desativar(self.campo_oficial, remanejar_para=str(self.campo_oficial_2.id)).status_code, 403)
+        # Oficial só remaneja para outro oficial (as perguntas são de várias redes).
+        r = self._desativar(self.campo_oficial, self.superadmin, remanejar_para=str(self.campo_a1.id))
+        self.assertEqual(r.status_code, 400, r.content)
+        r = self._desativar(self.campo_oficial, self.superadmin, remanejar_para=str(self.campo_oficial_2.id))
+        self.assertEqual(r.status_code, 200, r.content)
+        self.assertEqual(r.json()['perguntas_remanejadas'], 2)  # 'Oficial' e 'Da B1'
+
+    def test_permissoes(self):
+        self.assertEqual(self._desativar(self.campo_a1_extra, self.prof_a1).status_code, 403)
+        self.assertEqual(self._desativar(self.campo_a2, self.coord_a1).status_code, 404)
+
+    def test_reativar_pelo_atualizar(self):
+        CampoPedagogico.todos.filter(pk=self.campo_a1_extra.pk).update(ativo=False)
+        self.entrar(self.admin_a)
+        r = self.client.patch(f'/api/campos-pedagogicos/{self.campo_a1_extra.id}/atualizar/', {'ativo': True}, format='json')
+        self.assertEqual(r.status_code, 200, r.content)
+        self.campo_a1_extra.refresh_from_db()
+        self.assertTrue(self.campo_a1_extra.ativo)
