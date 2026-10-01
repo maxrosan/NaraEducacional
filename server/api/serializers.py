@@ -633,6 +633,8 @@ class AlunoSerializer(serializers.ModelSerializer):
     """
     turma_nome = serializers.CharField(source='turma.nome', read_only=True)
     escola_nome = serializers.CharField(source='escola.nome', read_only=True)
+    # Só leitura: a foto muda pelo endpoint /alunos/<id>/foto/.
+    foto_url = serializers.SerializerMethodField()
 
     class Meta:
         model = Aluno
@@ -650,6 +652,15 @@ class AlunoSerializer(serializers.ModelSerializer):
         if campo in attrs:
             return attrs[campo]
         return getattr(self.instance, campo, None)
+
+    def get_foto_url(self, aluno):
+        """URL pré-assinada nova a cada leitura (a salva expira em ~1h). Assinar
+        é um cálculo local, sem rede e sem gravar nada (ao contrário de
+        storage.get_foto_url, que salva o aluno) — barato até em listagens."""
+        from .storage import generate_presigned_url, is_s3_configured
+        if aluno.foto_storage_key and is_s3_configured():
+            return generate_presigned_url(aluno.foto_storage_key) or aluno.foto_url
+        return aluno.foto_url or None
 
     def validate_data_nascimento(self, valor):
         if valor and valor > timezone.localdate():

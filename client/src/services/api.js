@@ -151,6 +151,18 @@ export async function authFetch(url, options = {}) {
   }
 }
 
+/**
+ * Erros de validação do DRF vêm por campo: { nome_completo: ["..."], telefone: ["..."] }.
+ * Junta as mensagens num texto só, para telas que mostram `error.message`.
+ */
+function mensagensDeCampo(data) {
+  if (!data || typeof data !== 'object' || Array.isArray(data)) return null;
+  const mensagens = Object.values(data)
+    .flat(Infinity)
+    .filter((m) => typeof m === 'string' && m.trim());
+  return mensagens.length ? mensagens.join(' ') : null;
+}
+
 async function parseJsonOrThrow(response, contexto) {
   let data = null;
   try {
@@ -159,7 +171,8 @@ async function parseJsonOrThrow(response, contexto) {
     /* resposta sem corpo JSON */
   }
   if (!response.ok) {
-    const mensagem = (data && (data.error || data.detail)) || `Erro ${response.status} em ${contexto}`;
+    const mensagem = (data && (data.error || data.detail || mensagensDeCampo(data)))
+      || `Erro ${response.status} em ${contexto}`;
     const err = new Error(mensagem);
     err.status = response.status;
     err.payload = data;
@@ -899,9 +912,16 @@ export async function criarCriancasLote(criancas, onProgress) {
   return { successCount, errors };
 }
 
-/** REMOVIDO: criancas/<id>/foto/. O aluno tem o campo foto_url, mas não há endpoint de upload. */
-export async function uploadFotoCrianca() {
-  return endpointRemovido('criancas/<id>/foto/');
+/**
+ * Envia (ou troca) a foto do aluno: POST /alunos/<id>/foto/ (multipart).
+ * O backend valida, converte para JPEG e reduz a imagem. Devolve o aluno atualizado.
+ */
+export async function uploadFotoCrianca(criancaId, arquivo) {
+  const corpo = new FormData();
+  corpo.append('foto', arquivo);
+  // Sem Content-Type: o navegador monta o multipart com o boundary certo.
+  const response = await authFetch(`${API_BASE_URL}/alunos/${criancaId}/foto/`, { method: 'POST', body: corpo });
+  return adicionarAliases(await parseJsonOrThrow(response, 'enviar foto do aluno'));
 }
 
 // =============================================================================

@@ -51,6 +51,7 @@ from .views.aluno import (
     criar_aluno,
     detalhe_aluno,
     atualizar_aluno,
+    enviar_foto_aluno,
 )
 from .views.projeto import (
     listar_projetos,
@@ -300,6 +301,7 @@ urlpatterns = [
     path('alunos/criar/', criar_aluno, name='criar_aluno'),
     path('alunos/<uuid:aluno_id>/', detalhe_aluno, name='detalhe_aluno'),
     path('alunos/<uuid:aluno_id>/atualizar/', atualizar_aluno, name='atualizar_aluno'),
+    path('alunos/<uuid:aluno_id>/foto/', enviar_foto_aluno, name='enviar_foto_aluno'),
 
     # Projetos
     path('projetos/', listar_projetos, name='listar_projetos'),

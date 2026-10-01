@@ -1,20 +1,32 @@
 """Endpoints de Aluno."""
 
+import io
+import logging
+import uuid
+
 from django.core.paginator import Paginator
 from django.db import transaction
 from django.db.models import Count, Q
 from rest_framework import status
-from rest_framework.decorators import api_view, permission_classes
+from rest_framework.decorators import api_view, parser_classes, permission_classes
+from rest_framework.parsers import FormParser, MultiPartParser
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
 from api.escopo import buscar_no_escopo, filtrar_por, pode_gerenciar, pode_ver_escola
 from api.models import Aluno, Escola, Turma
 from api.serializers import AlunoSerializer
+from api.storage import delete_from_storage, upload_bytes_to_storage
+
+logger = logging.getLogger(__name__)
 
 ALUNOS_POR_PAGINA = 10
 ALUNOS_POR_PAGINA_MAX = 50
 STATUS_VINCULO = ('ativo', 'inativo', 'transferido')
+
+FOTO_TAMANHO_MAX = 10 * 1024 * 1024   # 10MB, o mesmo limite que o front anuncia
+FOTO_LADO_MAX = 800                    # px; a foto aparece em avatar e no relatório
+FOTO_QUALIDADE_JPEG = 85
 
 
 def _aluno_nao_encontrado():
@@ -172,4 +184,81 @@ def atualizar_aluno(request, aluno_id):
     partial = request.method == 'PATCH'
     serializer = AlunoSerializer(aluno, data=request.data, partial=partial)
     aluno = _validar_e_salvar(serializer, aluno.escola_id)
+    return Response(AlunoSerializer(aluno).data)
+
+
+def _foto_em_jpeg(arquivo):
+    """Abre a imagem enviada e devolve bytes JPEG reduzidos, ou None se não
+    for uma imagem válida.
+
+    Abrir com o Pillow (e não confiar no content-type do navegador) é a
+    validação: um arquivo qualquer renomeado para .png é recusado. Converter
+    para JPEG também resolve HEIC/HEIF (fotos de iPhone), que a maioria dos
+    navegadores não exibe; o registro do HEIC no Pillow é feito em storage.py.
+    """
+    from PIL import Image, ImageOps, UnidentifiedImageError
+
+    try:
+        imagem = Image.open(arquivo)
+        imagem.load()
+    except (UnidentifiedImageError, OSError, ValueError, Image.DecompressionBombError):
+        return None
+
+    imagem = ImageOps.exif_transpose(imagem)  # foto de celular "deitada"
+    if imagem.mode not in ('RGB', 'L'):
+        imagem = imagem.convert('RGB')
+    imagem.thumbnail((FOTO_LADO_MAX, FOTO_LADO_MAX))
+
+    saida = io.BytesIO()
+    imagem.save(saida, format='JPEG', quality=FOTO_QUALIDADE_JPEG, optimize=True)
+    return saida.getvalue()
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+@parser_classes([MultiPartParser, FormParser])
+def enviar_foto_aluno(request, aluno_id):
+    """
+    POST /alunos/<id>/foto/ (multipart, campo `foto`) — envia ou troca a foto.
+
+    Mesmas permissões da edição do aluno. A imagem é validada, convertida para
+    JPEG e reduzida (lado maior até 800px). A foto anterior é apagada do
+    armazenamento depois que a nova foi salva. Responde com o aluno atualizado.
+    """
+    if not pode_gerenciar(request.user):
+        return Response({'error': 'Sem permissão.'}, status=status.HTTP_403_FORBIDDEN)
+
+    aluno = buscar_no_escopo(Aluno, aluno_id)
+    if aluno is None:
+        return _aluno_nao_encontrado()
+
+    arquivo = request.FILES.get('foto')
+    if arquivo is None:
+        return Response({'foto': ['Envie a imagem no campo "foto".']}, status=status.HTTP_400_BAD_REQUEST)
+    if arquivo.size > FOTO_TAMANHO_MAX:
+        return Response({'foto': ['A imagem deve ter no máximo 10MB.']}, status=status.HTTP_400_BAD_REQUEST)
+
+    conteudo = _foto_em_jpeg(arquivo)
+    if conteudo is None:
+        return Response({'foto': ['O arquivo enviado não é uma imagem válida.']},
+                        status=status.HTTP_400_BAD_REQUEST)
+
+    # Nome novo a cada envio: a URL antiga (em cache no navegador) não mostra a foto velha.
+    chave = f'alunos/{aluno.instituicao_id}/{aluno.escola_id}/{aluno.id}/foto-{uuid.uuid4().hex}.jpg'
+    try:
+        chave_salva, url = upload_bytes_to_storage(chave, conteudo, content_type='image/jpeg')
+    except RuntimeError as erro:
+        logger.error('Falha ao enviar foto do aluno %s: %s', aluno.id, erro)
+        return Response({'error': 'Não foi possível salvar a foto. Tente novamente.'},
+                        status=status.HTTP_502_BAD_GATEWAY)
+
+    chave_anterior = aluno.foto_storage_key
+    aluno.foto_storage_key = chave_salva
+    aluno.foto_url = url
+    aluno.save(update_fields=['foto_storage_key', 'foto_url'])
+
+    # Best-effort: delete_from_storage nunca levanta; uma sobra não falha o envio.
+    if chave_anterior and chave_anterior != chave_salva and not delete_from_storage(chave_anterior):
+        logger.warning('Não foi possível apagar a foto antiga %s', chave_anterior)
+
     return Response(AlunoSerializer(aluno).data)

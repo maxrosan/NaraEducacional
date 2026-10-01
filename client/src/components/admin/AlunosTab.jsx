@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { listarInstituicoes, listarEscolas, listarTurmas, listarAlunosPaginado } from '@/services/api';
+import { listarEscolas, listarTurmas, listarAlunosPaginado } from '@/services/api';
 import { useToast } from '@/components/ui/use-toast';
 import { Card, CardHeader, CardTitle, CardContent, CardDescription } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -21,7 +21,7 @@ import BulkUploadDialog from './alunos/BulkUploadDialog';
  *   - a lista vem paginada (10 por página) e já filtrada no servidor por
  *     status (abas), escola, turma e busca por nome;
  *   - cada aluno já traz turma_nome/escola_nome (select_related no backend);
- *   - escolas, turmas e instituição são buscadas uma vez, em paralelo.
+ *   - escolas e turmas são buscadas uma vez, em paralelo.
  *
  * A tela de turmas abre esta com ?turma_id=<uuid> para já filtrar a turma.
  *
@@ -60,7 +60,6 @@ const AlunosTab = () => {
     const [carregouUmaVez, setCarregouUmaVez] = useState(false);
     const [escolas, setEscolas] = useState([]);
     const [turmas, setTurmas] = useState([]);
-    const [institutionId, setInstitutionId] = useState(null);
     const ultimaRequisicao = useRef(0);
 
     // Só consulta o backend quando o usuário para de digitar.
@@ -75,7 +74,7 @@ const AlunosTab = () => {
     }, [busca, buscaAplicada]);
 
     // Dados de apoio (filtros e formulários): uma vez, em paralelo e sem
-    // bloquear a lista. A instituição só é repassada aos componentes filhos.
+    // bloquear a lista.
     useEffect(() => {
         const erro = (titulo) => (err) => toast({ variant: "destructive", title: titulo, description: err.message });
         listarEscolas().then(setEscolas).catch(erro("Erro ao carregar escolas"));
@@ -84,9 +83,6 @@ const AlunosTab = () => {
                 (a.escola_nome || '').localeCompare(b.escola_nome || '')
                 || (a.nome || '').localeCompare(b.nome || '', 'pt-BR', { numeric: true }))))
             .catch(erro("Erro ao carregar turmas"));
-        listarInstituicoes()
-            .then((insts) => setInstitutionId(insts?.[0]?.id ?? null))
-            .catch(erro("Erro ao carregar instituição"));
     }, [toast]);
 
     const carregar = useCallback(async () => {
@@ -125,6 +121,7 @@ const AlunosTab = () => {
     );
     // Formulários só oferecem turmas ativas (o backend recusa as desativadas).
     const turmasAtivas = useMemo(() => turmas.filter((t) => t.ativa !== false), [turmas]);
+    const escolasAtivas = useMemo(() => escolas.filter((e) => e.ativa !== false), [escolas]);
 
     // Todo filtro novo volta para a página 1 (no mesmo render, sem requisição extra).
     const trocarAba = (valor) => { setAba(valor); setPagina(1); };
@@ -147,6 +144,9 @@ const AlunosTab = () => {
     };
 
     const { results: alunos, count, total_paginas: totalPaginas, totais } = lista;
+    let mensagemVazia = aba === 'ativos' ? 'Cadastre um novo aluno para começar.' : 'Nenhum aluno inativo ou transferido.';
+    if (buscaAplicada) mensagemVazia = `Nenhum aluno encontrado para "${buscaAplicada}".`;
+    else if (filtroTurma !== TODAS || filtroEscola !== TODAS) mensagemVazia = 'Nenhum aluno com os filtros escolhidos.';
     const primeiro = count ? (pagina - 1) * POR_PAGINA + 1 : 0;
     const ultimo = Math.min(pagina * POR_PAGINA, count);
 
@@ -166,12 +166,11 @@ const AlunosTab = () => {
                         <div className="flex items-center gap-2">
                             <BulkUploadDialog
                                 turmas={turmasAtivas}
-                                institutionId={institutionId}
+                                escolas={escolasAtivas}
                                 onUploadComplete={carregar}
                             />
                             <StudentFormDialog
                                 turmas={turmasAtivas}
-                                institutionId={institutionId}
                                 onStudentUpdated={carregar}
                             >
                                 <Button>
@@ -240,11 +239,11 @@ const AlunosTab = () => {
                             <div className={loading ? 'pointer-events-none opacity-50 transition-opacity' : 'transition-opacity'} aria-busy={loading}>
                                 <AlunosList
                                     alunos={alunos}
-                                    loading={false}
                                     onStudentUpdated={carregar}
                                     onStudentDeleted={carregar}
-                                    turmas={turmas}
-                                    institutionId={institutionId}
+                                    turmas={turmasAtivas}
+                                    mostrarEscola={variasEscolas && filtroEscola === TODAS}
+                                    mensagemVazia={mensagemVazia}
                                 />
                             </div>
 

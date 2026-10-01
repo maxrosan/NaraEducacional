@@ -7,9 +7,13 @@ Seções:
   * turma       — turma obrigatória, ativa, da mesma escola ao mover
   * duplicidade — mesmo nome + nascimento na mesma escola (sem constraint no banco)
   * validações  — nascimento, telefone, escola desativada
+  * foto        — upload (validação, conversão para JPEG, troca) e URL sempre válida
 """
+import io
 from datetime import date, timedelta
+from unittest import mock
 
+from django.core.files.uploadedfile import SimpleUploadedFile
 from django.db import connection
 from django.test.utils import CaptureQueriesContext
 
@@ -345,3 +349,80 @@ class AlunosTests(CenarioMultiTenant):
         r = self._post_criar()
         self.assertEqual(r.status_code, 400, r.content)
         self.assertFalse(Aluno.objects.filter(nome_completo='Davi Novo').exists())
+
+    # =====================================================================
+    # Foto (armazenamento simulado: nada vai para o S3 de verdade)
+    # =====================================================================
+
+    @staticmethod
+    def _imagem(formato='PNG', tamanho=(1200, 900)):
+        from PIL import Image
+        buffer = io.BytesIO()
+        Image.new('RGB', tamanho, (120, 60, 200)).save(buffer, format=formato)
+        return SimpleUploadedFile(f'foto.{formato.lower()}', buffer.getvalue(), content_type=f'image/{formato.lower()}')
+
+    def _enviar_foto(self, aluno, arquivo, usuario=None):
+        self.entrar(usuario or self.admin_a)
+        return self.client.post(f'/api/alunos/{aluno.id}/foto/', {'foto': arquivo}, format='multipart')
+
+    @mock.patch('api.views.aluno.delete_from_storage', return_value=True)
+    @mock.patch('api.views.aluno.upload_bytes_to_storage')
+    def test_foto_convertida_para_jpeg_reduzido(self, upload, _apagar):
+        from PIL import Image
+        upload.side_effect = lambda chave, conteudo, content_type=None: (chave, f'https://s3/{chave}')
+        r = self._enviar_foto(self.aluno_a1, self._imagem())
+        self.assertEqual(r.status_code, 200, r.content)
+
+        chave, conteudo = upload.call_args.args[:2]
+        self.assertTrue(chave.startswith(f'alunos/{self.rede_a.id}/{self.a1.id}/{self.aluno_a1.id}/'))
+        self.assertEqual(upload.call_args.kwargs['content_type'], 'image/jpeg')
+        imagem = Image.open(io.BytesIO(conteudo))
+        self.assertEqual(imagem.format, 'JPEG')
+        self.assertLessEqual(max(imagem.size), 800)
+
+        self.aluno_a1.refresh_from_db()
+        self.assertEqual(self.aluno_a1.foto_storage_key, chave)
+
+    @mock.patch('api.views.aluno.delete_from_storage', return_value=True)
+    @mock.patch('api.views.aluno.upload_bytes_to_storage', return_value=('nova.jpg', 'https://s3/nova.jpg'))
+    def test_trocar_foto_apaga_a_anterior(self, _upload, apagar):
+        Aluno.objects.filter(pk=self.aluno_a1.pk).update(foto_storage_key='antiga.jpg')
+        self.assertEqual(self._enviar_foto(self.aluno_a1, self._imagem()).status_code, 200)
+        apagar.assert_called_once_with('antiga.jpg')
+
+    @mock.patch('api.views.aluno.upload_bytes_to_storage')
+    def test_arquivo_que_nao_e_imagem(self, upload):
+        falso = SimpleUploadedFile('foto.png', b'isto nao e uma imagem', content_type='image/png')
+        r = self._enviar_foto(self.aluno_a1, falso)
+        self.assertEqual(r.status_code, 400, r.content)
+        upload.assert_not_called()
+
+    @mock.patch('api.views.aluno.FOTO_TAMANHO_MAX', 100)
+    @mock.patch('api.views.aluno.upload_bytes_to_storage')
+    def test_foto_grande_demais(self, upload):
+        self.assertEqual(self._enviar_foto(self.aluno_a1, self._imagem()).status_code, 400)
+        upload.assert_not_called()
+
+    def test_foto_sem_arquivo(self):
+        self.entrar(self.admin_a)
+        self.assertEqual(self.client.post(f'/api/alunos/{self.aluno_a1.id}/foto/', {}, format='multipart').status_code, 400)
+
+    @mock.patch('api.views.aluno.upload_bytes_to_storage')
+    def test_foto_permissoes(self, upload):
+        self.assertEqual(self._enviar_foto(self.aluno_a1, self._imagem(), self.prof_a1).status_code, 403)
+        self.assertEqual(self._enviar_foto(self.aluno_b1, self._imagem()).status_code, 404)
+        upload.assert_not_called()
+
+    def test_foto_url_e_gerada_na_leitura(self):
+        """A URL salva expira; com S3 a leitura assina de novo a partir da chave."""
+        Aluno.objects.filter(pk=self.aluno_a1.pk).update(foto_storage_key='alunos/x.jpg', foto_url='https://velha')
+        with mock.patch('api.storage.is_s3_configured', return_value=True), \
+                mock.patch('api.storage.generate_presigned_url', return_value='https://nova-assinada'):
+            self.entrar(self.admin_a)
+            r = self.client.get(url_detalhe(self.aluno_a1))
+        self.assertEqual(r.json()['foto_url'], 'https://nova-assinada')
+
+    def test_foto_url_nao_e_editavel_pelo_patch(self):
+        self.assertEqual(self._patch(self.aluno_a1, foto_url='https://qualquer').status_code, 200)
+        self.aluno_a1.refresh_from_db()
+        self.assertNotEqual(self.aluno_a1.foto_url, 'https://qualquer')
