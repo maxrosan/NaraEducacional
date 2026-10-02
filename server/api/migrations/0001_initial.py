@@ -1270,6 +1270,10 @@ class Migration(migrations.Migration):
             constraint=models.UniqueConstraint(fields=('escola', 'modelo'), name='unique_relatorio_template_por_escola'),
         ),
         migrations.AddConstraint(
+            model_name='relatoriotemplate',
+            constraint=models.UniqueConstraint(condition=models.Q(('ativo', True)), fields=('escola',), name='unique_relatorio_template_ativo_por_escola'),
+        ),
+        migrations.AddConstraint(
             model_name='relatorio',
             constraint=models.UniqueConstraint(fields=('aluno', 'escola'), name='unique_relatorio_aluno_escola'),
         ),

@@ -26,48 +26,14 @@ def _nao_encontrado(mensagem):
 
 
 # ============================================================
-# CRUD de cadastro da escola (template; detalhe também do período)
+# Detalhe de cadastro da escola (template e período)
 # ============================================================
-# RelatorioTemplate usa os três helpers abaixo: todos do escopo leem; só
-# gestão cria/edita; escola/instituição vêm de `resolver_escopo_criacao`.
-# PeriodoAvaliativo usa só o de detalhe: criar/editar têm validação própria
-# (sobreposição de datas) e ficam na seção dele.
-
-def _criar_cadastro_escola(request, serializer_class):
-    user = request.user
-    if not pode_gerenciar(user):
-        return _sem_permissao()
-
-    escola_id, instituicao_id, erro = resolver_escopo_criacao(user, request.data)
-    if erro:
-        return erro
-
-    serializer = serializer_class(data=request.data)
-    serializer.is_valid(raise_exception=True)
-    obj = serializer.save(escola_id=escola_id, instituicao_id=instituicao_id)
-    return Response(serializer_class(obj).data, status=status.HTTP_201_CREATED)
-
 
 def _detalhe_cadastro_escola(model, serializer_class, obj_id, msg_nao_encontrado):
     obj = buscar_no_escopo(model, obj_id)
     if obj is None:
         return _nao_encontrado(msg_nao_encontrado)
     return Response(serializer_class(obj).data)
-
-
-def _atualizar_cadastro_escola(request, model, serializer_class, obj_id, msg_nao_encontrado):
-    if not pode_gerenciar(request.user):
-        return _sem_permissao()
-
-    obj = buscar_no_escopo(model, obj_id)
-    if obj is None:
-        return _nao_encontrado(msg_nao_encontrado)
-
-    partial = request.method == 'PATCH'
-    serializer = serializer_class(obj, data=request.data, partial=partial)
-    serializer.is_valid(raise_exception=True)
-    serializer.save()
-    return Response(serializer.data)
 
 
 # ============================================================
@@ -233,34 +199,125 @@ def excluir_periodo_avaliativo(request, periodo_id):
 # ============================================================
 # RelatorioTemplate
 # ============================================================
+# Regras:
+#   * o template pertence a uma ESCOLA (unique escola+modelo);
+#   * no máximo UM ativo por escola (índice único parcial no banco) — é o que
+#     o gerador usa. Ativar um desativa os outros da mesma escola, na mesma
+#     transação, com a linha da escola travada (duas ativações simultâneas
+#     não furam a regra);
+#   * todos do escopo leem; só gestão cria/edita.
+
+_TEMPLATE_NAO_ENCONTRADO = 'Template não encontrado.'
+
+
+def _dados_com_escola_padrao(user, data):
+    """Admin que não informa `escola` usa a própria, se tiver.
+    (Coordenador sempre usa a própria — resolver_escopo_criacao ignora o body.)"""
+    dados = data.copy() if hasattr(data, 'copy') else dict(data)
+    if not dados.get('escola') and user.nivel == 'admin' and user.escola_id:
+        dados['escola'] = str(user.escola_id)
+    return dados
+
+
+def _salvar_template(serializer, escola_id, **extra):
+    """Valida e salva com a escola travada; se o template fica ativo,
+    desativa os demais da escola antes de gravar."""
+    with transaction.atomic():
+        list(Escola._base_manager.select_for_update().filter(pk=escola_id).values_list('pk', flat=True))
+        serializer.is_valid(raise_exception=True)
+
+        modelo = serializer.validated_data.get('modelo', getattr(serializer.instance, 'modelo', None))
+        repetido = RelatorioTemplate._base_manager.filter(escola_id=escola_id, modelo=modelo)
+        if serializer.instance is not None:
+            repetido = repetido.exclude(pk=serializer.instance.pk)
+        if repetido.exists():
+            return None, Response(
+                {'error': f'Esta escola já tem um template do modelo "{modelo}".'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        ficara_ativo = serializer.validated_data.get('ativo', getattr(serializer.instance, 'ativo', False))
+        if ficara_ativo:
+            outros = RelatorioTemplate._base_manager.filter(escola_id=escola_id, ativo=True)
+            if serializer.instance is not None:
+                outros = outros.exclude(pk=serializer.instance.pk)
+            outros.update(ativo=False, atualizado_em=timezone.now())
+
+        return serializer.save(**extra), None
+
 
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
 def listar_relatorio_templates(request):
-    templates = RelatorioTemplate.objects.all()
+    """GET /relatorio-templates/ — recortado pelo TenantManager.
+    ?escola=<uuid> filtra uma escola; ?ativo=1 só o ativo. O ativo vem primeiro."""
+    templates = filtrar_por(RelatorioTemplate.objects.all(), request, 'escola', Escola, 'escola')
+    if request.query_params.get('ativo') == '1':
+        templates = templates.filter(ativo=True)
+    templates = templates.order_by('-ativo', '-atualizado_em')
     return Response(RelatorioTemplateSerializer(templates, many=True).data)
 
 
 @api_view(['POST'])
 @permission_classes([IsAuthenticated])
 def criar_relatorio_template(request):
-    return _criar_cadastro_escola(request, RelatorioTemplateSerializer)
+    user = request.user
+    if not pode_gerenciar(user):
+        return _sem_permissao()
+
+    dados = _dados_com_escola_padrao(user, request.data)
+    escola_id, instituicao_id, erro = resolver_escopo_criacao(user, dados)
+    if erro:
+        return erro
+
+    serializer = RelatorioTemplateSerializer(data=dados)
+    template, erro = _salvar_template(serializer, escola_id, escola_id=escola_id, instituicao_id=instituicao_id)
+    if erro:
+        return erro
+    return Response(RelatorioTemplateSerializer(template).data, status=status.HTTP_201_CREATED)
 
 
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
 def detalhe_relatorio_template(request, template_id):
     return _detalhe_cadastro_escola(
-        RelatorioTemplate, RelatorioTemplateSerializer, template_id, 'Template não encontrado.',
+        RelatorioTemplate, RelatorioTemplateSerializer, template_id, _TEMPLATE_NAO_ENCONTRADO,
     )
 
 
 @api_view(['PATCH', 'PUT'])
 @permission_classes([IsAuthenticated])
 def atualizar_relatorio_template(request, template_id):
-    return _atualizar_cadastro_escola(
-        request, RelatorioTemplate, RelatorioTemplateSerializer, template_id, 'Template não encontrado.',
-    )
+    if not pode_gerenciar(request.user):
+        return _sem_permissao()
+
+    template = buscar_no_escopo(RelatorioTemplate, template_id)
+    if template is None:
+        return _nao_encontrado(_TEMPLATE_NAO_ENCONTRADO)
+
+    # escola/instituicao são read_only: o template não muda de escola.
+    serializer = RelatorioTemplateSerializer(template, data=request.data, partial=request.method == 'PATCH')
+    template, erro = _salvar_template(serializer, template.escola_id)
+    if erro:
+        return erro
+    return Response(RelatorioTemplateSerializer(template).data)
+
+
+@api_view(['DELETE'])
+@permission_classes([IsAuthenticated])
+def deletar_relatorio_template(request, template_id):
+    """Exclusão definitiva. Relatórios já gerados com ele ficam com
+    template=NULL (FK SET_NULL) e o PDF passa a usar o tema padrão. Se era o
+    ativo, a escola volta para a capa/ordem padrão até ativar outro."""
+    if not pode_gerenciar(request.user):
+        return _sem_permissao()
+
+    template = buscar_no_escopo(RelatorioTemplate, template_id)
+    if template is None:
+        return _nao_encontrado(_TEMPLATE_NAO_ENCONTRADO)
+
+    template.delete()
+    return Response(status=status.HTTP_204_NO_CONTENT)
 
 
 # ============================================================

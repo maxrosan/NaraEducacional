@@ -18,11 +18,13 @@ import {
   cssVarsPaleta,
   montarPaletaPersonalizada,
   sortearCoresQueCombinam,
-  apiGet,
-  apiPost,
-  apiPut,
   fetchInstituicao,
 } from '@/lib/templateRelatorioShared';
+import {
+  buscarRelatorioTemplate,
+  criarRelatorioTemplate,
+  atualizarRelatorioTemplate,
+} from '@/services/api';
 
 // Modelos que usam foto da criança na capa (bate com RelatorioTemplate.suporta_foto()).
 // Apenas 'memorias' — 'natureza' mantém só o círculo pontilhado decorativo,
@@ -164,11 +166,12 @@ export default function TemplateEditorPage() {
     if (!modoEdicao) return;
     (async () => {
       try {
-        const t = await apiGet(`/api/templates-relatorio/${templateId}/`);
+        const t = await buscarRelatorioTemplate(templateId);
         setModeloId(t.modelo);
         setItemsSumario(Array.isArray(t.items_sumario) && t.items_sumario.length ? t.items_sumario : SECOES_PADRAO);
         setTemplateAtivoId(t.ativo ? t.id : null);
-        setUsaFotoCrianca(Boolean(t.usa_foto_crianca));
+        // O campo do model é usa_foto_aluno (usa_foto_crianca era do legado).
+        setUsaFotoCrianca(Boolean(t.usa_foto_aluno ?? t.usa_foto_crianca));
         setTipoRelatorio(t.config?.tipoRelatorio || 'Relatório Individual');
         setTituloRelatorio(t.config?.tituloRelatorio || 'Relatório de Acompanhamento da Aprendizagem');
         setFraseDestaque(t.config?.fraseDestaque || '');
@@ -295,7 +298,7 @@ export default function TemplateEditorPage() {
       const payload = {
         nome: nomeTemplateGerado,
         modelo: modeloId,
-        usa_foto_crianca: suportaFoto ? usaFotoCrianca : false,
+        usa_foto_aluno: suportaFoto ? usaFotoCrianca : false,
         config: {
           paleta: paletaAtual.cores,
           tipoRelatorio,
@@ -309,12 +312,14 @@ export default function TemplateEditorPage() {
           tituloTamanho,
           alinhamento,
         },
-        items_sumario: itemsSumario.map((i) => ({ ...i, visivel: true })),
+        // Preserva o "ocultar" configurado em Admin → Relatórios (antes
+        // forçava visivel: true e desfazia essa configuração a cada salvar).
+        items_sumario: itemsSumario.map((i) => ({ ...i, visivel: i.visivel !== false })),
       };
       if (modoEdicao) {
-        await apiPut(`/api/templates-relatorio/${templateId}/atualizar/`, payload);
+        await atualizarRelatorioTemplate(templateId, payload);
       } else {
-        await apiPost('/api/templates-relatorio/criar/', payload);
+        await criarRelatorioTemplate(payload);
       }
       setSucesso(true);
       setTimeout(() => navigate('/coordenacao/templates/escolher-modelo'), 1200);

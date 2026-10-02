@@ -142,6 +142,7 @@ from .views.avaliacao import (
     criar_relatorio_template,
     detalhe_relatorio_template,
     atualizar_relatorio_template,
+    deletar_relatorio_template,
     listar_relatorios,
     criar_relatorio,
     detalhe_relatorio,
@@ -418,6 +419,7 @@ urlpatterns = [
     path('relatorio-templates/criar/', criar_relatorio_template, name='criar_relatorio_template'),
     path('relatorio-templates/<uuid:template_id>/', detalhe_relatorio_template, name='detalhe_relatorio_template'),
     path('relatorio-templates/<uuid:template_id>/atualizar/', atualizar_relatorio_template, name='atualizar_relatorio_template'),
+    path('relatorio-templates/<uuid:template_id>/deletar/', deletar_relatorio_template, name='deletar_relatorio_template'),
 
     # Relatórios
     # Rotas com segmento fixo ('bulk-pdf', 'coordenacao') ficam antes das com

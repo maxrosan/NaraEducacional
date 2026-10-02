@@ -1142,6 +1142,52 @@ class RelatorioTemplateSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = ['id', 'escola', 'instituicao', 'criado_em', 'atualizado_em']
 
+    def validate_config(self, valor):
+        if valor in (None, ''):
+            return {}
+        if not isinstance(valor, dict):
+            raise serializers.ValidationError('config deve ser um objeto JSON.')
+        return valor
+
+    def validate_items_sumario(self, valor):
+        """Só as seções que o gerador conhece (services/relatorio._SECOES_PADRAO).
+
+        Antes aceitava qualquer JSON: a tela do legado gravava chaves que o
+        gerador não tem (introducao_coletiva, analise_leitura...) e elas eram
+        ignoradas em silêncio na geração. Seção que faltar não é erro — o
+        gerador a acrescenta no fim, visível.
+        """
+        from api.services.relatorio import _CHAVES_VALIDAS, _TITULOS_PADRAO
+
+        if valor in (None, ''):
+            return []
+        if not isinstance(valor, list):
+            raise serializers.ValidationError('items_sumario deve ser uma lista.')
+
+        normalizado, vistas = [], set()
+        for item in valor:
+            if not isinstance(item, dict):
+                raise serializers.ValidationError('Cada item deve ser um objeto {chave, titulo, visivel}.')
+            chave = item.get('chave')
+            if chave not in _CHAVES_VALIDAS:
+                raise serializers.ValidationError(
+                    f"Seção desconhecida: {chave!r}. Válidas: {', '.join(sorted(_CHAVES_VALIDAS))}."
+                )
+            if chave in vistas:
+                raise serializers.ValidationError(f'Seção repetida: {chave!r}.')
+            vistas.add(chave)
+
+            titulo = item.get('titulo')
+            titulo = titulo.strip() if isinstance(titulo, str) else ''
+            if len(titulo) > 120:
+                raise serializers.ValidationError(f'Título da seção {chave!r} passa de 120 caracteres.')
+            normalizado.append({
+                'chave': chave,
+                'titulo': titulo or _TITULOS_PADRAO[chave],
+                'visivel': bool(item.get('visivel', True)),
+            })
+        return normalizado
+
 
 class RelatorioSerializer(serializers.ModelSerializer):
     aluno_nome = serializers.CharField(source='aluno.nome_completo', read_only=True)
@@ -1348,14 +1394,16 @@ class PromptCategoriaSerializer(serializers.ModelSerializer):
 
     def get_template_resolvido(self, categoria):
         escola_id = self.context.get('escola_id')
-        base = PromptTemplate._base_manager.filter(categoria=categoria).order_by('-criado_em')
+        templates = list(categoria.templates.all())
 
         if escola_id:
-            personalizado = base.filter(escola_id=escola_id).first()
+            personalizado = next(
+                (t for t in templates if str(t.escola_id) == str(escola_id)), None,
+            )
             if personalizado and personalizado.personalizado.strip():
                 return {'origem': 'personalizado', 'texto': personalizado.personalizado}
 
-        global_tpl = base.filter(escola__isnull=True, instituicao__isnull=True).first()
+        global_tpl = next((t for t in templates if t.escola_id is None and t.instituicao_id is None), None)
         if global_tpl and global_tpl.prompt_global.strip():
             return {'origem': 'global', 'texto': global_tpl.prompt_global}
 

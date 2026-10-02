@@ -1024,6 +1024,12 @@ class RelatorioTemplate(models.Model):
         verbose_name_plural = 'Templates de Relatório'
         constraints = [
             models.UniqueConstraint(fields=['escola', 'modelo'], name='unique_relatorio_template_por_escola'),
+            # No máximo UM template ativo por escola: é ele que o gerador usa
+            # (ordem/títulos das seções em `items_sumario` e a capa em `config`).
+            models.UniqueConstraint(
+                fields=['escola'], condition=models.Q(ativo=True),
+                name='unique_relatorio_template_ativo_por_escola',
+            ),
         ]
 
     def __str__(self):

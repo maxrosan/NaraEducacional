@@ -1,3 +1,4 @@
+import { API_BASE_URL, authFetch } from '@/services/api';
 // Compartilhado entre TemplateEscolherModeloPage, TemplateEditorPage e
 // TemplatesListPage. Mantém a MESMA estrutura HTML/classes que o backend usa
 // para gerar o PDF (api/services/relatorio_capa.py) — a prévia na tela do
@@ -688,90 +689,107 @@ export function cssVarsPaleta(paleta) {
 }
 
 // ---------------- API ----------------
+// Camada de compatibilidade: as páginas de template (lista, escolher modelo,
+// editor) ainda chamam as rotas do sistema antigo. Aqui elas viram as rotas
+// do backend multi-tenant, autenticadas por JWT (authFetch), sem sessão,
+// cookie nem CSRF:
+//   /api/templates-relatorio/...            → /relatorio-templates/...
+//   POST /api/templates-relatorio/<id>/ativar/ → PATCH .../<id>/atualizar/ {ativo: true}
+//     (o backend desativa os outros templates da escola)
+//   /api/auth/me/                           → /me/
+//   PUT de atualização                      → PATCH (só os campos enviados)
 
-export async function getCsrfToken() {
-  await fetch('/api/auth/csrf/', { credentials: 'include' });
-  const match = document.cookie.match(/csrftoken=([^;]+)/);
-  return match ? match[1] : '';
+function traduzirRota(url, method, body) {
+  let caminho = url.replace(/^\/api(?=\/)/, '');
+  caminho = caminho.replace(/^\/templates-relatorio(?=\/)/, '/relatorio-templates');
+  caminho = caminho.replace(/^\/auth\/me\/$/, '/me/');
+
+  const ativar = caminho.match(/^\/relatorio-templates\/([^/]+)\/ativar\/$/);
+  if (ativar) {
+    return { caminho: `/relatorio-templates/${ativar[1]}/atualizar/`, method: 'PATCH', body: { ativo: true } };
+  }
+  if (method === 'PUT' && /\/atualizar\/$/.test(caminho)) method = 'PATCH';
+  return { caminho, method, body };
 }
 
 async function handleJson(res) {
+  if (res.status === 204) return {};
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data.error || `Erro ${res.status}`);
+  if (!res.ok) {
+    // DRF devolve {campo: ["msg"]} na validação; o resto vem em error/detail.
+    const campos = data && typeof data === 'object' && !Array.isArray(data)
+      ? Object.values(data).flat(Infinity).filter((m) => typeof m === 'string').join(' ')
+      : '';
+    throw new Error(data.error || data.detail || campos || `Erro ${res.status}`);
+  }
   return data;
 }
 
-export async function apiGet(url) {
-  const res = await fetch(url, { credentials: 'include' });
-  return handleJson(res);
+async function requisitar(url, method = 'GET', body) {
+  const rota = traduzirRota(url, method, body);
+  const options = { method: rota.method };
+  if (rota.body !== undefined && rota.method !== 'GET' && rota.method !== 'DELETE') {
+    options.headers = { 'Content-Type': 'application/json' };
+    options.body = JSON.stringify(rota.body);
+  }
+  return handleJson(await authFetch(`${API_BASE_URL}${rota.caminho}`, options));
 }
 
-export async function apiPost(url, body) {
-  const csrf = await getCsrfToken();
-  const res = await fetch(url, {
-    method: 'POST',
-    credentials: 'include',
-    headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrf },
-    body: JSON.stringify(body),
-  });
-  return handleJson(res);
+/** Mantida só por compatibilidade: o backend novo não usa CSRF (JWT). */
+export async function getCsrfToken() {
+  return '';
 }
 
-export async function apiPut(url, body) {
-  const csrf = await getCsrfToken();
-  const res = await fetch(url, {
-    method: 'PUT',
-    credentials: 'include',
-    headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrf },
-    body: JSON.stringify(body),
-  });
-  return handleJson(res);
-}
+export const apiGet = (url) => requisitar(url, 'GET');
+export const apiPost = (url, body) => requisitar(url, 'POST', body);
+export const apiPut = (url, body) => requisitar(url, 'PUT', body);
+export const apiDelete = (url) => requisitar(url, 'DELETE');
 
-export async function apiDelete(url) {
-  const csrf = await getCsrfToken();
-  const res = await fetch(url, {
-    method: 'DELETE',
-    credentials: 'include',
-    headers: { 'X-CSRFToken': csrf },
-  });
-  return handleJson(res);
-}
-
-// Monta cnpj/contato já formatados, no mesmo padrão usado em
-// gerar_relatorio_com_ia (server/api/services/relatorio.py) — mantém as
-// duas fontes de verdade consistentes.
+// Cabeçalho da prévia no mesmo critério de _dados_cabecalho
+// (server/api/services/relatorio.py): dados da ESCOLA do usuário, com
+// fallback campo a campo para a INSTITUIÇÃO; o logo vem da instituição.
 export async function fetchInstituicao() {
   const vazio = { nome: 'Sua Escola', cnpj: '', contato: '', logoUrl: null };
   try {
-    const me = await apiGet('/api/auth/me/');
-    if (!me.instituicao_id) return vazio;
-    const inst = await apiGet(`/api/instituicoes/${me.instituicao_id}/`);
+    const me = await apiGet('/me/');
+    const escolaId = me.escola ?? me.escola_id;
+    const instituicaoId = me.instituicao ?? me.instituicao_id;
 
-    const cnpj = inst.cnpj ? `CNPJ: ${inst.cnpj}` : '';
+    const [escola, inst] = await Promise.all([
+      escolaId ? apiGet(`/escolas/${escolaId}/`).catch(() => null) : null,
+      instituicaoId ? apiGet(`/instituicoes/${instituicaoId}/`).catch(() => null) : null,
+    ]);
+    if (!escola && !inst) return vazio;
+
+    const campo = (nome) => (escola && escola[nome]) || (inst && inst[nome]) || '';
+    const cidade = campo('cidade');
+    const estado = campo('estado');
 
     const partesContato = [];
-    if (inst.endereco) partesContato.push(inst.endereco);
-    if (inst.cidade) partesContato.push(inst.estado ? `${inst.cidade} — ${inst.estado}` : inst.cidade);
-    if (inst.telefone) partesContato.push(`Tel: ${inst.telefone}`);
+    if (campo('endereco')) partesContato.push(campo('endereco'));
+    if (cidade) partesContato.push(estado ? `${cidade} — ${estado}` : cidade);
+    if (campo('telefone')) partesContato.push(`Tel: ${campo('telefone')}`);
 
     return {
-      nome: inst.nome || 'Sua Escola',
-      cnpj,
+      nome: campo('nome') || 'Sua Escola',
+      cnpj: campo('cnpj') ? `CNPJ: ${campo('cnpj')}` : '',
       contato: partesContato.join(' | '),
-      logoUrl: inst.logo_url || null,
+      logoUrl: (inst && inst.logo_url) || null,
     };
   } catch {
     return vazio;
   }
 }
 
+/** Modelo do template ativo DA ESCOLA do usuário (o admin enxerga os da
+ * rede inteira, então filtra pela escola dele quando houver). */
 export async function fetchModeloAtivo() {
   try {
-    const templates = await apiGet('/api/templates-relatorio/?leve=1');
-
+    const me = await apiGet('/me/');
+    const escolaId = me.escola ?? me.escola_id;
+    const url = escolaId ? `/relatorio-templates/?escola=${escolaId}&ativo=1` : '/relatorio-templates/?ativo=1';
+    const templates = await apiGet(url);
     const ativo = (templates || []).find((t) => t.ativo);
-
     return ativo ? ativo.modelo : null;
   } catch (error) {
     console.error('Erro ao buscar modelo ativo:', error);

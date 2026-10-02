@@ -22,6 +22,11 @@ import BnccQuestionsPage from '@/pages/BnccQuestionsPage';
 
 // ─── Nav items ────────────────────────────────────────────────────────────────
 
+// Itens cujo `tab` começa com "/" são rotas fora do painel (navegação direta).
+// A capa do relatório (escolha de modelo, cores, textos) é editada nas telas
+// de template, compartilhadas com a coordenação.
+const ROTA_CAPA_RELATORIO = "/coordenacao/templates/escolher-modelo";
+
 const NAV_ITEMS = [
   { label: "Dashboard", tab: "dashboard" },
   {
@@ -33,7 +38,13 @@ const NAV_ITEMS = [
       { label: "Dispositivos", tab: "dispositivos" },
     ],
   },
-  { label: "Relatórios", tab: "relatorios" },
+  {
+    label: "Relatórios",
+    children: [
+      { label: "Ordem das seções", tab: "relatorios" },
+      { label: "Capa do relatório", tab: ROTA_CAPA_RELATORIO },
+    ],
+  },
   {
     label: "Configurações",
     children: [
@@ -567,7 +578,7 @@ const AdminPage = () => {
   }, [tab, turmaId, navigate, user, ehSuperadmin]);
 
   function handleTabChange(value) {
-    navigate(`/admin/${value}`);
+    navigate(value.startsWith('/') ? value : `/admin/${value}`);
   }
 
   return (

@@ -967,6 +967,29 @@ export async function listarEscolas() {
   return getJson('/escolas/', 'listar escolas');
 }
 
+// ─── Templates de relatório (capa + ordem das seções) ────────────────────────
+// Um template por (escola, modelo); no máximo um ATIVO por escola — é o que o
+// gerador usa. Ativar um desativa os outros da escola (feito no backend).
+
+export async function listarRelatorioTemplates({ escola, ativo } = {}) {
+  return getJson(
+    comQuery('/relatorio-templates/', { escola, ativo: ativo ? '1' : undefined }),
+    'listar templates de relatório',
+  );
+}
+
+export async function buscarRelatorioTemplate(templateId) {
+  return getJson(`/relatorio-templates/${templateId}/`, 'buscar template de relatório');
+}
+
+export async function criarRelatorioTemplate(dados) {
+  return enviarJson('/relatorio-templates/criar/', 'POST', dados, 'criar template de relatório');
+}
+
+export async function atualizarRelatorioTemplate(templateId, dados) {
+  return enviarJson(`/relatorio-templates/${templateId}/atualizar/`, 'PATCH', dados, 'atualizar template de relatório');
+}
+
 export async function listarPromptsRede() {
   return getJson('/prompts/rede/', 'listar prompts da rede');
 }
