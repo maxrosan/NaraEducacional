@@ -7,9 +7,10 @@ import {
   SECOES_PADRAO,
   renderCapa,
   fetchInstituicao,
-  fetchModeloAtivo,
   apiGet,
   apiPost,
+  useEscolaTemplate,
+  useRotasTemplate,
 } from '@/lib/templateRelatorioShared';
 
 function usePreviewScale(larguraBase = 794) {
@@ -101,6 +102,8 @@ function ModeloThumbnail({ modeloId, instituicao }) {
 
 export default function TemplateEscolherModeloPage() {
   const navigate = useNavigate();
+  const { escolaId, escolas, trocarEscola, comEscola, pronto } = useEscolaTemplate();
+  const rotas = useRotasTemplate();
 
   const [instituicao, setInstituicao] = useState({
     nome: 'Sua Escola',
@@ -125,92 +128,44 @@ export default function TemplateEscolherModeloPage() {
   // -------------------------------------------------------
 
   useEffect(() => {
+    if (!pronto) return undefined;
+    let cancelado = false;
+
     async function carregarDados() {
       try {
         setCarregando(true);
         setErro(null);
 
-        const [
-          instituicaoData,
-          modeloAtivoData,
-          templatesData,
-        ] = await Promise.all([
-          fetchInstituicao(),
-          fetchModeloAtivo(),
-          apiGet('/api/templates-relatorio/'),
+        // Só os templates DA ESCOLA em configuração (o admin enxerga os da
+        // rede inteira; sem o filtro, modelos de escolas diferentes se
+        // misturavam na tela).
+        const [instituicaoData, templatesData] = await Promise.all([
+          fetchInstituicao(escolaId),
+          apiGet(comEscola('/relatorio-templates/')),
         ]);
+        if (cancelado) return;
 
-        // -------------------------------------------------
-        // Instituição
-        // -------------------------------------------------
+        if (instituicaoData) setInstituicao(instituicaoData);
 
-        if (instituicaoData) {
-          setInstituicao(instituicaoData);
-        }
-
-
-        // -------------------------------------------------
-        // Template/modelo atualmente ativo
-        //
-        // fetchModeloAtivo pode retornar:
-        //
-        // 1. um objeto:
-        //    { id: "...", modelo: "classico" }
-        //
-        // 2. apenas o ID:
-        //    "uuid..."
-        //
-        // 3. null
-        // -------------------------------------------------
-
-        let ativoId = null;
-
-        if (
-          modeloAtivoData !== null &&
-          modeloAtivoData !== undefined
-        ) {
-          if (typeof modeloAtivoData === 'object') {
-            ativoId =
-              modeloAtivoData.id ??
-              modeloAtivoData.templateId ??
-              modeloAtivoData.template_id ??
-              null;
-          } else {
-            ativoId = modeloAtivoData;
-          }
-        }
-
-        setTemplateAtivoId(ativoId);
-
-
-        // -------------------------------------------------
-        // Templates
-        // -------------------------------------------------
-
-        let listaTemplates = [];
-
-        if (Array.isArray(templatesData)) {
-          listaTemplates = templatesData;
-        } else if (Array.isArray(templatesData?.results)) {
-          listaTemplates = templatesData.results;
-        }
-
+        const listaTemplates = Array.isArray(templatesData)
+          ? templatesData
+          : (Array.isArray(templatesData?.results) ? templatesData.results : []);
         setTemplates(listaTemplates);
-
+        // O ativo vem da própria lista (antes usava fetchModeloAtivo, que
+        // devolvia o nome do MODELO e era comparado com o id do template).
+        setTemplateAtivoId(listaTemplates.find((t) => t.ativo)?.id ?? null);
       } catch (e) {
+        if (cancelado) return;
         console.error('Erro ao carregar templates:', e);
-
-        setErro(
-          e.message ||
-          'Não foi possível carregar os templates.'
-        );
+        setErro(e.message || 'Não foi possível carregar os templates.');
       } finally {
-        setCarregando(false);
+        if (!cancelado) setCarregando(false);
       }
     }
 
     carregarDados();
-  }, []);
+    return () => { cancelado = true; };
+  }, [pronto, escolaId, comEscola]);
 
 
   // -------------------------------------------------------
@@ -230,7 +185,7 @@ export default function TemplateEscolherModeloPage() {
 
   function criar(modeloId) {
     navigate(
-      `/coordenacao/templates/nova?modelo=${modeloId}`
+      comEscola(rotas.nova(modeloId))
     );
   }
 
@@ -241,7 +196,7 @@ export default function TemplateEscolherModeloPage() {
 
   function editar(templateId) {
     navigate(
-      `/coordenacao/templates/${templateId}`
+      comEscola(rotas.editar(templateId))
     );
   }
 
@@ -336,6 +291,23 @@ export default function TemplateEscolherModeloPage() {
       </div>
 
 
+      {/* Escola em configuração — só para quem enxerga mais de uma. */}
+      {escolas.length > 1 && (
+        <div className="mt-4 max-w-sm">
+          <label htmlFor="escola-capa" className="block text-sm font-medium text-gray-700 mb-1">
+            Escola
+          </label>
+          <select
+            id="escola-capa"
+            value={escolaId || ''}
+            onChange={(e) => trocarEscola(e.target.value)}
+            className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm"
+          >
+            {escolas.map((e) => <option key={e.id} value={e.id}>{e.nome}</option>)}
+          </select>
+        </div>
+      )}
+
       {/* -------------------------------------------------
           Erro
          ------------------------------------------------- */}
@@ -366,7 +338,7 @@ export default function TemplateEscolherModeloPage() {
           // Mantemos as duas verificações:
           //
           // 1. template.ativo
-          // 2. templateAtivoId vindo do fetchModeloAtivo()
+          // 2. templateAtivoId (o ativo da lista desta escola)
           //
           // Assim a UI continua funcionando mesmo se o endpoint
           // retornar o ID separado.

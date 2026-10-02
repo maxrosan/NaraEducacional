@@ -4,12 +4,18 @@ convivem com o recorte por tenant.
 """
 from django.db import connection
 from django.test.utils import CaptureQueriesContext
+from django.urls import reverse
 
 from api.models import Escola, Notificacao, PromptCategoria, PromptTemplate, Ticket
 from api.services.prompt_resolver import resolver_prompt
 from api.tenancy import clear_current_tenant, set_current_tenant
 
 from .base import CenarioMultiTenant
+
+# Texto global de "Planejamento" trazido do sistema legado (migration 0003).
+TEXTO_PLANEJAMENTO_LEGADO = (
+    'Com base nas habilidades BNCC informadas e no histórico da turma, sugira atividades.'
+)
 
 
 class PromptTests(CenarioMultiTenant):
@@ -24,18 +30,31 @@ class PromptTests(CenarioMultiTenant):
             categoria=cls.categoria, prompt_global='GLOBAL', personalizado='',
         )
 
+    @staticmethod
+    def _global_da_migration(titulo):
+        return (
+            PromptTemplate._base_manager
+            .filter(categoria__titulo=titulo, escola__isnull=True, instituicao__isnull=True)
+            .order_by('criado_em').first()
+        )
+
     def test_categorias_padrao_criadas_pela_migration(self):
         titulos = set(PromptCategoria.objects.filter(ativo=True).values_list('titulo', flat=True))
         self.assertTrue({
-            'Relatórios - Atividades', 'Voz', 'Desenho', 'Planejamento', 'Escrita',
+            'Relatórios - Atividades', 'Voz', 'Desenho', 'Planejamento',
+            'Planejamento - Habilidades BNCC', 'Escrita',
             'Relatórios - Relato Individual', 'Relatórios - Produções', 'Relatórios - Conclusão',
         } <= titulos)
         self.assertEqual(PromptCategoria.objects.filter(titulo='Escrita').count(), 1)
 
     def test_prompts_globais_carregados_pela_migration(self):
+        # Todas as categorias do sistema têm global — inclusive as duas de
+        # Planejamento, agora separadas (antes Planejamento ficava sem global
+        # porque uma categoria servia a duas tarefas).
         com_global = [
             'Escrita', 'Desenho', 'Voz', 'Relatórios - Atividades', 'Relatórios - Relato Individual',
             'Relatórios - Produções', 'Relatórios - Conclusão',
+            'Planejamento', 'Planejamento - Habilidades BNCC',
         ]
         for titulo in com_global:
             with self.subTest(categoria=titulo):
@@ -44,12 +63,17 @@ class PromptTests(CenarioMultiTenant):
                         categoria__titulo=titulo, escola__isnull=True, instituicao__isnull=True,
                     ).exclude(prompt_global='').exists()
                 )
-        # Planejamento atende duas tarefas com fallbacks diferentes no código.
-        self.assertFalse(
-            PromptTemplate._base_manager.filter(categoria__titulo='Planejamento', escola__isnull=True).exists()
-        )
         self.assertTrue(resolver_prompt('Voz').startswith('Você é um assistente'))
         self.assertNotIn('{{', resolver_prompt('Voz'))
+
+    def test_planejamento_usa_o_texto_do_legado_e_bncc_tem_o_proprio(self):
+        self.assertEqual(
+            self._global_da_migration('Planejamento').prompt_global.strip(), TEXTO_PLANEJAMENTO_LEGADO,
+        )
+        bncc = self._global_da_migration('Planejamento - Habilidades BNCC').prompt_global
+        self.assertNotEqual(bncc.strip(), TEXTO_PLANEJAMENTO_LEGADO)
+        # O formato JSON é anexado pelo código; o texto editável não precisa dele.
+        self.assertTrue(bncc.startswith('Você é uma especialista pedagógica'))
 
     def _salvar(self, **campos):
         return self.client.post('/api/prompts/salvar/', {'categoria': str(self.categoria.id), **campos}, format='json')
@@ -75,6 +99,14 @@ class PromptTests(CenarioMultiTenant):
         self.assertEqual(resolver_prompt('Escrita', escola_id=self.a1.id), 'Da A1')
         self.assertEqual(resolver_prompt('Escrita', escola_id=self.a2.id), 'GLOBAL')
         self.assertEqual(resolver_prompt('Escrita', escola_id=self.b1.id), 'GLOBAL')
+
+    def test_personalizado_grava_escola_e_instituicao_da_escola(self):
+        """O `cliente_id` do legado equivale à escola; a instituição acompanha
+        a da escola (é ela que o TenantManager usa no recorte do admin)."""
+        self.entrar(self.admin_a)
+        self._salvar(personalizado='Da A2', escola=str(self.a2.id))
+        tpl = self._personalizado_da(self.a2)
+        self.assertEqual(tpl.instituicao_id, self.a2.instituicao_id)
 
     def test_coordenador_so_personaliza_a_propria_escola(self):
         self.entrar(self.coord_a1)
@@ -109,6 +141,18 @@ class PromptTests(CenarioMultiTenant):
         finally:
             clear_current_tenant()
 
+    # --- resolver: título e categoria ------------------------------------
+
+    def test_resolver_nao_diferencia_maiusculas_no_titulo(self):
+        """Mesmo critério da migration 0003: renomear só a caixa da categoria
+        não pode desligar o banco em silêncio e cair no .txt."""
+        PromptCategoria.objects.filter(pk=self.categoria.pk).update(titulo='escrita')
+        self.assertEqual(resolver_prompt('Escrita', escola_id=self.a1.id), 'GLOBAL')
+
+    def test_resolver_ignora_categoria_inativa(self):
+        PromptCategoria.objects.filter(pk=self.categoria.pk).update(ativo=False)
+        self.assertEqual(resolver_prompt('Escrita', escola_id=self.a1.id, fallback_arquivo=None), '')
+
     def test_tela_do_coordenador_mostra_o_que_vale_para_a_escola(self):
         self.entrar(self.coord_a1)
 
@@ -120,6 +164,17 @@ class PromptTests(CenarioMultiTenant):
         self.assertEqual(origem(), 'global')
         self._salvar(personalizado='Da A1')
         self.assertEqual(origem(), 'personalizado')
+
+    # --- categorias: taxonomia só do superadmin --------------------------
+
+    def test_so_superadmin_cria_categoria(self):
+        url = reverse('criar_prompt_categoria')
+        for usuario in (self.admin_a, self.coord_a1):
+            with self.subTest(usuario=usuario.email):
+                self.entrar(usuario)
+                self.assertEqual(self.client.post(url, {'titulo': 'Nova'}, format='json').status_code, 403)
+        self.entrar(self.superadmin)
+        self.assertEqual(self.client.post(url, {'titulo': 'Nova'}, format='json').status_code, 201)
 
     # --- visão da rede (GET /prompts/rede/) -------------------------------
 

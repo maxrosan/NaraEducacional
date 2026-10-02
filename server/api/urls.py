@@ -218,6 +218,7 @@ from .views.coordenacao_cache import (
 )
 from .views.indicadores_turma import indicadores_turma
 from .views.analytics import contagem_registros, participacao_docente
+from .views.openai_usage import resumo_uso_openai, listar_uso_openai
 from .views.prompts import (
     listar_prompt_categorias,
     salvar_prompt_template,
@@ -511,6 +512,10 @@ urlpatterns = [
     path('coordenacao/indicadores-turma/', indicadores_turma, name='indicadores_turma'),
     path('analytics/contagem-registros/', contagem_registros, name='contagem_registros'),
     path('analytics/participacao-docente/', participacao_docente, name='participacao_docente'),
+
+    # Consumo da API OpenAI (só superadmin)
+    path('admin/openai-usage/', listar_uso_openai, name='listar_uso_openai'),
+    path('admin/openai-usage/summary/', resumo_uso_openai, name='resumo_uso_openai'),
 
     # Biblioteca de Prompts (IA)
     path('prompts/categorias/', listar_prompt_categorias, name='listar_prompt_categorias'),

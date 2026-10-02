@@ -222,7 +222,8 @@ def extrair_observacoes(transcricao: str, escola_id: str = None) -> dict:
         logger.error("[IA EXTRAÇÃO] Falha de conexão com a OpenAI durante extração: %s", e)
         raise ConnectionError("Falha de conexão com o serviço de análise.") from e
 
-    registrar_uso_openai(response=response, usuario=None)
+    # Áudio do dispositivo não tem usuário: a escola vem do contexto.
+    registrar_uso_openai(response=response, usuario=None, escola_id=escola_id)
     choice = response.choices[0]
     resultado_ia = (choice.message.content or "").strip()
 

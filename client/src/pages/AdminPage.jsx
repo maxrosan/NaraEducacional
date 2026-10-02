@@ -6,7 +6,7 @@ import {
   HelpCircle, UserPlus, GraduationCap, Activity, Wand2,
   ChevronDown, ChevronRight, LogOut, User, ShieldCheck, Menu, X,
 } from 'lucide-react';
-import { useNavigate, useParams, useLocation } from 'react-router-dom';
+import { useNavigate, useParams, useLocation, useSearchParams } from 'react-router-dom';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   TurmasTab, UsuariosTab, PeriodosTab,
@@ -19,13 +19,12 @@ import EscolasTab from '@/components/admin/EscolasTab';
 import { useAuth } from '@/contexts/AuthContext';
 import OpenAIUsagePage from '@/pages/OpenAIUsagePage';
 import BnccQuestionsPage from '@/pages/BnccQuestionsPage';
+import TemplateEscolherModeloPage from '@/pages/coordenacao/TemplateEscolherModeloPage';
+import TemplateEditorPage from '@/pages/coordenacao/TemplateEditorPage';
 
 // ─── Nav items ────────────────────────────────────────────────────────────────
 
 // Itens cujo `tab` começa com "/" são rotas fora do painel (navegação direta).
-// A capa do relatório (escolha de modelo, cores, textos) é editada nas telas
-// de template, compartilhadas com a coordenação.
-const ROTA_CAPA_RELATORIO = "/coordenacao/templates/escolher-modelo";
 
 const NAV_ITEMS = [
   { label: "Dashboard", tab: "dashboard" },
@@ -42,7 +41,7 @@ const NAV_ITEMS = [
     label: "Relatórios",
     children: [
       { label: "Ordem das seções", tab: "relatorios" },
-      { label: "Capa do relatório", tab: ROTA_CAPA_RELATORIO },
+      { label: "Capa do relatório", tab: "capa" },
     ],
   },
   {
@@ -67,7 +66,7 @@ const NAV_ITEMS = [
 
 // Abas exclusivas do superadmin: somem do menu e a URL direta redireciona.
 // O backend também barra (403) — isto é só para não mostrar tela quebrada.
-const ABAS_SOMENTE_SUPERADMIN = new Set(["categorias-prompt"]);
+const ABAS_SOMENTE_SUPERADMIN = new Set(["categorias-prompt", "openai"]);
 
 /** Nível do usuário logado. O backend novo manda `nivel`; `perfil` é do legado. */
 function nivelDoUsuario(user) {
@@ -542,6 +541,21 @@ function Navbar({ onTabChange, tabAtiva }) {
   );
 }
 
+// ─── Capa do relatório (aba "capa") ──────────────────────────────────────────
+// As mesmas telas de template da coordenação, abertas DENTRO do painel admin
+// (mesma navbar). Qual tela aparece vem da URL:
+//   /admin/capa?escola=..                       → escolher modelo
+//   /admin/capa?tela=nova&modelo=..&escola=..   → editor (novo)
+//   /admin/capa?template=<id>&escola=..         → editor (existente)
+
+function CapaRelatorioAdmin() {
+  const [searchParams] = useSearchParams();
+  const templateId = searchParams.get('template');
+  if (templateId) return <TemplateEditorPage key={templateId} />;
+  if (searchParams.get('tela') === 'nova') return <TemplateEditorPage key={`nova-${searchParams.get('modelo')}`} />;
+  return <TemplateEscolherModeloPage />;
+}
+
 // ─── AdminPage ────────────────────────────────────────────────────────────────
 
 // Aba removida → aba que a substitui.
@@ -607,6 +621,7 @@ const AdminPage = () => {
               <TabsTrigger value="alunos">Alunos</TabsTrigger>
               <TabsTrigger value="disciplinas">Disciplinas</TabsTrigger>
               <TabsTrigger value="relatorios">Relatórios</TabsTrigger>
+              <TabsTrigger value="capa">Capa do relatório</TabsTrigger>
               <TabsTrigger value="periodos">Períodos</TabsTrigger>
               <TabsTrigger value="usuarios">Usuários</TabsTrigger>
               <TabsTrigger value="bncc">Perguntas BNCC</TabsTrigger>
@@ -632,6 +647,7 @@ const AdminPage = () => {
                 <TabsContent value="disciplinas"><DisciplinasTab /></TabsContent>
                 <TabsContent value="dispositivos"><DispositivosTab /></TabsContent>
                 <TabsContent value="relatorios"><RelatoriosConfigTab /></TabsContent>
+                <TabsContent value="capa"><CapaRelatorioAdmin /></TabsContent>
                 <TabsContent value="periodos"><PeriodosTab /></TabsContent>
                 <TabsContent value="usuarios"><UsuariosTab /></TabsContent>
                 <TabsContent value="bncc"><BnccQuestionsPage embutida /></TabsContent>

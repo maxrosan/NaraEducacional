@@ -990,6 +990,20 @@ export async function atualizarRelatorioTemplate(templateId, dados) {
   return enviarJson(`/relatorio-templates/${templateId}/atualizar/`, 'PATCH', dados, 'atualizar template de relatório');
 }
 
+// ─── Consumo da API OpenAI (só superadmin) ───────────────────────────────────
+// Filtros: model, data_inicio, data_fim (AAAA-MM-DD), instituicao, escola.
+
+export async function buscarResumoUsoOpenAI(filtros = {}) {
+  return getJson(comQuery('/admin/openai-usage/summary/', filtros), 'carregar o resumo de uso da OpenAI');
+}
+
+export async function listarUsoOpenAI({ page = 1, pageSize = 10, ...filtros } = {}) {
+  return getJson(
+    comQuery('/admin/openai-usage/', { ...filtros, page, page_size: pageSize }),
+    'listar o uso da OpenAI',
+  );
+}
+
 export async function listarPromptsRede() {
   return getJson('/prompts/rede/', 'listar prompts da rede');
 }

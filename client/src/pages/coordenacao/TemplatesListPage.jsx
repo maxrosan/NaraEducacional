@@ -1,17 +1,19 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { apiGet, apiPost, apiDelete } from '@/lib/templateRelatorioShared';
-import { MODELOS } from '@/lib/templateRelatorioShared';
+import { apiGet, apiPost, apiDelete, MODELOS, useEscolaTemplate, useRotasTemplate } from '@/lib/templateRelatorioShared';
 
 export default function TemplatesListPage() {
   const navigate = useNavigate();
+  const { escolaId, escolas, trocarEscola, comEscola, pronto } = useEscolaTemplate();
+  const rotas = useRotasTemplate();
   const [templates, setTemplates] = useState(null); // null = carregando
   const [erro, setErro] = useState(null);
   const [acaoPendente, setAcaoPendente] = useState(null); // id do template com ação em andamento
 
   async function carregar() {
     try {
-      const data = await apiGet('/api/templates-relatorio/?leve=1');
+      // Só os templates da escola em configuração.
+      const data = await apiGet(comEscola('/relatorio-templates/'));
       setTemplates(data);
     } catch (e) {
       setErro(e.message);
@@ -19,8 +21,12 @@ export default function TemplatesListPage() {
   }
 
   useEffect(() => {
+    if (!pronto) return;
+    setTemplates(null);
+    setErro(null);
     carregar();
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pronto, escolaId]);
 
   async function ativar(id) {
     setAcaoPendente(id);
@@ -59,12 +65,26 @@ export default function TemplatesListPage() {
           </p>
         </div>
         <button
-          onClick={() => navigate('/coordenacao/templates/escolher-modelo')}
+          onClick={() => navigate(comEscola(rotas.modelos))}
           className="flex-none bg-violet-600 hover:bg-violet-700 text-white font-semibold rounded-xl px-4 py-2.5 transition"
         >
           + Criar novo template
         </button>
       </div>
+
+      {escolas.length > 1 && (
+        <div className="mb-6 max-w-sm">
+          <label htmlFor="escola-templates" className="block text-sm font-medium text-gray-700 mb-1">Escola</label>
+          <select
+            id="escola-templates"
+            value={escolaId || ''}
+            onChange={(e) => trocarEscola(e.target.value)}
+            className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm"
+          >
+            {escolas.map((e) => <option key={e.id} value={e.id}>{e.nome}</option>)}
+          </select>
+        </div>
+      )}
 
       {erro && <p className="text-sm text-red-600 mb-4">{erro}</p>}
 
@@ -97,12 +117,13 @@ export default function TemplatesListPage() {
                 </div>
                 <div className="text-xs text-gray-400 mt-0.5">
                   {nomeModelo(t.modelo)} · atualizado em{' '}
-                  {new Date(t.updated_at).toLocaleDateString('pt-BR')}
+                  {/* O backend devolve atualizado_em (updated_at era do legado). */}
+                  {new Date(t.atualizado_em ?? t.updated_at).toLocaleDateString('pt-BR')}
                 </div>
               </div>
 
               <button
-                onClick={() => navigate(`/coordenacao/templates/${t.id}`)}
+                onClick={() => navigate(comEscola(rotas.editar(t.id)))}
                 className="flex-none text-sm text-violet-700 hover:underline"
               >
                 Editar

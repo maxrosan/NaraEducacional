@@ -19,6 +19,8 @@ import {
   montarPaletaPersonalizada,
   sortearCoresQueCombinam,
   fetchInstituicao,
+  useEscolaTemplate,
+  useRotasTemplate,
 } from '@/lib/templateRelatorioShared';
 import {
   buscarRelatorioTemplate,
@@ -109,10 +111,18 @@ function ToggleRow({ label, value, disabled, reason, onChange }) {
 
 export default function TemplateEditorPage() {
   const navigate = useNavigate();
-  const { templateId } = useParams();
+  const { templateId: templateIdDaRota } = useParams();
   const [searchParams] = useSearchParams();
+  // Coordenação: /coordenacao/templates/<id>. Painel admin: /admin/capa?template=<id>.
+  const templateId = templateIdDaRota || searchParams.get('template');
+  const rotas = useRotasTemplate();
   const modeloDaUrl = searchParams.get('modelo');
   const modoEdicao = Boolean(templateId);
+  const { escolaId: escolaDaUrl, comEscola, pronto } = useEscolaTemplate();
+  // Editando: a escola é a do template (não muda). Criando: a da URL.
+  const [escolaDoTemplate, setEscolaDoTemplate] = useState(null);
+  const escolaAlvo = modoEdicao ? escolaDoTemplate : escolaDaUrl;
+  const rotaModelos = comEscola(rotas.modelos, escolaAlvo);
 
   const [carregando, setCarregando] = useState(modoEdicao);
   const [modeloId, setModeloId] = useState(modeloDaUrl || 'classico');
@@ -158,9 +168,11 @@ export default function TemplateEditorPage() {
   const [erro, setErro] = useState(null);
   const [sucesso, setSucesso] = useState(false);
 
+  // Prévia com os dados da escola do template (como o gerador faz).
   useEffect(() => {
-    fetchInstituicao().then(setInstituicao);
-  }, []);
+    if (modoEdicao ? !escolaDoTemplate : !pronto) return;
+    fetchInstituicao(escolaAlvo).then(setInstituicao);
+  }, [modoEdicao, escolaDoTemplate, pronto, escolaAlvo]);
 
   useEffect(() => {
     if (!modoEdicao) return;
@@ -168,6 +180,7 @@ export default function TemplateEditorPage() {
       try {
         const t = await buscarRelatorioTemplate(templateId);
         setModeloId(t.modelo);
+        setEscolaDoTemplate(t.escola ? String(t.escola) : null);
         setItemsSumario(Array.isArray(t.items_sumario) && t.items_sumario.length ? t.items_sumario : SECOES_PADRAO);
         setTemplateAtivoId(t.ativo ? t.id : null);
         // O campo do model é usa_foto_aluno (usa_foto_crianca era do legado).
@@ -316,13 +329,16 @@ export default function TemplateEditorPage() {
         // forçava visivel: true e desfazia essa configuração a cada salvar).
         items_sumario: itemsSumario.map((i) => ({ ...i, visivel: i.visivel !== false })),
       };
+      // Na criação, diz de qual escola é o template (admin/superadmin
+      // precisam; para o coordenador o backend usa sempre a escola dele).
+      if (!modoEdicao && escolaAlvo) payload.escola = escolaAlvo;
       if (modoEdicao) {
         await atualizarRelatorioTemplate(templateId, payload);
       } else {
         await criarRelatorioTemplate(payload);
       }
       setSucesso(true);
-      setTimeout(() => navigate('/coordenacao/templates/escolher-modelo'), 1200);
+      setTimeout(() => navigate(rotaModelos), 1200);
     } catch (e) {
       setErro(e.message);
     } finally {
@@ -335,10 +351,12 @@ export default function TemplateEditorPage() {
   }
 
   return (
-    <div className="max-w-[1600px] mx-auto px-6 py-8 lg:h-screen lg:flex lg:flex-col lg:py-6">
+    // No painel admin a tela fica abaixo da navbar e do título do painel:
+    // altura da janela menos esse espaço (no layout do coordenador, a tela inteira).
+    <div className={`max-w-[1600px] mx-auto lg:flex lg:flex-col ${rotas.noAdmin ? 'py-2 lg:h-[calc(100vh-11rem)]' : 'px-6 py-8 lg:h-screen lg:py-6'}`}>
       <div className="flex items-center gap-3 mb-6 flex-none">
         <button
-          onClick={() => navigate('/coordenacao/templates/escolher-modelo')}
+          onClick={() => navigate(rotaModelos)}
           className="text-sm text-gray-500 hover:text-violet-400 border border-gray-500 hover:border-violet-500 rounded-xl px-4 py-2 transition-colors"
         >
           ← Voltar aos modelos

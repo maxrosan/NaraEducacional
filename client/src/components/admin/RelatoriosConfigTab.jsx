@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
+import { useNavigate } from 'react-router-dom';
 import {
   DndContext, closestCenter, KeyboardSensor, PointerSensor, useSensor, useSensors,
 } from '@dnd-kit/core';
@@ -6,7 +7,7 @@ import {
   arrayMove, SortableContext, sortableKeyboardCoordinates, useSortable, verticalListSortingStrategy,
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
-import { GripVertical, RotateCcw, Save } from 'lucide-react';
+import { GripVertical, RotateCcw, Save, Palette } from 'lucide-react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Switch } from '@/components/ui/switch';
@@ -112,6 +113,7 @@ function LinhaSecao({ item, posicao, onToggle, onTitulo }) {
 const RelatoriosConfigTab = () => {
   const { toast } = useToast();
   const { user } = useAuth();
+  const navigate = useNavigate();
 
   const [escolas, setEscolas] = useState([]);
   const [escolaId, setEscolaId] = useState('');
@@ -254,11 +256,23 @@ const RelatoriosConfigTab = () => {
           <p className="py-8 text-center text-sm text-gray-500">Carregando configuração...</p>
         ) : (
           <>
-            {templateAtivo && (
+            <div className="flex flex-wrap items-center justify-between gap-2">
               <p className="text-sm text-gray-500">
-                Template ativo: <span className="font-medium text-gray-700">{templateAtivo.nome}</span>
+                {templateAtivo
+                  ? <>Template ativo: <span className="font-medium text-gray-700">{templateAtivo.nome}</span></>
+                  : 'Sem template ativo.'}
               </p>
-            )}
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  if (alterado && !window.confirm('Há alterações não salvas. Sair mesmo assim?')) return;
+                  navigate(`/admin/capa?escola=${escolaId}`);
+                }}
+              >
+                <Palette className="mr-2 h-4 w-4" /> Editar capa desta escola
+              </Button>
+            </div>
             {aviso && (
               <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">{aviso}</div>
             )}

@@ -1,4 +1,6 @@
-import { API_BASE_URL, authFetch } from '@/services/api';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useLocation, useSearchParams } from 'react-router-dom';
+import { API_BASE_URL, authFetch, listarEscolas } from '@/services/api';
 // Compartilhado entre TemplateEscolherModeloPage, TemplateEditorPage e
 // TemplatesListPage. Mantém a MESMA estrutura HTML/classes que o backend usa
 // para gerar o PDF (api/services/relatorio_capa.py) — a prévia na tela do
@@ -746,19 +748,21 @@ export const apiPut = (url, body) => requisitar(url, 'PUT', body);
 export const apiDelete = (url) => requisitar(url, 'DELETE');
 
 // Cabeçalho da prévia no mesmo critério de _dados_cabecalho
-// (server/api/services/relatorio.py): dados da ESCOLA do usuário, com
-// fallback campo a campo para a INSTITUIÇÃO; o logo vem da instituição.
-export async function fetchInstituicao() {
+// (server/api/services/relatorio.py): dados da ESCOLA, com fallback campo a
+// campo para a INSTITUIÇÃO; o logo vem da instituição.
+// `escolaId` = escola que está sendo configurada; sem ela, a do usuário.
+export async function fetchInstituicao(escolaId) {
   const vazio = { nome: 'Sua Escola', cnpj: '', contato: '', logoUrl: null };
   try {
-    const me = await apiGet('/me/');
-    const escolaId = me.escola ?? me.escola_id;
-    const instituicaoId = me.instituicao ?? me.instituicao_id;
-
-    const [escola, inst] = await Promise.all([
-      escolaId ? apiGet(`/escolas/${escolaId}/`).catch(() => null) : null,
-      instituicaoId ? apiGet(`/instituicoes/${instituicaoId}/`).catch(() => null) : null,
-    ]);
+    let instituicaoId = null;
+    if (!escolaId) {
+      const me = await apiGet('/me/');
+      escolaId = me.escola ?? me.escola_id;
+      instituicaoId = me.instituicao ?? me.instituicao_id;
+    }
+    const escola = escolaId ? await apiGet(`/escolas/${escolaId}/`).catch(() => null) : null;
+    instituicaoId = escola?.instituicao ?? instituicaoId;
+    const inst = instituicaoId ? await apiGet(`/instituicoes/${instituicaoId}/`).catch(() => null) : null;
     if (!escola && !inst) return vazio;
 
     const campo = (nome) => (escola && escola[nome]) || (inst && inst[nome]) || '';
@@ -781,18 +785,93 @@ export async function fetchInstituicao() {
   }
 }
 
-/** Modelo do template ativo DA ESCOLA do usuário (o admin enxerga os da
- * rede inteira, então filtra pela escola dele quando houver). */
-export async function fetchModeloAtivo() {
+/** Modelo (ex.: "classico") do template ativo da escola (`escolaId`, ou a
+ * do usuário), ou null. Mesmo retorno de antes — só passou a ser por escola. */
+export async function fetchModeloAtivo(escolaId) {
   try {
-    const me = await apiGet('/me/');
-    const escolaId = me.escola ?? me.escola_id;
+    if (!escolaId) {
+      const me = await apiGet('/me/');
+      escolaId = me.escola ?? me.escola_id;
+    }
     const url = escolaId ? `/relatorio-templates/?escola=${escolaId}&ativo=1` : '/relatorio-templates/?ativo=1';
-    const templates = await apiGet(url);
-    const ativo = (templates || []).find((t) => t.ativo);
+    const ativo = ((await apiGet(url)) || []).find((t) => t.ativo);
     return ativo ? ativo.modelo : null;
   } catch (error) {
     console.error('Erro ao buscar modelo ativo:', error);
     return null;
   }
+}
+
+// ---------------- Escola em configuração ----------------
+// Template é POR ESCOLA. A escola vai na URL (?escola=<id>) para acompanhar a
+// navegação lista → escolher modelo → editor (e vir de Admin → Relatórios).
+// Sem ?escola, usa a escola do usuário ou, na falta, a primeira ativa do
+// escopo — e grava na URL. Coordenador só enxerga a própria (o backend recorta).
+
+export function useEscolaTemplate() {
+  const [searchParams, setSearchParams] = useSearchParams();
+  const escolaId = searchParams.get('escola') || null;
+  const [escolas, setEscolas] = useState([]);
+  const [pronto, setPronto] = useState(false);
+
+  const trocarEscola = useCallback((id) => {
+    setSearchParams((atual) => {
+      const novo = new URLSearchParams(atual);
+      if (id) novo.set('escola', String(id)); else novo.delete('escola');
+      return novo;
+    }, { replace: true });
+  }, [setSearchParams]);
+
+  useEffect(() => {
+    let cancelado = false;
+    (async () => {
+      try {
+        const [lista, me] = await Promise.all([listarEscolas(), apiGet('/me/').catch(() => ({}))]);
+        if (cancelado) return;
+        const ativas = (lista || []).filter((e) => e.ativa !== false);
+        setEscolas(ativas);
+        if (!escolaId) {
+          const propria = String(me.escola ?? me.escola_id ?? '');
+          const padrao = ativas.find((e) => String(e.id) === propria) || ativas[0];
+          if (padrao) trocarEscola(padrao.id);
+        }
+      } catch {
+        // Sem a lista de escolas a tela segue com o que vier na URL.
+      } finally {
+        if (!cancelado) setPronto(true);
+      }
+    })();
+    return () => { cancelado = true; };
+    // Só na montagem: a troca de escola depois é feita pelo seletor.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  /** Acrescenta ?escola=<id> a uma rota das telas de template. */
+  const comEscola = useCallback((rota, id = escolaId) => {
+    if (!id) return rota;
+    return `${rota}${rota.includes('?') ? '&' : '?'}escola=${id}`;
+  }, [escolaId]);
+
+  const escolaAtual = escolas.find((e) => String(e.id) === String(escolaId)) || null;
+  // `pronto` só quando a escola já está decidida (ou não há nenhuma).
+  return { escolaId, escolas, escolaAtual, trocarEscola, comEscola, pronto: pronto && (Boolean(escolaId) || escolas.length === 0) };
+}
+
+
+export function useRotasTemplate() {
+  const { pathname } = useLocation();
+  const noAdmin = pathname.startsWith('/admin');
+  return useMemo(() => (noAdmin
+    ? {
+      noAdmin: true,
+      modelos: '/admin/capa',
+      nova: (modelo) => `/admin/capa?tela=nova&modelo=${modelo}`,
+      editar: (id) => `/admin/capa?template=${id}`,
+    }
+    : {
+      noAdmin: false,
+      modelos: '/coordenacao/templates/escolher-modelo',
+      nova: (modelo) => `/coordenacao/templates/nova?modelo=${modelo}`,
+      editar: (id) => `/coordenacao/templates/${id}`,
+    }), [noAdmin]);
 }
