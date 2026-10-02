@@ -219,9 +219,15 @@ def _dados_com_escola_padrao(user, data):
     return dados
 
 
-def _salvar_template(serializer, escola_id, **extra):
+def _salvar_template(serializer, escola_travada_id, **extra):
     """Valida e salva com a escola travada; se o template fica ativo,
-    desativa os demais da escola antes de gravar."""
+    desativa os demais da escola antes de gravar.
+
+    `escola_travada_id` tem esse nome (e não `escola_id`) porque `escola_id`
+    também chega em `**extra` para o serializer.save() na criação — mesmo
+    cuidado de `_validar_e_salvar_periodo`.
+    """
+    escola_id = escola_travada_id
     with transaction.atomic():
         list(Escola._base_manager.select_for_update().filter(pk=escola_id).values_list('pk', flat=True))
         serializer.is_valid(raise_exception=True)
@@ -329,6 +335,27 @@ def _pode_editar_relatorio(user, relatorio):
     return pode_gerenciar(user) or professor_vinculado_turma(user, relatorio.aluno.turma_id)
 
 
+def _template_ativo_da_escola(escola_id):
+    return (
+        RelatorioTemplate._base_manager
+        .filter(escola_id=escola_id, ativo=True)
+        .order_by('-atualizado_em')
+        .first()
+    )
+
+
+def _erro_template_de_outra_escola(template, aluno):
+    """O template do relatório precisa ser da escola do aluno. O recorte de
+    tenant do serializer não basta: o admin enxerga os templates da rede
+    inteira e poderia apontar o template de outra escola."""
+    if template is not None and template.escola_id != aluno.escola_id:
+        return Response(
+            {'error': 'O template informado não é da escola do aluno.'},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+    return None
+
+
 def _relatorio_ou_404(relatorio_id):
     """Retorna (relatorio, erro)."""
     relatorio = buscar_no_escopo(Relatorio, relatorio_id)
@@ -361,8 +388,19 @@ def criar_relatorio(request):
 
     serializer = RelatorioSerializer(data=request.data)
     serializer.is_valid(raise_exception=True)
+
+    # `template` = o template usado NESTE relatório (o PDF mantém a capa dele
+    # mesmo que a escola troque de template depois). Sem template na
+    # requisição, vale o ativo da escola do aluno — não depende da tela
+    # lembrar de enviar (o hook de geração não enviava, e todo relatório
+    # saía com o tema padrão no PDF).
+    template = serializer.validated_data.get('template') or _template_ativo_da_escola(aluno.escola_id)
+    erro = _erro_template_de_outra_escola(template, aluno)
+    if erro:
+        return erro
+
     relatorio = serializer.save(
-        aluno=aluno, escola_id=aluno.escola_id, instituicao_id=aluno.instituicao_id,
+        aluno=aluno, escola_id=aluno.escola_id, instituicao_id=aluno.instituicao_id, template=template,
     )
     return Response(RelatorioSerializer(relatorio).data, status=status.HTTP_201_CREATED)
 
@@ -393,6 +431,11 @@ def atualizar_relatorio(request, relatorio_id):
     partial = request.method == 'PATCH'
     serializer = RelatorioSerializer(relatorio, data=request.data, partial=partial)
     serializer.is_valid(raise_exception=True)
+    # Na edição o template só muda se vier na requisição (editar o texto não
+    # troca a capa do relatório); se vier, precisa ser da escola do aluno.
+    erro = _erro_template_de_outra_escola(serializer.validated_data.get('template'), relatorio.aluno)
+    if erro:
+        return erro
     serializer.save()
     return Response(serializer.data)
 

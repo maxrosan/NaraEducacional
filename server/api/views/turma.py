@@ -11,7 +11,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
 from api.escopo import (
-    buscar_no_escopo, filtrar_por, pode_gerenciar, resolver_escopo_criacao,
+    buscar_no_escopo, filtrar_por, pode_gerenciar, pode_ver_escola, resolver_escopo_criacao,
     validar_professores_turma,
 )
 from api.models import Escola, Turma, Usuario, UsuarioTurma
@@ -349,7 +349,7 @@ def atualizar_frequencia_registro(request):
 
     if entrada.validated_data.get('escola'):
         escola = buscar_no_escopo(Escola, entrada.validated_data['escola'])
-        if escola is None:
+        if escola is None or not pode_ver_escola(request.user, escola):
             return Response({'error': 'Escola não encontrada.'}, status=status.HTTP_404_NOT_FOUND)
         alvo = Turma.objects.filter(escola=escola, ativa=True)
     else:

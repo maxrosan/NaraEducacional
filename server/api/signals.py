@@ -2,10 +2,10 @@
 
 import logging
 
-from django.db.models.signals import post_delete, pre_save
+from django.db.models.signals import post_delete, post_save, pre_save
 from django.dispatch import receiver
 
-from api.models import Relatorio
+from api.models import Escola, Relatorio, RelatorioTemplate
 from api.storage import delete_from_storage
 
 logger = logging.getLogger(__name__)
@@ -77,3 +77,64 @@ def apagar_pdf_ao_excluir_relatorio(sender, instance: Relatorio, **kwargs):
             "PDF removido junto com o relatório.",
             extra={"relatorio_id": str(instance.pk), "storage_key": chave},
         )
+
+
+# =============================================================================
+# Espelho da configuração do relatório na escola
+# =============================================================================
+# A fonte da verdade é o template ATIVO da escola (relatorio_templates): é o
+# que o gerador lê. Estas colunas de `escolas` são um ESPELHO dele, mantido
+# aqui para quem consulta a escola direto (mesmos campos do sistema legado):
+#   tipo_relatorio  ← modelo da capa do template ativo (ex.: "classico")
+#   ordem_relatorio ← chaves das seções, na ordem  (ex.: ["atividades", ...])
+#   report_settings ← visibilidade de cada seção    (ex.: {"portfolio": false})
+# Sem template ativo: valores padrão (capa padrão, ordem e seções padrão).
+#
+# Recalculado a partir do banco a cada gravação/exclusão de template, em
+# qualquer caminho (telas, Django Admin, shell). NÃO grave nestas colunas
+# direto: a próxima alteração de template sobrescreve.
+#
+# Limitação: `QuerySet.update()` não dispara signals. A view que ativa um
+# template desativa os outros por update(), mas em seguida salva o novo ativo
+# (save() → este signal), então o espelho fica certo.
+
+def sincronizar_espelho_relatorio(escola_id):
+    """Copia para a escola o modelo e a ordem/visibilidade do template ativo."""
+    if not escola_id:
+        return
+    # Import tardio: o service importa muita coisa (storage, OpenAI) e este
+    # módulo é carregado no ready() do app.
+    from api.services.relatorio import _normalizar_items_sumario
+
+    ativo = (
+        RelatorioTemplate._base_manager
+        .filter(escola_id=escola_id, ativo=True)
+        .order_by('-atualizado_em')
+        .first()
+    )
+    if ativo is None:
+        dados = {
+            'tipo_relatorio': Escola._meta.get_field('tipo_relatorio').get_default(),
+            'ordem_relatorio': [],
+            'report_settings': {},
+        }
+    else:
+        itens = _normalizar_items_sumario(ativo)
+        dados = {
+            'tipo_relatorio': ativo.modelo,
+            'ordem_relatorio': [item['chave'] for item in itens],
+            'report_settings': {item['chave']: item['visivel'] for item in itens},
+        }
+    # update(): não dispara signals da Escola nem mexe em atualizado_em
+    # (é um espelho, não uma edição do cadastro da escola).
+    Escola._base_manager.filter(pk=escola_id).update(**dados)
+
+
+@receiver(post_save, sender=RelatorioTemplate)
+def espelhar_template_salvo(sender, instance: RelatorioTemplate, **kwargs):
+    sincronizar_espelho_relatorio(instance.escola_id)
+
+
+@receiver(post_delete, sender=RelatorioTemplate)
+def espelhar_template_excluido(sender, instance: RelatorioTemplate, **kwargs):
+    sincronizar_espelho_relatorio(instance.escola_id)

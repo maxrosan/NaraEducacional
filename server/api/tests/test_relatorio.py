@@ -5,7 +5,9 @@ Views:
   * lista da coordenação por escola (coordenador: a própria; admin: escolhe);
   * detalhe renova as URLs das imagens e respeita o tenant;
   * PDF para o superadmin, geração com IA (permissão e nome do cadastro);
-  * exclusão apaga o PDF do storage.
+  * exclusão apaga o PDF do storage;
+  * relatório salvo guarda o template usado: o ativo da escola do aluno por
+    padrão, e nunca o de outra escola.
 
 Seções (services/relatorio.py, com a OpenAI mockada):
   * placeholder com None não derruba a seção (_preencher_prompt);
@@ -22,7 +24,9 @@ Templates (por escola):
     a dele, escola de outra rede é recusada;
   * modelo repetido na escola → 400 (antes 500 do banco);
   * items_sumario aceita só as seções do gerador;
-  * listagem por escola/ativo, recorte de tenant e exclusão.
+  * listagem por escola/ativo, recorte de tenant e exclusão;
+  * espelho na escola (tipo_relatorio, ordem_relatorio, report_settings)
+    sempre igual ao template ativo.
 """
 import datetime
 from unittest.mock import MagicMock, patch
@@ -31,7 +35,7 @@ from django.db import IntegrityError, transaction
 from django.test import SimpleTestCase
 from django.urls import reverse
 
-from api.models import Relatorio, RelatorioTemplate, Turma, Usuario
+from api.models import Escola, Relatorio, RelatorioTemplate, Turma, Usuario
 from api.services import relatorio
 from api.services.relatorio import (
     _SCHEMA_ATIVIDADES,
@@ -159,6 +163,73 @@ class RelatorioPdfEGeracaoTests(CenarioMultiTenant):
         r = self.client.delete(f'/api/relatorios/{self.rel_a1.id}/deletar/')
         self.assertEqual(r.status_code, 204, getattr(r, 'data', r.content))
         apagar.assert_called_with('relatorios/pdf/r.pdf')
+
+
+class TemplateDoRelatorioTests(CenarioMultiTenant):
+    """`relatorios.template_id` = template usado NAQUELE relatório (o PDF
+    mantém a capa dele mesmo que a escola troque de template depois).
+
+    Bug: o hook de geração do frontend não enviava o template ao salvar e todo
+    relatório ficava com template_id NULL (PDF sempre no tema padrão)."""
+
+    CRIAR = '/api/relatorios/criar/'
+
+    def _template(self, escola, modelo='classico', ativo=False):
+        return RelatorioTemplate._base_manager.create(
+            nome=f'{modelo} {escola.nome}', modelo=modelo, ativo=ativo,
+            escola=escola, instituicao=escola.instituicao,
+        )
+
+    def _criar(self, usuario, **extra):
+        self.entrar(usuario)
+        return self.client.post(self.CRIAR, {
+            'aluno': str(self.aluno_a1.id), 'periodo': '1º Bimestre', 'conteudo': CONTEUDO_FINALIZADO, **extra,
+        }, format='json')
+
+    def _template_salvo(self):
+        return Relatorio.objects.get(aluno=self.aluno_a1).template_id
+
+    def test_sem_template_usa_o_ativo_da_escola_do_aluno(self):
+        ativo = self._template(self.a1, 'mascote', ativo=True)
+        self._template(self.a2, 'natureza', ativo=True)
+        r = self._criar(self.prof_a1)
+        self.assertEqual(r.status_code, 201, r.content)
+        self.assertEqual(self._template_salvo(), ativo.id)
+
+    def test_sem_template_e_sem_ativo_fica_vazio(self):
+        self._template(self.a1, 'mascote')  # existe, mas inativo
+        self.assertEqual(self._criar(self.prof_a1).status_code, 201)
+        self.assertIsNone(self._template_salvo())
+
+    def test_template_informado_da_mesma_escola_e_mantido(self):
+        self._template(self.a1, 'classico', ativo=True)
+        escolhido = self._template(self.a1, 'mascote')
+        r = self._criar(self.prof_a1, template=str(escolhido.id))
+        self.assertEqual(r.status_code, 201, r.content)
+        self.assertEqual(self._template_salvo(), escolhido.id)
+
+    def test_template_de_outra_escola_e_recusado(self):
+        """O admin enxerga os templates da rede inteira; o da A2 não pode ir
+        para o relatório de um aluno da A1."""
+        de_a2 = self._template(self.a2, 'natureza', ativo=True)
+        r = self._criar(self.admin_a, template=str(de_a2.id))
+        self.assertEqual(r.status_code, 400, r.content)
+        self.assertFalse(Relatorio.objects.filter(aluno=self.aluno_a1).exists())
+
+    def test_editar_o_texto_nao_troca_o_template(self):
+        ativo = self._template(self.a1, 'classico', ativo=True)
+        rel_id = self._criar(self.prof_a1).json()['id']
+        RelatorioTemplate._base_manager.filter(pk=ativo.pk).update(ativo=False)
+        self._template(self.a1, 'mascote', ativo=True)  # a escola trocou de capa
+        r = self.client.patch(f'/api/relatorios/{rel_id}/atualizar/', {'conteudo': CONTEUDO_FINALIZADO + '!'}, format='json')
+        self.assertEqual(r.status_code, 200, r.content)
+        self.assertEqual(self._template_salvo(), ativo.id)
+
+    def test_editar_com_template_de_outra_escola_e_recusado(self):
+        rel_id = self._criar(self.admin_a).json()['id']
+        de_a2 = self._template(self.a2, 'natureza')
+        r = self.client.patch(f'/api/relatorios/{rel_id}/atualizar/', {'template': str(de_a2.id)}, format='json')
+        self.assertEqual(r.status_code, 400, r.content)
 
 
 # ======================================================================
@@ -376,7 +447,7 @@ class EscolaDoTemplateTests(TemplatesBase):
         self.assertEqual((tpl.escola_id, tpl.instituicao_id), (self.a1.id, self.rede_a.id))
 
     def test_admin_com_escola_propria_nao_precisa_informar(self):
-        admin = self.admin('admin.com.escola@x.com', self.rede_a, escola=self.a2)
+        admin = self.admin('admin.com.escola.template@x.com', self.rede_a, escola=self.a2)
         r = self.criar(admin)
         self.assertEqual(r.status_code, 201, r.content)
         self.assertEqual(str(r.json()['escola']), str(self.a2.id))
@@ -465,6 +536,74 @@ class ListagemEExclusaoDeTemplatesTests(TemplatesBase):
         self.assertEqual(self._excluir(self.prof_a1, self.inativo_a1).status_code, 403)
 
     def test_admin_de_outra_rede_nao_ve_para_excluir(self):
-        admin_b = self.admin('admin.b@x.com', self.rede_b)
+        admin_b = self.admin('admin.outra.rede.template@x.com', self.rede_b)
         self.assertEqual(self._excluir(admin_b, self.ativo_a1).status_code, 404)
         self.assertTrue(RelatorioTemplate._base_manager.filter(id=self.ativo_a1.id).exists())
+
+
+class EspelhoNaEscolaTests(TemplatesBase):
+    """tipo_relatorio / ordem_relatorio / report_settings da escola espelham
+    o template ATIVO (a fonte da verdade, que é o que o gerador lê)."""
+
+    ORDEM_PADRAO = ['atividades', 'relato', 'producoes', 'portfolio', 'bncc', 'conclusao']
+
+    def espelho(self, escola):
+        e = Escola._base_manager.get(pk=escola.pk)
+        return e.tipo_relatorio, e.ordem_relatorio, e.report_settings
+
+    def padrao(self):
+        return Escola._meta.get_field('tipo_relatorio').get_default(), [], {}
+
+    def test_criar_template_ativo_preenche_a_escola(self):
+        r = self.criar(self.coord_a1, modelo='mascote', items_sumario=SECOES_VALIDAS)
+        self.assertEqual(r.status_code, 201, r.content)
+        tipo, ordem, settings = self.espelho(self.a1)
+        self.assertEqual(tipo, 'mascote')
+        # As seções salvas primeiro, na ordem; as que faltaram entram no fim.
+        self.assertEqual(ordem[:3], ['conclusao', 'atividades', 'portfolio'])
+        self.assertEqual(sorted(ordem), sorted(self.ORDEM_PADRAO))
+        self.assertFalse(settings['portfolio'])
+        self.assertTrue(settings['conclusao'])
+
+    def test_template_inativo_nao_mexe_no_espelho(self):
+        self.criar(self.coord_a1, modelo='natureza', ativo=False)
+        self.assertEqual(self.espelho(self.a1), self.padrao())
+
+    def test_ativar_outro_template_atualiza_o_espelho(self):
+        self.criar(self.coord_a1, modelo='classico')
+        outro = self.template(self.a1, 'mascote')
+        self.entrar(self.coord_a1)
+        self.client.patch(reverse('atualizar_relatorio_template', args=[outro.id]), {'ativo': True}, format='json')
+        self.assertEqual(self.espelho(self.a1)[0], 'mascote')
+
+    def test_editar_a_ordem_do_ativo_atualiza_o_espelho(self):
+        r = self.criar(self.coord_a1)
+        self.entrar(self.coord_a1)
+        self.client.patch(
+            reverse('atualizar_relatorio_template', args=[r.json()['id']]),
+            {'items_sumario': [{'chave': 'bncc', 'visivel': False}]}, format='json',
+        )
+        _, ordem, settings = self.espelho(self.a1)
+        self.assertEqual(ordem[0], 'bncc')
+        self.assertFalse(settings['bncc'])
+
+    def test_desativar_o_ativo_volta_ao_padrao(self):
+        r = self.criar(self.coord_a1, modelo='mascote')
+        self.entrar(self.coord_a1)
+        self.client.patch(reverse('atualizar_relatorio_template', args=[r.json()['id']]), {'ativo': False}, format='json')
+        self.assertEqual(self.espelho(self.a1), self.padrao())
+
+    def test_excluir_o_ativo_volta_ao_padrao(self):
+        r = self.criar(self.coord_a1, modelo='mascote')
+        self.entrar(self.coord_a1)
+        self.client.delete(reverse('deletar_relatorio_template', args=[r.json()['id']]))
+        self.assertEqual(self.espelho(self.a1), self.padrao())
+
+    def test_espelho_e_por_escola(self):
+        self.criar(self.admin_a, escola=str(self.a1.id), modelo='mascote')
+        self.assertEqual(self.espelho(self.a2), self.padrao())
+
+    def test_vale_tambem_fora_das_views(self):
+        """Signal do model: Django Admin e scripts também mantêm o espelho."""
+        self.template(self.a2, 'natureza', ativo=True)
+        self.assertEqual(self.espelho(self.a2)[0], 'natureza')
