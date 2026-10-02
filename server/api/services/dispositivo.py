@@ -68,15 +68,16 @@ def _hash_segredo(segredo: str) -> str:
     return hashlib.sha256(segredo.encode('utf-8')).hexdigest()
 
 
-def gerar_token(dispositivo_id) -> tuple[str, str]:
+def gerar_token(dispositivo_uuid) -> tuple[str, str]:
     """Gera `(token_claro, token_hash)`.
 
-    Formato do token: ``<uuid-do-dispositivo>.<segredo>`` — o id localiza a
-    linha (sem varrer a tabela) e o segredo é conferido contra o hash.
+    Formato do token: ``<uuid-do-dispositivo>.<segredo>`` — o uuid (campo
+    público, nunca o id inteiro) localiza a linha pelo índice único, sem varrer
+    a tabela, e o segredo é conferido contra o hash.
     O valor claro só é exibido uma vez, na resposta do pareamento.
     """
     segredo = secrets.token_urlsafe(32)
-    return f"{dispositivo_id}.{segredo}", _hash_segredo(segredo)
+    return f"{dispositivo_uuid}.{segredo}", _hash_segredo(segredo)
 
 
 def autenticar_dispositivo(token: str) -> DispositivoGravador:
@@ -87,14 +88,14 @@ def autenticar_dispositivo(token: str) -> DispositivoGravador:
     if not token or '.' not in token:
         raise invalido
 
-    dispositivo_id, _, segredo = token.partition('.')
+    dispositivo_uuid, _, segredo = token.partition('.')
     try:
-        uuid.UUID(str(dispositivo_id))
+        uuid.UUID(str(dispositivo_uuid))
     except (ValueError, AttributeError):
         raise invalido
 
     dispositivo = DispositivoGravador.objects.filter(
-        id=dispositivo_id, ativo=True,
+        uuid=dispositivo_uuid, ativo=True,
     ).select_related('professor', 'turma_ativa', 'escola', 'instituicao').first()
     if not dispositivo:
         raise invalido
@@ -181,10 +182,9 @@ def parear_dispositivo(codigo: str, device_id: str, nome: str = '') -> tuple[Dis
     dispositivo.revogado_em = None
     if nome:
         dispositivo.nome = nome
-    if not dispositivo.pk:
-        dispositivo.pk = uuid.uuid4()
-
-    token_claro, token_hash = gerar_token(dispositivo.pk)
+    # O uuid já vem preenchido pelo default do model (mesmo antes do save);
+    # o id inteiro só existe depois do INSERT e não entra no token.
+    token_claro, token_hash = gerar_token(dispositivo.uuid)
     dispositivo.token_hash = token_hash
     dispositivo.save()
     dispositivo.turmas.set(registro.turmas.all())

@@ -37,6 +37,8 @@ function avisarErro(titulo, erro) {
 export default function RegistrosTab() {
     const [escolas, setEscolas] = useState([]);
 
+    // filtros.escola guarda o UUID da escola: vai na query string do GET.
+    // No body do PATCH em lote vai o id (escolaFiltrada.id).
     const [filtros, setFiltros] = useState({ escola: TODAS, frequencia: TODAS, busca: '', pagina: 1 });
     const { escola, frequencia, pagina } = filtros;
     const [busca, setBusca] = useState('');
@@ -117,11 +119,13 @@ export default function RegistrosTab() {
         }
     };
 
+    const escolaFiltrada = escolas.find((e) => String(e.uuid) === escola) || null;
+
     const aplicarLote = async () => {
         if (!lote) return;
         setAplicandoLote(true);
         try {
-            const alvo = lote.tipo === 'escola' ? { escola } : { turmas: [...selecionadas] };
+            const alvo = lote.tipo === 'escola' ? { escola: escolaFiltrada?.id } : { turmas: [...selecionadas] };
             const { atualizadas } = await atualizarFrequenciaRegistro(lote.frequencia, alvo);
             toast({
                 title: 'Frequência atualizada',
@@ -152,7 +156,7 @@ export default function RegistrosTab() {
         return n;
     });
 
-    const nomeEscolaFiltrada = escolas.find((e) => e.id === escola)?.nome;
+    const nomeEscolaFiltrada = escolaFiltrada?.nome;
     const totalGeral = Object.values(dados.totais).reduce((a, b) => a + b, 0);
     const mostrarFiltroEscola = escolas.length > 1;
 
@@ -206,7 +210,7 @@ export default function RegistrosTab() {
                             </SelectTrigger>
                             <SelectContent>
                                 <SelectItem value={TODAS}>Todas as escolas</SelectItem>
-                                {escolas.map((e) => <SelectItem key={e.id} value={e.id}>{e.nome}</SelectItem>)}
+                                {escolas.map((e) => <SelectItem key={e.uuid} value={String(e.uuid)}>{e.nome}</SelectItem>)}
                             </SelectContent>
                         </Select>
                     )}

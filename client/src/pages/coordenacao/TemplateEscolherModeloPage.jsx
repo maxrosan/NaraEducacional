@@ -11,6 +11,7 @@ import {
   apiPost,
   useEscolaTemplate,
   useRotasTemplate,
+  templatePadraoDoModelo,
 } from '@/lib/templateRelatorioShared';
 
 function usePreviewScale(larguraBase = 794) {
@@ -102,7 +103,8 @@ function ModeloThumbnail({ modeloId, instituicao }) {
 
 export default function TemplateEscolherModeloPage() {
   const navigate = useNavigate();
-  const { escolaId, escolas, trocarEscola, comEscola, pronto } = useEscolaTemplate();
+  // escolaUuid: URL e GET; escolaId (int): body do POST de criação.
+  const { escolaUuid, escolaId, escolas, trocarEscola, comEscola, pronto } = useEscolaTemplate();
   const rotas = useRotasTemplate();
 
   const [instituicao, setInstituicao] = useState({
@@ -140,7 +142,7 @@ export default function TemplateEscolherModeloPage() {
         // rede inteira; sem o filtro, modelos de escolas diferentes se
         // misturavam na tela).
         const [instituicaoData, templatesData] = await Promise.all([
-          fetchInstituicao(escolaId),
+          fetchInstituicao(escolaUuid),
           apiGet(comEscola('/relatorio-templates/')),
         ]);
         if (cancelado) return;
@@ -165,7 +167,7 @@ export default function TemplateEscolherModeloPage() {
 
     carregarDados();
     return () => { cancelado = true; };
-  }, [pronto, escolaId, comEscola]);
+  }, [pronto, escolaUuid, comEscola]);
 
 
   // -------------------------------------------------------
@@ -183,10 +185,34 @@ export default function TemplateEscolherModeloPage() {
   // Criar template
   // -------------------------------------------------------
 
-  function criar(modeloId) {
-    navigate(
-      comEscola(rotas.nova(modeloId))
-    );
+  // "Selecionar" um modelo que a escola ainda não tem: cria o template com a
+  // configuração padrão JÁ ATIVO (o backend desativa os outros da escola) e
+  // fica na tela — para personalizar, o botão "Editar" aparece em seguida.
+  // Antes abria o editor e a capa só passava a valer depois de salvar lá.
+  async function criar(modeloId) {
+    try {
+      setSelecionandoId(modeloId);
+      setErro(null);
+
+      const ativoAtual = templates.find((t) => t.ativo);
+      const payload = {
+        ...templatePadraoDoModelo(modeloId, instituicao?.nome, ativoAtual?.items_sumario),
+        ativo: true,
+        ...(escolaId ? { escola: escolaId } : {}),
+      };
+      const novo = await apiPost('/relatorio-templates/criar/', payload);
+
+      setTemplates((anteriores) => [
+        ...anteriores.map((item) => ({ ...item, ativo: false })),
+        novo,
+      ]);
+      setTemplateAtivoId(novo.id);
+    } catch (e) {
+      console.error('Erro ao selecionar modelo:', e);
+      setErro(e.message || 'Não foi possível selecionar este modelo.');
+    } finally {
+      setSelecionandoId(null);
+    }
   }
 
 
@@ -194,9 +220,10 @@ export default function TemplateEscolherModeloPage() {
   // Editar template
   // -------------------------------------------------------
 
-  function editar(templateId) {
+  // Recebe o UUID do template (vai na URL do editor).
+  function editar(templateUuid) {
     navigate(
-      comEscola(rotas.editar(templateId))
+      comEscola(rotas.editar(templateUuid))
     );
   }
 
@@ -223,7 +250,7 @@ export default function TemplateEscolherModeloPage() {
       setErro(null);
 
       await apiPost(
-        `/api/templates-relatorio/${template.id}/ativar/`,
+        `/api/templates-relatorio/${template.uuid}/ativar/`,
         {}
       );
 
@@ -299,11 +326,11 @@ export default function TemplateEscolherModeloPage() {
           </label>
           <select
             id="escola-capa"
-            value={escolaId || ''}
+            value={escolaUuid || ''}
             onChange={(e) => trocarEscola(e.target.value)}
             className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm"
           >
-            {escolas.map((e) => <option key={e.id} value={e.id}>{e.nome}</option>)}
+            {escolas.map((e) => <option key={e.uuid} value={e.uuid}>{e.nome}</option>)}
           </select>
         </div>
       )}
@@ -465,6 +492,7 @@ export default function TemplateEscolherModeloPage() {
                   {!templateExistente && (
                     <button
                       type="button"
+                      disabled={selecionandoId === modelo.id}
                       onClick={() => criar(modelo.id)}
                       className="
                         w-full
@@ -477,9 +505,10 @@ export default function TemplateEscolherModeloPage() {
                         px-4
                         py-2.5
                         transition
+                        disabled:opacity-60
                       "
                     >
-                      Selecionar
+                      {selecionandoId === modelo.id ? 'Selecionando...' : 'Selecionar'}
                     </button>
                   )}
 
@@ -497,7 +526,7 @@ export default function TemplateEscolherModeloPage() {
                       <button
                         type="button"
                         onClick={() =>
-                          editar(templateExistente.id)
+                          editar(templateExistente.uuid)
                         }
                         className="
                           flex-1

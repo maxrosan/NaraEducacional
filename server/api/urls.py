@@ -1,6 +1,8 @@
 from django.urls import path
 from rest_framework_simplejwt.views import TokenRefreshView
 
+from .converters import registrar_conversores
+
 from .views.auth import LoginView, logout, me, alterar_senha, recuperar_senha, confirmar_senha
 from .views.health import health
 from .views.instituicao import (
@@ -218,7 +220,6 @@ from .views.coordenacao_cache import (
 )
 from .views.indicadores_turma import indicadores_turma
 from .views.analytics import contagem_registros, participacao_docente
-from .views.openai_usage import resumo_uso_openai, listar_uso_openai
 from .views.prompts import (
     listar_prompt_categorias,
     salvar_prompt_template,
@@ -244,6 +245,10 @@ from .views.relatorio import (
     listar_relatorios_coordenacao,
 )
 
+# Parâmetros de rota: a URL recebe o UUID público e a view recebe o id (int).
+# Ex.: <escola:escola_id> — ver api/converters.py.
+registrar_conversores()
+
 urlpatterns = [
     path('health/', health, name='health'),
 
@@ -259,28 +264,28 @@ urlpatterns = [
     # Instituições
     path('instituicoes/', listar_instituicoes, name='listar_instituicoes'),
     path('instituicoes/criar/', criar_instituicao, name='criar_instituicao'),
-    path('instituicoes/<uuid:instituicao_id>/', detalhe_instituicao, name='detalhe_instituicao'),
-    path('instituicoes/<uuid:instituicao_id>/atualizar/', atualizar_instituicao, name='atualizar_instituicao'),
+    path('instituicoes/<instituicao:instituicao_id>/', detalhe_instituicao, name='detalhe_instituicao'),
+    path('instituicoes/<instituicao:instituicao_id>/atualizar/', atualizar_instituicao, name='atualizar_instituicao'),
 
     # Escolas
     path('escolas/', listar_escolas, name='listar_escolas'),
     # Dashboard do admin (/admin/dashboard no front): escolas da rede com os totais.
     path('admin/dashboard/', resumo_escolas, name='admin_dashboard'),
     path('escolas/criar/', criar_escola, name='criar_escola'),
-    path('escolas/<uuid:escola_id>/', detalhe_escola, name='detalhe_escola'),
-    path('escolas/<uuid:escola_id>/atualizar/', atualizar_escola, name='atualizar_escola'),
+    path('escolas/<escola:escola_id>/', detalhe_escola, name='detalhe_escola'),
+    path('escolas/<escola:escola_id>/atualizar/', atualizar_escola, name='atualizar_escola'),
 
     # Especialistas
     path('especialistas/', listar_especialistas, name='listar_especialistas'),
     path('especialistas/criar/', criar_especialista, name='criar_especialista'),
-    path('especialistas/<uuid:especialista_id>/', detalhe_especialista, name='detalhe_especialista'),
-    path('especialistas/<uuid:especialista_id>/atualizar/', atualizar_especialista, name='atualizar_especialista'),
+    path('especialistas/<especialista:especialista_id>/', detalhe_especialista, name='detalhe_especialista'),
+    path('especialistas/<especialista:especialista_id>/atualizar/', atualizar_especialista, name='atualizar_especialista'),
 
     # Usuários
     path('usuarios/', listar_usuarios, name='listar_usuarios'),
     path('usuarios/criar/', criar_usuario, name='criar_usuario'),
-    path('usuarios/<uuid:usuario_id>/', detalhe_usuario, name='detalhe_usuario'),
-    path('usuarios/<uuid:usuario_id>/atualizar/', atualizar_usuario, name='atualizar_usuario'),
+    path('usuarios/<usuario:usuario_id>/', detalhe_usuario, name='detalhe_usuario'),
+    path('usuarios/<usuario:usuario_id>/atualizar/', atualizar_usuario, name='atualizar_usuario'),
 
     # Turmas
     path('turmas/', listar_turmas, name='listar_turmas'),
@@ -288,60 +293,60 @@ urlpatterns = [
     path('turmas/frequencia-registro/', listar_frequencias_registro, name='listar_frequencias_registro'),
     path('turmas/frequencia-registro/atualizar/', atualizar_frequencia_registro,
          name='atualizar_frequencia_registro'),
-    path('turmas/<uuid:turma_id>/', detalhe_turma, name='detalhe_turma'),
-    path('turmas/<uuid:turma_id>/atualizar/', atualizar_turma, name='atualizar_turma'),
-    path('turmas/<uuid:turma_id>/professores/', listar_professores_turma, name='listar_professores_turma'),
-    path('turmas/<uuid:turma_id>/professores/vincular/', vincular_professor_turma, name='vincular_professor_turma'),
-    path('turmas/<uuid:turma_id>/professores/<uuid:usuario_id>/desvincular/',
+    path('turmas/<turma:turma_id>/', detalhe_turma, name='detalhe_turma'),
+    path('turmas/<turma:turma_id>/atualizar/', atualizar_turma, name='atualizar_turma'),
+    path('turmas/<turma:turma_id>/professores/', listar_professores_turma, name='listar_professores_turma'),
+    path('turmas/<turma:turma_id>/professores/vincular/', vincular_professor_turma, name='vincular_professor_turma'),
+    path('turmas/<turma:turma_id>/professores/<usuario:usuario_id>/desvincular/',
          desvincular_professor_turma, name='desvincular_professor_turma'),
 
     # Disciplinas
     path('disciplinas/', listar_disciplinas, name='listar_disciplinas'),
     path('disciplinas/criar/', criar_disciplina, name='criar_disciplina'),
-    path('disciplinas/<uuid:disciplina_id>/', detalhe_disciplina, name='detalhe_disciplina'),
-    path('disciplinas/<uuid:disciplina_id>/atualizar/', atualizar_disciplina, name='atualizar_disciplina'),
-    path('disciplinas/<uuid:disciplina_id>/professores/', listar_professores_disciplina, name='listar_professores_disciplina'),
-    path('disciplinas/<uuid:disciplina_id>/professores/vincular/', vincular_usuario_disciplina, name='vincular_usuario_disciplina'),
-    path('disciplinas/<uuid:disciplina_id>/professores/<uuid:usuario_id>/desvincular/',
+    path('disciplinas/<disciplina:disciplina_id>/', detalhe_disciplina, name='detalhe_disciplina'),
+    path('disciplinas/<disciplina:disciplina_id>/atualizar/', atualizar_disciplina, name='atualizar_disciplina'),
+    path('disciplinas/<disciplina:disciplina_id>/professores/', listar_professores_disciplina, name='listar_professores_disciplina'),
+    path('disciplinas/<disciplina:disciplina_id>/professores/vincular/', vincular_usuario_disciplina, name='vincular_usuario_disciplina'),
+    path('disciplinas/<disciplina:disciplina_id>/professores/<usuario:usuario_id>/desvincular/',
          desvincular_usuario_disciplina, name='desvincular_usuario_disciplina'),
 
     # Alunos
     path('alunos/', listar_alunos, name='listar_alunos'),
     path('alunos/criar/', criar_aluno, name='criar_aluno'),
-    path('alunos/<uuid:aluno_id>/', detalhe_aluno, name='detalhe_aluno'),
-    path('alunos/<uuid:aluno_id>/atualizar/', atualizar_aluno, name='atualizar_aluno'),
-    path('alunos/<uuid:aluno_id>/foto/', enviar_foto_aluno, name='enviar_foto_aluno'),
+    path('alunos/<aluno:aluno_id>/', detalhe_aluno, name='detalhe_aluno'),
+    path('alunos/<aluno:aluno_id>/atualizar/', atualizar_aluno, name='atualizar_aluno'),
+    path('alunos/<aluno:aluno_id>/foto/', enviar_foto_aluno, name='enviar_foto_aluno'),
 
     # Projetos
     path('projetos/', listar_projetos, name='listar_projetos'),
     path('projetos/criar/', criar_projeto, name='criar_projeto'),
-    path('projetos/<uuid:projeto_id>/', detalhe_projeto, name='detalhe_projeto'),
-    path('projetos/<uuid:projeto_id>/atualizar/', atualizar_projeto, name='atualizar_projeto'),
+    path('projetos/<projeto:projeto_id>/', detalhe_projeto, name='detalhe_projeto'),
+    path('projetos/<projeto:projeto_id>/atualizar/', atualizar_projeto, name='atualizar_projeto'),
 
     # Produções (Portfólio)
     path('producoes/', listar_producoes, name='listar_producoes'),
     path('producoes/criar/', criar_producao, name='criar_producao'),
-    path('producoes/<uuid:producao_id>/', detalhe_producao, name='detalhe_producao'),
-    path('producoes/<uuid:producao_id>/atualizar/', atualizar_producao, name='atualizar_producao'),
-    path('producoes/<uuid:producao_id>/deletar/', deletar_producao, name='deletar_producao'),
-    path('producoes/<uuid:producao_id>/alunos/', listar_alunos_producao, name='listar_alunos_producao'),
-    path('producoes/<uuid:producao_id>/alunos/vincular/', vincular_aluno_producao, name='vincular_aluno_producao'),
-    path('producoes/<uuid:producao_id>/alunos/<uuid:vinculo_id>/atualizar/',
+    path('producoes/<producao:producao_id>/', detalhe_producao, name='detalhe_producao'),
+    path('producoes/<producao:producao_id>/atualizar/', atualizar_producao, name='atualizar_producao'),
+    path('producoes/<producao:producao_id>/deletar/', deletar_producao, name='deletar_producao'),
+    path('producoes/<producao:producao_id>/alunos/', listar_alunos_producao, name='listar_alunos_producao'),
+    path('producoes/<producao:producao_id>/alunos/vincular/', vincular_aluno_producao, name='vincular_aluno_producao'),
+    path('producoes/<producao:producao_id>/alunos/<producao_aluno:vinculo_id>/atualizar/',
          atualizar_vinculo_producao_aluno, name='atualizar_vinculo_producao_aluno'),
-    path('producoes/<uuid:producao_id>/alunos/<uuid:aluno_id>/desvincular/',
+    path('producoes/<producao:producao_id>/alunos/<aluno:aluno_id>/desvincular/',
          desvincular_aluno_producao, name='desvincular_aluno_producao'),
 
     # Registros de Escrita
     path('registros-escrita/', listar_registros_escrita, name='listar_registros_escrita'),
-    path('registros-escrita/<uuid:registro_id>/', detalhe_registro_escrita, name='detalhe_registro_escrita'),
-    path('registros-escrita/<uuid:registro_id>/atualizar/', atualizar_registro_escrita, name='atualizar_registro_escrita'),
-    path('registros-escrita/<uuid:registro_id>/deletar/', deletar_registro_escrita, name='deletar_registro_escrita'),
+    path('registros-escrita/<registro_escrita:registro_id>/', detalhe_registro_escrita, name='detalhe_registro_escrita'),
+    path('registros-escrita/<registro_escrita:registro_id>/atualizar/', atualizar_registro_escrita, name='atualizar_registro_escrita'),
+    path('registros-escrita/<registro_escrita:registro_id>/deletar/', deletar_registro_escrita, name='deletar_registro_escrita'),
 
     # Registros de Desenho
     path('registros-desenho/', listar_registros_desenho, name='listar_registros_desenho'),
-    path('registros-desenho/<uuid:registro_id>/', detalhe_registro_desenho, name='detalhe_registro_desenho'),
-    path('registros-desenho/<uuid:registro_id>/atualizar/', atualizar_registro_desenho, name='atualizar_registro_desenho'),
-    path('registros-desenho/<uuid:registro_id>/deletar/', deletar_registro_desenho, name='deletar_registro_desenho'),
+    path('registros-desenho/<registro_desenho:registro_id>/', detalhe_registro_desenho, name='detalhe_registro_desenho'),
+    path('registros-desenho/<registro_desenho:registro_id>/atualizar/', atualizar_registro_desenho, name='atualizar_registro_desenho'),
+    path('registros-desenho/<registro_desenho:registro_id>/deletar/', deletar_registro_desenho, name='deletar_registro_desenho'),
 
     # Produções com análise por IA (escrita/desenho) e arquivo original
     path('upload-escrita/', upload_e_analise_escrita, name='upload_e_analise_escrita'),
@@ -355,49 +360,49 @@ urlpatterns = [
     # Registros de Leitura
     path('leitura/', listar_registros_leitura, name='listar_registros_leitura'),
     path('leitura/analisar/', iniciar_analise_leitura, name='iniciar_analise_leitura'),
-    path('leitura/<uuid:registro_id>/status/', status_analise_leitura, name='status_analise_leitura'),
-    path('leitura/<uuid:registro_id>/confirmar/', confirmar_analise_leitura, name='confirmar_analise_leitura'),
-    path('leitura/<uuid:registro_id>/deletar/', deletar_analise_leitura, name='deletar_analise_leitura'),
-    path('leitura/<uuid:registro_id>/', cancelar_analise_leitura, name='cancelar_analise_leitura'),
+    path('leitura/<registro_leitura:registro_id>/status/', status_analise_leitura, name='status_analise_leitura'),
+    path('leitura/<registro_leitura:registro_id>/confirmar/', confirmar_analise_leitura, name='confirmar_analise_leitura'),
+    path('leitura/<registro_leitura:registro_id>/deletar/', deletar_analise_leitura, name='deletar_analise_leitura'),
+    path('leitura/<registro_leitura:registro_id>/', cancelar_analise_leitura, name='cancelar_analise_leitura'),
 
     # Campos Pedagógicos
     path('campos-pedagogicos/', listar_campos_pedagogicos, name='listar_campos_pedagogicos'),
     path('campos-pedagogicos/criar/', criar_campo_pedagogico, name='criar_campo_pedagogico'),
-    path('campos-pedagogicos/<uuid:campo_id>/', detalhe_campo_pedagogico, name='detalhe_campo_pedagogico'),
-    path('campos-pedagogicos/<uuid:campo_id>/atualizar/', atualizar_campo_pedagogico, name='atualizar_campo_pedagogico'),
-    path('campos-pedagogicos/<uuid:campo_id>/desativar/', desativar_campo_pedagogico, name='desativar_campo_pedagogico'),
+    path('campos-pedagogicos/<campo_pedagogico:campo_id>/', detalhe_campo_pedagogico, name='detalhe_campo_pedagogico'),
+    path('campos-pedagogicos/<campo_pedagogico:campo_id>/atualizar/', atualizar_campo_pedagogico, name='atualizar_campo_pedagogico'),
+    path('campos-pedagogicos/<campo_pedagogico:campo_id>/desativar/', desativar_campo_pedagogico, name='desativar_campo_pedagogico'),
 
     # Habilidades BNCC (catálogo global)
     path('habilidades-bncc/', listar_habilidades_bncc, name='listar_habilidades_bncc'),
     path('habilidades-bncc/criar/', criar_habilidade_bncc, name='criar_habilidade_bncc'),
-    path('habilidades-bncc/<uuid:habilidade_id>/', detalhe_habilidade_bncc, name='detalhe_habilidade_bncc'),
-    path('habilidades-bncc/<uuid:habilidade_id>/atualizar/', atualizar_habilidade_bncc, name='atualizar_habilidade_bncc'),
+    path('habilidades-bncc/<habilidade_bncc:habilidade_id>/', detalhe_habilidade_bncc, name='detalhe_habilidade_bncc'),
+    path('habilidades-bncc/<habilidade_bncc:habilidade_id>/atualizar/', atualizar_habilidade_bncc, name='atualizar_habilidade_bncc'),
 
     # Perguntas (formulário de observação)
     path('perguntas/', listar_perguntas, name='listar_perguntas'),
     path('perguntas/criar/', criar_pergunta, name='criar_pergunta'),
-    path('perguntas/<uuid:pergunta_id>/', detalhe_pergunta, name='detalhe_pergunta'),
-    path('perguntas/<uuid:pergunta_id>/atualizar/', atualizar_pergunta, name='atualizar_pergunta'),
+    path('perguntas/<pergunta:pergunta_id>/', detalhe_pergunta, name='detalhe_pergunta'),
+    path('perguntas/<pergunta:pergunta_id>/atualizar/', atualizar_pergunta, name='atualizar_pergunta'),
 
     # Perguntas de Especialista
     path('perguntas-especialistas/', listar_perguntas_especialistas, name='listar_perguntas_especialistas'),
     path('perguntas-especialistas/criar/', criar_pergunta_especialista, name='criar_pergunta_especialista'),
-    path('perguntas-especialistas/<uuid:pergunta_id>/', detalhe_pergunta_especialista, name='detalhe_pergunta_especialista'),
-    path('perguntas-especialistas/<uuid:pergunta_id>/atualizar/', atualizar_pergunta_especialista, name='atualizar_pergunta_especialista'),
+    path('perguntas-especialistas/<pergunta_especialista:pergunta_id>/', detalhe_pergunta_especialista, name='detalhe_pergunta_especialista'),
+    path('perguntas-especialistas/<pergunta_especialista:pergunta_id>/atualizar/', atualizar_pergunta_especialista, name='atualizar_pergunta_especialista'),
 
     # Registros de Observação
     path('registros-observacao/', listar_registros_observacao, name='listar_registros_observacao'),
     path('registros-observacao/criar/', criar_registro_observacao, name='criar_registro_observacao'),
-    path('registros-observacao/<uuid:registro_id>/', detalhe_registro_observacao, name='detalhe_registro_observacao'),
-    path('registros-observacao/<uuid:registro_id>/atualizar/', atualizar_registro_observacao, name='atualizar_registro_observacao'),
-    path('registros-observacao/<uuid:registro_id>/deletar/', deletar_registro_observacao, name='deletar_registro_observacao'),
+    path('registros-observacao/<registro_observacao:registro_id>/', detalhe_registro_observacao, name='detalhe_registro_observacao'),
+    path('registros-observacao/<registro_observacao:registro_id>/atualizar/', atualizar_registro_observacao, name='atualizar_registro_observacao'),
+    path('registros-observacao/<registro_observacao:registro_id>/deletar/', deletar_registro_observacao, name='deletar_registro_observacao'),
 
     # Observações de Transcrição
     path('observacoes-transcricao/', listar_observacoes_transcricao, name='listar_observacoes_transcricao'),
     path('observacoes-transcricao/criar/', criar_observacao_transcricao, name='criar_observacao_transcricao'),
-    path('observacoes-transcricao/<uuid:observacao_id>/', detalhe_observacao_transcricao, name='detalhe_observacao_transcricao'),
-    path('observacoes-transcricao/<uuid:observacao_id>/atualizar/', atualizar_observacao_transcricao, name='atualizar_observacao_transcricao'),
-    path('observacoes-transcricao/<uuid:observacao_id>/deletar/', deletar_observacao_transcricao, name='deletar_observacao_transcricao'),
+    path('observacoes-transcricao/<observacao_transcricao:observacao_id>/', detalhe_observacao_transcricao, name='detalhe_observacao_transcricao'),
+    path('observacoes-transcricao/<observacao_transcricao:observacao_id>/atualizar/', atualizar_observacao_transcricao, name='atualizar_observacao_transcricao'),
+    path('observacoes-transcricao/<observacao_transcricao:observacao_id>/deletar/', deletar_observacao_transcricao, name='deletar_observacao_transcricao'),
 
     # Planejamento (fluxo com IA)
     path('planejamento/', listar_planejamentos, name='listar_planejamentos'),
@@ -405,71 +410,71 @@ urlpatterns = [
     path('planejamento/sugerir-atividades/', sugerir_atividades_planejamento, name='sugerir_atividades_planejamento'),
     path('planejamento/sugerir-bncc/', sugerir_bncc_planejamento, name='sugerir_bncc_planejamento'),
     path('planejamento/criar/', criar_planejamento_semanal, name='criar_planejamento_semanal'),
-    path('planejamento/<uuid:planejamento_id>/atualizar/', atualizar_planejamento_semanal, name='atualizar_planejamento_semanal'),
+    path('planejamento/<planejamento_semanal:planejamento_id>/atualizar/', atualizar_planejamento_semanal, name='atualizar_planejamento_semanal'),
     path('planejamento/aplicar-em-semanas/', aplicar_planejamento_em_semanas, name='aplicar_planejamento_em_semanas'),
 
     # Períodos Avaliativos
     path('periodos-avaliativos/', listar_periodos_avaliativos, name='listar_periodos_avaliativos'),
     path('periodos-avaliativos/criar/', criar_periodo_avaliativo, name='criar_periodo_avaliativo'),
-    path('periodos-avaliativos/<uuid:periodo_id>/', detalhe_periodo_avaliativo, name='detalhe_periodo_avaliativo'),
-    path('periodos-avaliativos/<uuid:periodo_id>/atualizar/', atualizar_periodo_avaliativo, name='atualizar_periodo_avaliativo'),
-    path('periodos-avaliativos/<uuid:periodo_id>/excluir/', excluir_periodo_avaliativo, name='excluir_periodo_avaliativo'),
+    path('periodos-avaliativos/<periodo_avaliativo:periodo_id>/', detalhe_periodo_avaliativo, name='detalhe_periodo_avaliativo'),
+    path('periodos-avaliativos/<periodo_avaliativo:periodo_id>/atualizar/', atualizar_periodo_avaliativo, name='atualizar_periodo_avaliativo'),
+    path('periodos-avaliativos/<periodo_avaliativo:periodo_id>/excluir/', excluir_periodo_avaliativo, name='excluir_periodo_avaliativo'),
 
     # Templates de Relatório
     path('relatorio-templates/', listar_relatorio_templates, name='listar_relatorio_templates'),
     path('relatorio-templates/criar/', criar_relatorio_template, name='criar_relatorio_template'),
-    path('relatorio-templates/<uuid:template_id>/', detalhe_relatorio_template, name='detalhe_relatorio_template'),
-    path('relatorio-templates/<uuid:template_id>/atualizar/', atualizar_relatorio_template, name='atualizar_relatorio_template'),
-    path('relatorio-templates/<uuid:template_id>/deletar/', deletar_relatorio_template, name='deletar_relatorio_template'),
+    path('relatorio-templates/<relatorio_template:template_id>/', detalhe_relatorio_template, name='detalhe_relatorio_template'),
+    path('relatorio-templates/<relatorio_template:template_id>/atualizar/', atualizar_relatorio_template, name='atualizar_relatorio_template'),
+    path('relatorio-templates/<relatorio_template:template_id>/deletar/', deletar_relatorio_template, name='deletar_relatorio_template'),
 
     # Relatórios
     # Rotas com segmento fixo ('bulk-pdf', 'coordenacao') ficam antes das com
-    # <uuid:...> por clareza — o conversor uuid já não as capturaria.
+    # <relatorio:...> por clareza — o conversor (regex de uuid) já não as capturaria.
     path('relatorios/bulk-pdf/', bulk_pdf_relatorios, name='bulk_pdf_relatorios'),
     path('relatorios/coordenacao/', listar_relatorios_coordenacao, name='listar_relatorios_coordenacao'),
-    path('relatorios/<uuid:relatorio_id>/pdf/download/', baixar_pdf_relatorio, name='baixar_pdf_relatorio'),
+    path('relatorios/<relatorio:relatorio_id>/pdf/download/', baixar_pdf_relatorio, name='baixar_pdf_relatorio'),
     path('gerar-relatorio/', gerar_relatorio, name='gerar_relatorio'),
-    path('gerar-relatorio/<uuid:crianca_id>/', gerar_relatorio_por_crianca, name='gerar_relatorio_por_crianca'),
+    path('gerar-relatorio/<aluno:crianca_id>/', gerar_relatorio_por_crianca, name='gerar_relatorio_por_crianca'),
     path('relatorios/', listar_relatorios, name='listar_relatorios'),
     path('relatorios/criar/', criar_relatorio, name='criar_relatorio'),
-    path('relatorios/<uuid:relatorio_id>/', detalhe_relatorio, name='detalhe_relatorio'),
-    path('relatorios/<uuid:relatorio_id>/atualizar/', atualizar_relatorio, name='atualizar_relatorio'),
-    path('relatorios/<uuid:relatorio_id>/revisar/', revisar_relatorio, name='revisar_relatorio'),
-    path('relatorios/<uuid:relatorio_id>/deletar/', deletar_relatorio, name='deletar_relatorio'),
+    path('relatorios/<relatorio:relatorio_id>/', detalhe_relatorio, name='detalhe_relatorio'),
+    path('relatorios/<relatorio:relatorio_id>/atualizar/', atualizar_relatorio, name='atualizar_relatorio'),
+    path('relatorios/<relatorio:relatorio_id>/revisar/', revisar_relatorio, name='revisar_relatorio'),
+    path('relatorios/<relatorio:relatorio_id>/deletar/', deletar_relatorio, name='deletar_relatorio'),
 
     # Notificações
     path('notificacoes/', listar_minhas_notificacoes, name='listar_minhas_notificacoes'),
     path('notificacoes/criar/', criar_notificacao, name='criar_notificacao'),
-    path('notificacoes/<uuid:notificacao_id>/marcar-lida/', marcar_notificacao_lida, name='marcar_notificacao_lida'),
+    path('notificacoes/<notificacao:notificacao_id>/marcar-lida/', marcar_notificacao_lida, name='marcar_notificacao_lida'),
 
     # Metas PAEE
     path('metas-paee/', listar_metas_paee, name='listar_metas_paee'),
     path('metas-paee/criar/', criar_meta_paee, name='criar_meta_paee'),
-    path('metas-paee/<uuid:meta_id>/', detalhe_meta_paee, name='detalhe_meta_paee'),
-    path('metas-paee/<uuid:meta_id>/atualizar/', atualizar_meta_paee, name='atualizar_meta_paee'),
+    path('metas-paee/<meta_paee:meta_id>/', detalhe_meta_paee, name='detalhe_meta_paee'),
+    path('metas-paee/<meta_paee:meta_id>/atualizar/', atualizar_meta_paee, name='atualizar_meta_paee'),
 
     # Sessões de Especialista
     path('sessoes-especialista/', listar_sessoes_especialista, name='listar_sessoes_especialista'),
     path('sessoes-especialista/criar/', criar_sessao_especialista, name='criar_sessao_especialista'),
-    path('sessoes-especialista/<uuid:sessao_id>/', detalhe_sessao_especialista, name='detalhe_sessao_especialista'),
-    path('sessoes-especialista/<uuid:sessao_id>/atualizar/', atualizar_sessao_especialista, name='atualizar_sessao_especialista'),
-    path('sessoes-especialista/<uuid:sessao_id>/metas/', listar_metas_sessao, name='listar_metas_sessao'),
-    path('sessoes-especialista/<uuid:sessao_id>/metas/vincular/', vincular_meta_sessao, name='vincular_meta_sessao'),
-    path('sessoes-especialista/<uuid:sessao_id>/metas/<uuid:meta_id>/desvincular/',
+    path('sessoes-especialista/<sessao_especialista:sessao_id>/', detalhe_sessao_especialista, name='detalhe_sessao_especialista'),
+    path('sessoes-especialista/<sessao_especialista:sessao_id>/atualizar/', atualizar_sessao_especialista, name='atualizar_sessao_especialista'),
+    path('sessoes-especialista/<sessao_especialista:sessao_id>/metas/', listar_metas_sessao, name='listar_metas_sessao'),
+    path('sessoes-especialista/<sessao_especialista:sessao_id>/metas/vincular/', vincular_meta_sessao, name='vincular_meta_sessao'),
+    path('sessoes-especialista/<sessao_especialista:sessao_id>/metas/<meta_paee:meta_id>/desvincular/',
          desvincular_meta_sessao, name='desvincular_meta_sessao'),
 
     # Tarefas PAEE
     path('tarefas-paee/', listar_tarefas_paee, name='listar_tarefas_paee'),
     path('tarefas-paee/criar/', criar_tarefa_paee, name='criar_tarefa_paee'),
-    path('tarefas-paee/<uuid:tarefa_id>/', detalhe_tarefa_paee, name='detalhe_tarefa_paee'),
-    path('tarefas-paee/<uuid:tarefa_id>/atualizar/', atualizar_tarefa_paee, name='atualizar_tarefa_paee'),
+    path('tarefas-paee/<tarefa_paee:tarefa_id>/', detalhe_tarefa_paee, name='detalhe_tarefa_paee'),
+    path('tarefas-paee/<tarefa_paee:tarefa_id>/atualizar/', atualizar_tarefa_paee, name='atualizar_tarefa_paee'),
 
     # Dispositivos gravadores — plataforma
     path('dispositivos/codigo/', gerar_codigo_pareamento, name='gerar_codigo_pareamento'),
     path('dispositivos/', listar_dispositivos, name='listar_dispositivos'),
-    path('dispositivos/<uuid:dispositivo_id>/', atualizar_dispositivo, name='atualizar_dispositivo'),
-    path('dispositivos/<uuid:dispositivo_id>/revogar/', revogar_dispositivo, name='revogar_dispositivo'),
-    path('dispositivos/<uuid:dispositivo_id>/reativar/', reativar_dispositivo, name='reativar_dispositivo'),
+    path('dispositivos/<dispositivo:dispositivo_id>/', atualizar_dispositivo, name='atualizar_dispositivo'),
+    path('dispositivos/<dispositivo:dispositivo_id>/revogar/', revogar_dispositivo, name='revogar_dispositivo'),
+    path('dispositivos/<dispositivo:dispositivo_id>/reativar/', reativar_dispositivo, name='reativar_dispositivo'),
 
     # Dispositivos gravadores — firmware (sem token de usuário)
     path('dispositivos/parear/', parear, name='parear_dispositivo'),
@@ -480,29 +485,29 @@ urlpatterns = [
     # Tickets
     path('tickets/', listar_tickets, name='listar_tickets'),
     path('tickets/criar/', criar_ticket, name='criar_ticket'),
-    path('tickets/<uuid:ticket_id>/', detalhe_ticket, name='detalhe_ticket'),
-    path('tickets/<uuid:ticket_id>/atualizar/', atualizar_ticket, name='atualizar_ticket'),
-    path('tickets/<uuid:ticket_id>/respostas/', listar_respostas_ticket, name='listar_respostas_ticket'),
-    path('tickets/<uuid:ticket_id>/responder/', responder_ticket, name='responder_ticket'),
-    path('tickets/<uuid:ticket_id>/anexar/', anexar_arquivo_ticket, name='anexar_arquivo_ticket'),
-    path('tickets/respostas/<uuid:resposta_id>/anexar/', anexar_arquivo_resposta, name='anexar_arquivo_resposta'),
+    path('tickets/<ticket:ticket_id>/', detalhe_ticket, name='detalhe_ticket'),
+    path('tickets/<ticket:ticket_id>/atualizar/', atualizar_ticket, name='atualizar_ticket'),
+    path('tickets/<ticket:ticket_id>/respostas/', listar_respostas_ticket, name='listar_respostas_ticket'),
+    path('tickets/<ticket:ticket_id>/responder/', responder_ticket, name='responder_ticket'),
+    path('tickets/<ticket:ticket_id>/anexar/', anexar_arquivo_ticket, name='anexar_arquivo_ticket'),
+    path('tickets/respostas/<resposta_ticket:resposta_id>/anexar/', anexar_arquivo_resposta, name='anexar_arquivo_resposta'),
 
     # Auditoria e Permissões
     path('logs-auditoria/', listar_logs_auditoria, name='listar_logs_auditoria'),
-    path('logs-auditoria/<int:log_id>/', detalhe_log_auditoria, name='detalhe_log_auditoria'),
+    path('logs-auditoria/<log_auditoria:log_id>/', detalhe_log_auditoria, name='detalhe_log_auditoria'),
     path('permissoes-usuario/', listar_permissoes_usuario, name='listar_permissoes_usuario'),
     path('permissoes-usuario/criar/', criar_permissao_usuario, name='criar_permissao_usuario'),
-    path('permissoes-usuario/<uuid:permissao_id>/deletar/', deletar_permissao_usuario, name='deletar_permissao_usuario'),
+    path('permissoes-usuario/<permissao_usuario:permissao_id>/deletar/', deletar_permissao_usuario, name='deletar_permissao_usuario'),
 
     # Documentos e Contratos
     path('templates-documento/', listar_templates_documento, name='listar_templates_documento'),
     path('templates-documento/criar/', criar_template_documento, name='criar_template_documento'),
-    path('templates-documento/<uuid:template_id>/', detalhe_template_documento, name='detalhe_template_documento'),
-    path('templates-documento/<uuid:template_id>/atualizar/', atualizar_template_documento, name='atualizar_template_documento'),
+    path('templates-documento/<template_documento:template_id>/', detalhe_template_documento, name='detalhe_template_documento'),
+    path('templates-documento/<template_documento:template_id>/atualizar/', atualizar_template_documento, name='atualizar_template_documento'),
     path('contratos/', listar_contratos, name='listar_contratos'),
     path('contratos/criar/', criar_contrato, name='criar_contrato'),
-    path('contratos/<uuid:contrato_id>/', detalhe_contrato, name='detalhe_contrato'),
-    path('contratos/<uuid:contrato_id>/atualizar/', atualizar_contrato, name='atualizar_contrato'),
+    path('contratos/<contrato:contrato_id>/', detalhe_contrato, name='detalhe_contrato'),
+    path('contratos/<contrato:contrato_id>/atualizar/', atualizar_contrato, name='atualizar_contrato'),
 
     # Coordenação — drill-down de alfabetização
     path('coordenacao/alfabetizacao/alunos/', alfabetizacao_criancas, name='alfabetizacao_criancas'),
@@ -513,15 +518,11 @@ urlpatterns = [
     path('analytics/contagem-registros/', contagem_registros, name='contagem_registros'),
     path('analytics/participacao-docente/', participacao_docente, name='participacao_docente'),
 
-    # Consumo da API OpenAI (só superadmin)
-    path('admin/openai-usage/', listar_uso_openai, name='listar_uso_openai'),
-    path('admin/openai-usage/summary/', resumo_uso_openai, name='resumo_uso_openai'),
-
     # Biblioteca de Prompts (IA)
     path('prompts/categorias/', listar_prompt_categorias, name='listar_prompt_categorias'),
     path('prompts/categorias/criar/', criar_prompt_categoria, name='criar_prompt_categoria'),
-    path('prompts/categorias/<uuid:categoria_id>/atualizar/', atualizar_prompt_categoria, name='atualizar_prompt_categoria'),
-    path('prompts/categorias/<uuid:categoria_id>/deletar/', deletar_prompt_categoria, name='deletar_prompt_categoria'),
+    path('prompts/categorias/<prompt_categoria:categoria_id>/atualizar/', atualizar_prompt_categoria, name='atualizar_prompt_categoria'),
+    path('prompts/categorias/<prompt_categoria:categoria_id>/deletar/', deletar_prompt_categoria, name='deletar_prompt_categoria'),
     path('prompts/salvar/', salvar_prompt_template, name='salvar_prompt_template'),
     path('prompts/rede/', visao_rede_prompts, name='visao_rede_prompts'),
 ]

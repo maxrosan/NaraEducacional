@@ -19,7 +19,8 @@ class Migration(migrations.Migration):
         migrations.CreateModel(
             name='Escola',
             fields=[
-                ('id', models.UUIDField(default=uuid.uuid4, editable=False, primary_key=True, serialize=False)),
+                ('id', models.BigAutoField(primary_key=True, serialize=False)),
+                ('uuid', models.UUIDField(default=uuid.uuid4, editable=False, unique=True)),
                 ('nome', models.CharField(max_length=200, verbose_name='Nome da Escola')),
                 ('tipo_unidade', models.CharField(blank=True, choices=[('matriz', 'Matriz'), ('filial', 'Filial')], max_length=20)),
                 ('cnpj', models.CharField(blank=True, max_length=18, null=True, unique=True)),
@@ -44,7 +45,8 @@ class Migration(migrations.Migration):
         migrations.CreateModel(
             name='HabilidadeBNCC',
             fields=[
-                ('id', models.UUIDField(default=uuid.uuid4, editable=False, primary_key=True, serialize=False)),
+                ('id', models.BigAutoField(primary_key=True, serialize=False)),
+                ('uuid', models.UUIDField(default=uuid.uuid4, editable=False, unique=True)),
                 ('codigo', models.CharField(max_length=20, unique=True)),
                 ('descricao', models.TextField()),
                 ('componente_curricular', models.CharField(blank=True, max_length=100, null=True)),
@@ -64,7 +66,8 @@ class Migration(migrations.Migration):
         migrations.CreateModel(
             name='Instituicao',
             fields=[
-                ('id', models.UUIDField(default=uuid.uuid4, editable=False, primary_key=True, serialize=False)),
+                ('id', models.BigAutoField(primary_key=True, serialize=False)),
+                ('uuid', models.UUIDField(default=uuid.uuid4, editable=False, unique=True)),
                 ('nome', models.CharField(max_length=200, verbose_name='Nome da Instituição')),
                 ('cnpj', models.CharField(blank=True, max_length=18, null=True, unique=True)),
                 ('email_institucional', models.EmailField(blank=True, max_length=254, null=True)),
@@ -88,7 +91,8 @@ class Migration(migrations.Migration):
         migrations.CreateModel(
             name='PromptCategoria',
             fields=[
-                ('id', models.UUIDField(default=uuid.uuid4, editable=False, primary_key=True, serialize=False)),
+                ('id', models.BigAutoField(primary_key=True, serialize=False)),
+                ('uuid', models.UUIDField(default=uuid.uuid4, editable=False, unique=True)),
                 ('titulo', models.CharField(max_length=200)),
                 ('ativo', models.BooleanField(default=True)),
                 ('criado_em', models.DateTimeField(auto_now_add=True)),
@@ -106,7 +110,8 @@ class Migration(migrations.Migration):
             fields=[
                 ('password', models.CharField(max_length=128, verbose_name='password')),
                 ('last_login', models.DateTimeField(blank=True, null=True, verbose_name='last login')),
-                ('id', models.UUIDField(default=uuid.uuid4, editable=False, primary_key=True, serialize=False)),
+                ('id', models.BigAutoField(primary_key=True, serialize=False)),
+                ('uuid', models.UUIDField(default=uuid.uuid4, editable=False, unique=True)),
                 ('email', models.EmailField(max_length=254, unique=True, verbose_name='Email')),
                 ('nome', models.CharField(max_length=200, verbose_name='Nome Completo')),
                 ('numero', models.CharField(blank=True, max_length=10, null=True)),
@@ -130,7 +135,8 @@ class Migration(migrations.Migration):
         migrations.CreateModel(
             name='DispositivoGravador',
             fields=[
-                ('id', models.UUIDField(default=uuid.uuid4, editable=False, primary_key=True, serialize=False)),
+                ('id', models.BigAutoField(primary_key=True, serialize=False)),
+                ('uuid', models.UUIDField(default=uuid.uuid4, editable=False, unique=True)),
                 ('device_id', models.CharField(max_length=100, unique=True)),
                 ('nome', models.CharField(blank=True, default='', max_length=120)),
                 ('token_hash', models.CharField(blank=True, max_length=128, null=True)),
@@ -153,7 +159,8 @@ class Migration(migrations.Migration):
         migrations.CreateModel(
             name='Especialista',
             fields=[
-                ('id', models.UUIDField(default=uuid.uuid4, editable=False, primary_key=True, serialize=False)),
+                ('id', models.BigAutoField(primary_key=True, serialize=False)),
+                ('uuid', models.UUIDField(default=uuid.uuid4, editable=False, unique=True)),
                 ('tipo_especialista', models.CharField(choices=[('psicopedagogo', 'Psicopedagogo'), ('psicologo', 'Psicólogo'), ('fonoaudiologo', 'Fonoaudiólogo'), ('terapeuta_ocupacional', 'Terapeuta Ocupacional'), ('outro', 'Outro')], max_length=30)),
                 ('criado_em', models.DateTimeField(auto_now_add=True)),
                 ('atualizado_em', models.DateTimeField(auto_now=True)),
@@ -180,7 +187,8 @@ class Migration(migrations.Migration):
         migrations.CreateModel(
             name='Disciplina',
             fields=[
-                ('id', models.UUIDField(default=uuid.uuid4, editable=False, primary_key=True, serialize=False)),
+                ('id', models.BigAutoField(primary_key=True, serialize=False)),
+                ('uuid', models.UUIDField(default=uuid.uuid4, editable=False, unique=True)),
                 ('nome', models.CharField(max_length=100)),
                 ('ativo', models.BooleanField(default=True)),
                 ('criado_em', models.DateTimeField(auto_now_add=True)),
@@ -200,6 +208,7 @@ class Migration(migrations.Migration):
             name='CoordenacaoCache',
             fields=[
                 ('id', models.BigAutoField(primary_key=True, serialize=False)),
+                ('uuid', models.UUIDField(default=uuid.uuid4, editable=False, unique=True)),
                 ('data_referencia', models.DateField(db_index=True)),
                 ('janela_dias', models.PositiveIntegerField(default=30)),
                 ('payload', models.JSONField()),
@@ -220,7 +229,8 @@ class Migration(migrations.Migration):
         migrations.CreateModel(
             name='CodigoPareamento',
             fields=[
-                ('id', models.UUIDField(default=uuid.uuid4, editable=False, primary_key=True, serialize=False)),
+                ('id', models.BigAutoField(primary_key=True, serialize=False)),
+                ('uuid', models.UUIDField(default=uuid.uuid4, editable=False, unique=True)),
                 ('codigo', models.CharField(max_length=12)),
                 ('expira_em', models.DateTimeField(blank=True, null=True)),
                 ('usado_em', models.DateTimeField(blank=True, null=True)),
@@ -241,7 +251,8 @@ class Migration(migrations.Migration):
         migrations.CreateModel(
             name='CampoPedagogico',
             fields=[
-                ('id', models.UUIDField(default=uuid.uuid4, editable=False, primary_key=True, serialize=False)),
+                ('id', models.BigAutoField(primary_key=True, serialize=False)),
+                ('uuid', models.UUIDField(default=uuid.uuid4, editable=False, unique=True)),
                 ('nome', models.CharField(max_length=200)),
                 ('etapa', models.CharField(blank=True, choices=[('educacao_infantil', 'Educação Infantil'), ('ensino_fundamental', 'Ensino Fundamental')], max_length=30, null=True)),
                 ('icone', models.CharField(blank=True, default='BookOpen', max_length=50)),
@@ -262,7 +273,8 @@ class Migration(migrations.Migration):
         migrations.CreateModel(
             name='Aluno',
             fields=[
-                ('id', models.UUIDField(default=uuid.uuid4, editable=False, primary_key=True, serialize=False)),
+                ('id', models.BigAutoField(primary_key=True, serialize=False)),
+                ('uuid', models.UUIDField(default=uuid.uuid4, editable=False, unique=True)),
                 ('nome_completo', models.CharField(max_length=200, verbose_name='Nome Completo')),
                 ('data_nascimento', models.DateField(blank=True, null=True)),
                 ('genero', models.CharField(blank=True, choices=[('M', 'Masculino'), ('F', 'Feminino'), ('O', 'Outro')], max_length=1, null=True)),
@@ -294,9 +306,10 @@ class Migration(migrations.Migration):
             name='LogAuditoria',
             fields=[
                 ('id', models.BigAutoField(primary_key=True, serialize=False)),
+                ('uuid', models.UUIDField(default=uuid.uuid4, editable=False, unique=True)),
                 ('acao', models.CharField(choices=[('create', 'Criação'), ('update', 'Atualização'), ('delete', 'Exclusão')], max_length=20)),
                 ('tabela_afetada', models.CharField(max_length=100)),
-                ('registro_id', models.UUIDField()),
+                ('registro_id', models.BigIntegerField()),
                 ('alteracoes', models.JSONField(blank=True, default=dict)),
                 ('ip', models.CharField(blank=True, max_length=255, null=True)),
                 ('criado_em', models.DateTimeField(auto_now_add=True)),
@@ -316,7 +329,8 @@ class Migration(migrations.Migration):
         migrations.CreateModel(
             name='MetaPAEE',
             fields=[
-                ('id', models.UUIDField(default=uuid.uuid4, editable=False, primary_key=True, serialize=False)),
+                ('id', models.BigAutoField(primary_key=True, serialize=False)),
+                ('uuid', models.UUIDField(default=uuid.uuid4, editable=False, unique=True)),
                 ('categoria', models.CharField(blank=True, max_length=30, null=True)),
                 ('inicio', models.DateField(blank=True, null=True)),
                 ('fim', models.DateField(blank=True, null=True)),
@@ -341,7 +355,8 @@ class Migration(migrations.Migration):
         migrations.CreateModel(
             name='Notificacao',
             fields=[
-                ('id', models.UUIDField(default=uuid.uuid4, editable=False, primary_key=True, serialize=False)),
+                ('id', models.BigAutoField(primary_key=True, serialize=False)),
+                ('uuid', models.UUIDField(default=uuid.uuid4, editable=False, unique=True)),
                 ('tipo', models.CharField(max_length=50)),
                 ('titulo', models.CharField(blank=True, max_length=200, null=True)),
                 ('conteudo', models.TextField(blank=True, null=True)),
@@ -365,6 +380,7 @@ class Migration(migrations.Migration):
             name='OpenAIUsage',
             fields=[
                 ('id', models.BigAutoField(primary_key=True, serialize=False)),
+                ('uuid', models.UUIDField(default=uuid.uuid4, editable=False, unique=True)),
                 ('input_tokens', models.BigIntegerField()),
                 ('image_tokens', models.BigIntegerField(default=0)),
                 ('output_tokens', models.BigIntegerField()),
@@ -389,7 +405,8 @@ class Migration(migrations.Migration):
         migrations.CreateModel(
             name='Pergunta',
             fields=[
-                ('id', models.UUIDField(default=uuid.uuid4, editable=False, primary_key=True, serialize=False)),
+                ('id', models.BigAutoField(primary_key=True, serialize=False)),
+                ('uuid', models.UUIDField(default=uuid.uuid4, editable=False, unique=True)),
                 ('pergunta', models.TextField()),
                 ('pergunta_norma', models.TextField(blank=True, null=True)),
                 ('area_conhecimento', models.TextField(blank=True, null=True)),
@@ -412,7 +429,8 @@ class Migration(migrations.Migration):
         migrations.CreateModel(
             name='PerguntaEspecialista',
             fields=[
-                ('id', models.UUIDField(default=uuid.uuid4, editable=False, primary_key=True, serialize=False)),
+                ('id', models.BigAutoField(primary_key=True, serialize=False)),
+                ('uuid', models.UUIDField(default=uuid.uuid4, editable=False, unique=True)),
                 ('pergunta', models.TextField()),
                 ('pergunta_facilitadora', models.TextField(blank=True, null=True)),
                 ('nivel', models.CharField(blank=True, max_length=50, null=True)),
@@ -435,7 +453,8 @@ class Migration(migrations.Migration):
         migrations.CreateModel(
             name='PeriodoAvaliativo',
             fields=[
-                ('id', models.UUIDField(default=uuid.uuid4, editable=False, primary_key=True, serialize=False)),
+                ('id', models.BigAutoField(primary_key=True, serialize=False)),
+                ('uuid', models.UUIDField(default=uuid.uuid4, editable=False, unique=True)),
                 ('descricao', models.CharField(max_length=200)),
                 ('tipo_periodo', models.CharField(choices=[('bimestral', 'Bimestral'), ('trimestral', 'Trimestral'), ('semestral', 'Semestral'), ('anual', 'Anual')], max_length=20)),
                 ('ano', models.IntegerField(blank=True, null=True)),
@@ -458,7 +477,8 @@ class Migration(migrations.Migration):
         migrations.CreateModel(
             name='PermissaoUsuario',
             fields=[
-                ('id', models.UUIDField(default=uuid.uuid4, editable=False, primary_key=True, serialize=False)),
+                ('id', models.BigAutoField(primary_key=True, serialize=False)),
+                ('uuid', models.UUIDField(default=uuid.uuid4, editable=False, unique=True)),
                 ('modulo', models.CharField(max_length=100)),
                 ('acao', models.CharField(choices=[('criar', 'Criar'), ('ver', 'Ver'), ('editar', 'Editar'), ('deletar', 'Deletar')], max_length=20)),
                 ('concedido', models.BooleanField()),
@@ -479,7 +499,8 @@ class Migration(migrations.Migration):
         migrations.CreateModel(
             name='PlanejamentoDiario',
             fields=[
-                ('id', models.UUIDField(default=uuid.uuid4, editable=False, primary_key=True, serialize=False)),
+                ('id', models.BigAutoField(primary_key=True, serialize=False)),
+                ('uuid', models.UUIDField(default=uuid.uuid4, editable=False, unique=True)),
                 ('dia_semana', models.CharField(blank=True, choices=[('segunda', 'Segunda-feira'), ('terca', 'Terça-feira'), ('quarta', 'Quarta-feira'), ('quinta', 'Quinta-feira'), ('sexta', 'Sexta-feira')], max_length=10, null=True)),
                 ('data', models.DateField(blank=True, null=True)),
                 ('atividades_propostas', models.TextField(blank=True, null=True)),
@@ -502,7 +523,8 @@ class Migration(migrations.Migration):
         migrations.CreateModel(
             name='PlanejamentoHabilidade',
             fields=[
-                ('id', models.UUIDField(default=uuid.uuid4, editable=False, primary_key=True, serialize=False)),
+                ('id', models.BigAutoField(primary_key=True, serialize=False)),
+                ('uuid', models.UUIDField(default=uuid.uuid4, editable=False, unique=True)),
                 ('observacao_habilidade', models.TextField(blank=True, null=True)),
                 ('criado_em', models.DateTimeField(auto_now_add=True)),
                 ('atualizado_em', models.DateTimeField(auto_now=True)),
@@ -519,7 +541,8 @@ class Migration(migrations.Migration):
         migrations.CreateModel(
             name='PlanejamentoSemanal',
             fields=[
-                ('id', models.UUIDField(default=uuid.uuid4, editable=False, primary_key=True, serialize=False)),
+                ('id', models.BigAutoField(primary_key=True, serialize=False)),
+                ('uuid', models.UUIDField(default=uuid.uuid4, editable=False, unique=True)),
                 ('semana_inicio', models.DateField()),
                 ('semana_fim', models.DateField()),
                 ('ano_letivo', models.IntegerField(default=2027)),
@@ -544,7 +567,8 @@ class Migration(migrations.Migration):
         migrations.CreateModel(
             name='Producao',
             fields=[
-                ('id', models.UUIDField(default=uuid.uuid4, editable=False, primary_key=True, serialize=False)),
+                ('id', models.BigAutoField(primary_key=True, serialize=False)),
+                ('uuid', models.UUIDField(default=uuid.uuid4, editable=False, unique=True)),
                 ('tipo', models.CharField(choices=[('foto', 'Foto'), ('video', 'Vídeo'), ('audio', 'Áudio'), ('documento', 'Documento')], default='foto', max_length=20)),
                 ('titulo', models.CharField(blank=True, max_length=200, null=True)),
                 ('descricao', models.TextField(blank=True, null=True)),
@@ -571,7 +595,8 @@ class Migration(migrations.Migration):
         migrations.CreateModel(
             name='ProducaoAluno',
             fields=[
-                ('id', models.UUIDField(default=uuid.uuid4, editable=False, primary_key=True, serialize=False)),
+                ('id', models.BigAutoField(primary_key=True, serialize=False)),
+                ('uuid', models.UUIDField(default=uuid.uuid4, editable=False, unique=True)),
                 ('legenda', models.TextField(blank=True, default='')),
                 ('legenda_ia', models.TextField(blank=True, default='')),
                 ('destaque', models.BooleanField(default=False)),
@@ -591,7 +616,8 @@ class Migration(migrations.Migration):
         migrations.CreateModel(
             name='Projeto',
             fields=[
-                ('id', models.UUIDField(default=uuid.uuid4, editable=False, primary_key=True, serialize=False)),
+                ('id', models.BigAutoField(primary_key=True, serialize=False)),
+                ('uuid', models.UUIDField(default=uuid.uuid4, editable=False, unique=True)),
                 ('nome', models.CharField(max_length=200)),
                 ('descricao', models.TextField(blank=True, null=True)),
                 ('status', models.CharField(choices=[('em_andamento', 'Em Andamento'), ('concluido', 'Concluído'), ('cancelado', 'Cancelado')], default='em_andamento', max_length=20)),
@@ -617,7 +643,8 @@ class Migration(migrations.Migration):
         migrations.CreateModel(
             name='PromptTemplate',
             fields=[
-                ('id', models.UUIDField(default=uuid.uuid4, editable=False, primary_key=True, serialize=False)),
+                ('id', models.BigAutoField(primary_key=True, serialize=False)),
+                ('uuid', models.UUIDField(default=uuid.uuid4, editable=False, unique=True)),
                 ('prompt_global', models.TextField(blank=True, default='')),
                 ('personalizado', models.TextField(blank=True, default='')),
                 ('criado_em', models.DateTimeField(auto_now_add=True)),
@@ -636,7 +663,8 @@ class Migration(migrations.Migration):
         migrations.CreateModel(
             name='RegistroObservacao',
             fields=[
-                ('id', models.UUIDField(default=uuid.uuid4, editable=False, primary_key=True, serialize=False)),
+                ('id', models.BigAutoField(primary_key=True, serialize=False)),
+                ('uuid', models.UUIDField(default=uuid.uuid4, editable=False, unique=True)),
                 ('resposta', models.CharField(blank=True, max_length=50, null=True)),
                 ('observacao', models.TextField(blank=True, null=True)),
                 ('data_observacao', models.DateField(blank=True, null=True)),
@@ -659,7 +687,8 @@ class Migration(migrations.Migration):
         migrations.CreateModel(
             name='RelatorioTemplate',
             fields=[
-                ('id', models.UUIDField(default=uuid.uuid4, editable=False, primary_key=True, serialize=False)),
+                ('id', models.BigAutoField(primary_key=True, serialize=False)),
+                ('uuid', models.UUIDField(default=uuid.uuid4, editable=False, unique=True)),
                 ('nome', models.CharField(max_length=100)),
                 ('modelo', models.CharField(max_length=20)),
                 ('usa_foto_aluno', models.BooleanField(default=False)),
@@ -681,7 +710,8 @@ class Migration(migrations.Migration):
         migrations.CreateModel(
             name='Relatorio',
             fields=[
-                ('id', models.UUIDField(default=uuid.uuid4, editable=False, primary_key=True, serialize=False)),
+                ('id', models.BigAutoField(primary_key=True, serialize=False)),
+                ('uuid', models.UUIDField(default=uuid.uuid4, editable=False, unique=True)),
                 ('conteudo', models.TextField(blank=True, null=True)),
                 ('pdf_url', models.URLField(blank=True, max_length=500, null=True)),
                 ('pdf_storage_key', models.CharField(blank=True, max_length=500, null=True)),
@@ -704,7 +734,8 @@ class Migration(migrations.Migration):
         migrations.CreateModel(
             name='SessaoEspecialista',
             fields=[
-                ('id', models.UUIDField(default=uuid.uuid4, editable=False, primary_key=True, serialize=False)),
+                ('id', models.BigAutoField(primary_key=True, serialize=False)),
+                ('uuid', models.UUIDField(default=uuid.uuid4, editable=False, unique=True)),
                 ('data_atendimento', models.DateField(blank=True, null=True)),
                 ('duracao', models.IntegerField(blank=True, help_text='Duração em minutos', null=True)),
                 ('resumo', models.TextField(blank=True, default='')),
@@ -726,7 +757,8 @@ class Migration(migrations.Migration):
         migrations.CreateModel(
             name='SessaoPAEEMeta',
             fields=[
-                ('id', models.UUIDField(default=uuid.uuid4, editable=False, primary_key=True, serialize=False)),
+                ('id', models.BigAutoField(primary_key=True, serialize=False)),
+                ('uuid', models.UUIDField(default=uuid.uuid4, editable=False, unique=True)),
                 ('criado_em', models.DateTimeField(auto_now_add=True)),
                 ('meta_paee', models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, related_name='sessao_metas', to='api.metapaee')),
                 ('sessao_especialista', models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, related_name='sessao_metas', to='api.sessaoespecialista')),
@@ -741,7 +773,8 @@ class Migration(migrations.Migration):
         migrations.CreateModel(
             name='TarefaPAEE',
             fields=[
-                ('id', models.UUIDField(default=uuid.uuid4, editable=False, primary_key=True, serialize=False)),
+                ('id', models.BigAutoField(primary_key=True, serialize=False)),
+                ('uuid', models.UUIDField(default=uuid.uuid4, editable=False, unique=True)),
                 ('descricao', models.TextField(blank=True, null=True)),
                 ('concluida', models.BooleanField(default=False)),
                 ('observacao_professor', models.TextField(blank=True, default='')),
@@ -763,7 +796,8 @@ class Migration(migrations.Migration):
         migrations.CreateModel(
             name='TemplateDocumento',
             fields=[
-                ('id', models.UUIDField(default=uuid.uuid4, editable=False, primary_key=True, serialize=False)),
+                ('id', models.BigAutoField(primary_key=True, serialize=False)),
+                ('uuid', models.UUIDField(default=uuid.uuid4, editable=False, unique=True)),
                 ('titulo', models.CharField(max_length=200)),
                 ('documento', models.TextField()),
                 ('tipo', models.CharField(choices=[('contrato', 'Contrato'), ('termo', 'Termo'), ('outro', 'Outro')], default='contrato', max_length=30)),
@@ -786,7 +820,8 @@ class Migration(migrations.Migration):
         migrations.CreateModel(
             name='Contrato',
             fields=[
-                ('id', models.UUIDField(default=uuid.uuid4, editable=False, primary_key=True, serialize=False)),
+                ('id', models.BigAutoField(primary_key=True, serialize=False)),
+                ('uuid', models.UUIDField(default=uuid.uuid4, editable=False, unique=True)),
                 ('documento', models.TextField()),
                 ('status', models.CharField(choices=[('rascunho', 'Rascunho'), ('gerado', 'Gerado'), ('enviado_assinatura', 'Enviado para Assinatura'), ('assinado', 'Assinado'), ('cancelado', 'Cancelado')], default='rascunho', max_length=20)),
                 ('arquivo_url', models.URLField(blank=True, max_length=500, null=True)),
@@ -809,7 +844,8 @@ class Migration(migrations.Migration):
         migrations.CreateModel(
             name='Ticket',
             fields=[
-                ('id', models.UUIDField(default=uuid.uuid4, editable=False, primary_key=True, serialize=False)),
+                ('id', models.BigAutoField(primary_key=True, serialize=False)),
+                ('uuid', models.UUIDField(default=uuid.uuid4, editable=False, unique=True)),
                 ('protocolo', models.CharField(max_length=20, unique=True)),
                 ('titulo', models.CharField(max_length=200)),
                 ('descricao', models.TextField()),
@@ -834,7 +870,8 @@ class Migration(migrations.Migration):
         migrations.CreateModel(
             name='RespostaTicket',
             fields=[
-                ('id', models.UUIDField(default=uuid.uuid4, editable=False, primary_key=True, serialize=False)),
+                ('id', models.BigAutoField(primary_key=True, serialize=False)),
+                ('uuid', models.UUIDField(default=uuid.uuid4, editable=False, unique=True)),
                 ('descricao', models.TextField()),
                 ('criado_em', models.DateTimeField(auto_now_add=True)),
                 ('atualizado_em', models.DateTimeField(auto_now=True)),
@@ -854,7 +891,8 @@ class Migration(migrations.Migration):
         migrations.CreateModel(
             name='AnexoTicket',
             fields=[
-                ('id', models.UUIDField(default=uuid.uuid4, editable=False, primary_key=True, serialize=False)),
+                ('id', models.BigAutoField(primary_key=True, serialize=False)),
+                ('uuid', models.UUIDField(default=uuid.uuid4, editable=False, unique=True)),
                 ('arquivo_url', models.URLField(max_length=500)),
                 ('arquivo_nome', models.CharField(blank=True, max_length=255, null=True)),
                 ('mime_type', models.CharField(blank=True, max_length=100, null=True)),
@@ -873,7 +911,8 @@ class Migration(migrations.Migration):
         migrations.CreateModel(
             name='Turma',
             fields=[
-                ('id', models.UUIDField(default=uuid.uuid4, editable=False, primary_key=True, serialize=False)),
+                ('id', models.BigAutoField(primary_key=True, serialize=False)),
+                ('uuid', models.UUIDField(default=uuid.uuid4, editable=False, unique=True)),
                 ('nome', models.CharField(max_length=100)),
                 ('faixa_etaria', models.CharField(blank=True, default='', max_length=50)),
                 ('turno', models.CharField(choices=[('manha', 'Manhã'), ('tarde', 'Tarde'), ('integral', 'Integral')], default='manha', max_length=20)),
@@ -904,7 +943,8 @@ class Migration(migrations.Migration):
         migrations.CreateModel(
             name='RegistroLeitura',
             fields=[
-                ('id', models.UUIDField(default=uuid.uuid4, editable=False, primary_key=True, serialize=False)),
+                ('id', models.BigAutoField(primary_key=True, serialize=False)),
+                ('uuid', models.UUIDField(default=uuid.uuid4, editable=False, unique=True)),
                 ('nara_job_id', models.CharField(blank=True, default='', max_length=64)),
                 ('status', models.CharField(choices=[('pendente', 'Análise em andamento no NaraNN'), ('analisado', 'Análise pronta — aguardando confirmação da professora'), ('confirmado', 'Confirmado pela professora'), ('falhou', 'Falhou'), ('cancelado', 'Cancelado')], default='pendente', max_length=20)),
                 ('arquivo_path', models.CharField(blank=True, default='', max_length=500)),
@@ -938,7 +978,8 @@ class Migration(migrations.Migration):
         migrations.CreateModel(
             name='RegistroEscrita',
             fields=[
-                ('id', models.UUIDField(default=uuid.uuid4, editable=False, primary_key=True, serialize=False)),
+                ('id', models.BigAutoField(primary_key=True, serialize=False)),
+                ('uuid', models.UUIDField(default=uuid.uuid4, editable=False, unique=True)),
                 ('etapa', models.CharField(blank=True, choices=[('educacao_infantil', 'Educação Infantil'), ('ensino_fundamental', 'Ensino Fundamental')], max_length=30, null=True)),
                 ('arquivo_nome', models.CharField(max_length=255)),
                 ('arquivo_hash', models.CharField(max_length=50, unique=True)),
@@ -968,7 +1009,8 @@ class Migration(migrations.Migration):
         migrations.CreateModel(
             name='RegistroDesenho',
             fields=[
-                ('id', models.UUIDField(default=uuid.uuid4, editable=False, primary_key=True, serialize=False)),
+                ('id', models.BigAutoField(primary_key=True, serialize=False)),
+                ('uuid', models.UUIDField(default=uuid.uuid4, editable=False, unique=True)),
                 ('etapa', models.CharField(blank=True, choices=[('educacao_infantil', 'Educação Infantil'), ('ensino_fundamental', 'Ensino Fundamental')], max_length=30, null=True)),
                 ('atividade', models.CharField(default='Desenho Livre', max_length=200)),
                 ('contexto', models.TextField(blank=True, null=True)),
@@ -1016,7 +1058,8 @@ class Migration(migrations.Migration):
         migrations.CreateModel(
             name='ObservacaoTranscricao',
             fields=[
-                ('id', models.UUIDField(default=uuid.uuid4, editable=False, primary_key=True, serialize=False)),
+                ('id', models.BigAutoField(primary_key=True, serialize=False)),
+                ('uuid', models.UUIDField(default=uuid.uuid4, editable=False, unique=True)),
                 ('aluno_nome', models.CharField(blank=True, max_length=200, null=True)),
                 ('observacao_texto', models.TextField(blank=True, null=True)),
                 ('tipo_observacao', models.CharField(default='TRANSCRICAO_IA', max_length=30)),
@@ -1046,7 +1089,8 @@ class Migration(migrations.Migration):
         migrations.CreateModel(
             name='DispositivoGravadorTurma',
             fields=[
-                ('id', models.UUIDField(default=uuid.uuid4, editable=False, primary_key=True, serialize=False)),
+                ('id', models.BigAutoField(primary_key=True, serialize=False)),
+                ('uuid', models.UUIDField(default=uuid.uuid4, editable=False, unique=True)),
                 ('criado_em', models.DateTimeField(auto_now_add=True)),
                 ('atualizado_em', models.DateTimeField(auto_now=True)),
                 ('dispositivo', models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, related_name='turmas_vinculadas', to='api.dispositivogravador')),
@@ -1067,7 +1111,8 @@ class Migration(migrations.Migration):
         migrations.CreateModel(
             name='CodigoPareamentoTurma',
             fields=[
-                ('id', models.UUIDField(default=uuid.uuid4, editable=False, primary_key=True, serialize=False)),
+                ('id', models.BigAutoField(primary_key=True, serialize=False)),
+                ('uuid', models.UUIDField(default=uuid.uuid4, editable=False, unique=True)),
                 ('criado_em', models.DateTimeField(auto_now_add=True)),
                 ('atualizado_em', models.DateTimeField(auto_now=True)),
                 ('codigo_pareamento', models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, related_name='turmas_vinculadas', to='api.codigopareamento')),
@@ -1083,7 +1128,8 @@ class Migration(migrations.Migration):
         migrations.CreateModel(
             name='AudioDispositivo',
             fields=[
-                ('id', models.UUIDField(default=uuid.uuid4, editable=False, primary_key=True, serialize=False)),
+                ('id', models.BigAutoField(primary_key=True, serialize=False)),
+                ('uuid', models.UUIDField(default=uuid.uuid4, editable=False, unique=True)),
                 ('upload_id', models.UUIDField()),
                 ('sha256', models.CharField(blank=True, max_length=64, null=True)),
                 ('tamanho_arquivo', models.IntegerField(blank=True, null=True)),
@@ -1124,7 +1170,8 @@ class Migration(migrations.Migration):
         migrations.CreateModel(
             name='UsuarioDisciplina',
             fields=[
-                ('id', models.UUIDField(default=uuid.uuid4, editable=False, primary_key=True, serialize=False)),
+                ('id', models.BigAutoField(primary_key=True, serialize=False)),
+                ('uuid', models.UUIDField(default=uuid.uuid4, editable=False, unique=True)),
                 ('criado_em', models.DateTimeField(auto_now_add=True)),
                 ('atualizado_em', models.DateTimeField(auto_now=True)),
                 ('disciplina', models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, related_name='usuario_disciplinas', to='api.disciplina')),
@@ -1147,7 +1194,8 @@ class Migration(migrations.Migration):
         migrations.CreateModel(
             name='UsuarioTurma',
             fields=[
-                ('id', models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name='ID')),
+                ('id', models.BigAutoField(primary_key=True, serialize=False)),
+                ('uuid', models.UUIDField(default=uuid.uuid4, editable=False, unique=True)),
                 ('data_vinculo', models.DateTimeField(default=django.utils.timezone.now)),
                 ('criado_em', models.DateTimeField(auto_now_add=True)),
                 ('atualizado_em', models.DateTimeField(auto_now=True)),
@@ -1268,10 +1316,6 @@ class Migration(migrations.Migration):
         migrations.AddConstraint(
             model_name='relatoriotemplate',
             constraint=models.UniqueConstraint(fields=('escola', 'modelo'), name='unique_relatorio_template_por_escola'),
-        ),
-        migrations.AddConstraint(
-            model_name='relatoriotemplate',
-            constraint=models.UniqueConstraint(condition=models.Q(('ativo', True)), fields=('escola',), name='unique_relatorio_template_ativo_por_escola'),
         ),
         migrations.AddConstraint(
             model_name='relatorio',

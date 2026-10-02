@@ -4,11 +4,11 @@ import { apiGet, apiPost, apiDelete, MODELOS, useEscolaTemplate, useRotasTemplat
 
 export default function TemplatesListPage() {
   const navigate = useNavigate();
-  const { escolaId, escolas, trocarEscola, comEscola, pronto } = useEscolaTemplate();
+  const { escolaUuid, escolas, trocarEscola, comEscola, pronto } = useEscolaTemplate();
   const rotas = useRotasTemplate();
   const [templates, setTemplates] = useState(null); // null = carregando
   const [erro, setErro] = useState(null);
-  const [acaoPendente, setAcaoPendente] = useState(null); // id do template com ação em andamento
+  const [acaoPendente, setAcaoPendente] = useState(null); // uuid do template com ação em andamento
 
   async function carregar() {
     try {
@@ -26,12 +26,13 @@ export default function TemplatesListPage() {
     setErro(null);
     carregar();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pronto, escolaId]);
+  }, [pronto, escolaUuid]);
 
-  async function ativar(id) {
-    setAcaoPendente(id);
+  // Recebem o UUID do template: ele vai na URL da API.
+  async function ativar(uuid) {
+    setAcaoPendente(uuid);
     try {
-      await apiPost(`/api/templates-relatorio/${id}/ativar/`, {});
+      await apiPost(`/api/templates-relatorio/${uuid}/ativar/`, {});
       await carregar();
     } catch (e) {
       setErro(e.message);
@@ -40,11 +41,11 @@ export default function TemplatesListPage() {
     }
   }
 
-  async function excluir(id) {
+  async function excluir(uuid) {
     if (!window.confirm('Excluir este template? Essa ação não pode ser desfeita.')) return;
-    setAcaoPendente(id);
+    setAcaoPendente(uuid);
     try {
-      await apiDelete(`/api/templates-relatorio/${id}/deletar/`);
+      await apiDelete(`/api/templates-relatorio/${uuid}/deletar/`);
       await carregar();
     } catch (e) {
       setErro(e.message);
@@ -77,11 +78,11 @@ export default function TemplatesListPage() {
           <label htmlFor="escola-templates" className="block text-sm font-medium text-gray-700 mb-1">Escola</label>
           <select
             id="escola-templates"
-            value={escolaId || ''}
+            value={escolaUuid || ''}
             onChange={(e) => trocarEscola(e.target.value)}
             className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm"
           >
-            {escolas.map((e) => <option key={e.id} value={e.id}>{e.nome}</option>)}
+            {escolas.map((e) => <option key={e.uuid} value={e.uuid}>{e.nome}</option>)}
           </select>
         </div>
       )}
@@ -123,7 +124,7 @@ export default function TemplatesListPage() {
               </div>
 
               <button
-                onClick={() => navigate(comEscola(rotas.editar(t.id)))}
+                onClick={() => navigate(comEscola(rotas.editar(t.uuid)))}
                 className="flex-none text-sm text-violet-700 hover:underline"
               >
                 Editar
@@ -131,8 +132,8 @@ export default function TemplatesListPage() {
 
               {!t.ativo && (
                 <button
-                  onClick={() => ativar(t.id)}
-                  disabled={acaoPendente === t.id}
+                  onClick={() => ativar(t.uuid)}
+                  disabled={acaoPendente === t.uuid}
                   className="flex-none text-sm text-gray-600 hover:text-violet-700 disabled:opacity-40"
                 >
                   Ativar
@@ -141,8 +142,8 @@ export default function TemplatesListPage() {
 
               {!t.ativo && (
                 <button
-                  onClick={() => excluir(t.id)}
-                  disabled={acaoPendente === t.id}
+                  onClick={() => excluir(t.uuid)}
+                  disabled={acaoPendente === t.uuid}
                   className="flex-none text-sm text-red-500 hover:text-red-700 disabled:opacity-40"
                 >
                   Excluir

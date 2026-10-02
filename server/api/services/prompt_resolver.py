@@ -31,8 +31,8 @@ def resolver_prompt(titulo_categoria: str, escola_id=None, fallback_arquivo: str
     contexto do prompt (a do aluno, da turma ou do áudio) — não a do usuário,
     que pode nem ter escola (admin, superadmin, suporte).
 
-    "Mais recente" é determinado por `-criado_em` (os ids são UUID, sem
-    relação com ordem de criação). Garante comportamento previsível mesmo se
+    "Mais recente" é determinado por `-criado_em` (não pelo id: registros
+    podem ser importados/recriados fora de ordem). Garante comportamento previsível mesmo se
     existir mais de um registro para a mesma categoria/escola.
 
     Usa `_base_manager` (sem tenant) de propósito: esta função roda DENTRO de
@@ -42,25 +42,13 @@ def resolver_prompt(titulo_categoria: str, escola_id=None, fallback_arquivo: str
 
     Args:
         titulo_categoria: Título exato da PromptCategoria no banco.
-        escola_id:        Escola do contexto (UUID ou str) ou None.
+        escola_id:        id (int) da escola do contexto ou None.
         fallback_arquivo: Nome do arquivo .txt usado antes do banco existir.
     """
     try:
         from api.models import PromptCategoria, PromptTemplate
 
-        # iexact: mesmo critério da migration 0003. Renomear só a caixa no
-        # admin ("relatórios - conclusão") não pode desligar o banco em
-        # silêncio e jogar tudo para o .txt.
-        categoria = (
-            PromptCategoria.objects.filter(titulo__iexact=titulo_categoria.strip(), ativo=True)
-            .order_by('criado_em')
-            .first()
-        )
-        if categoria is None:
-            logger.warning(
-                "[prompt_resolver] Categoria '%s' não existe ou está inativa no banco; usando fallback.",
-                titulo_categoria,
-            )
+        categoria = PromptCategoria.objects.filter(titulo=titulo_categoria, ativo=True).first()
         if categoria:
             # 1. Personalizado mais recente da escola
             if escola_id:

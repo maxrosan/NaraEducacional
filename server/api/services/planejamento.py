@@ -10,6 +10,7 @@ catálogo por id ou código.
 from __future__ import annotations
 
 import logging
+import uuid as uuid_lib
 from typing import Optional
 
 from api.models import HabilidadeBNCC, PlanejamentoSemanal, Turma
@@ -78,7 +79,7 @@ def listar_planejamentos_filtrados(
 
 def resolver_habilidade_bncc(referencia) -> Optional[HabilidadeBNCC]:
     """
-    Aceita id (UUID) ou código BNCC (ex.: ``EI03EO01``, ``EF01LP01``).
+    Aceita id (int), uuid ou código BNCC (ex.: ``EI03EO01``, ``EF01LP01``).
     Busca direto no catálogo — não materializa nada, já que HabilidadeBNCC
     é a fonte de verdade no schema novo (Pergunta a referencia via FK, o
     que já garante que qualquer código em uso existe no catálogo).
@@ -89,10 +90,15 @@ def resolver_habilidade_bncc(referencia) -> Optional[HabilidadeBNCC]:
     if not ref:
         return None
 
-    try:
-        return (
-            HabilidadeBNCC.objects.filter(id=ref).first()
-            or HabilidadeBNCC.objects.filter(codigo=ref).first()
-        )
-    except (ValueError, TypeError):
-        return HabilidadeBNCC.objects.filter(codigo=ref).first()
+    if ref.isdigit():
+        encontrada = HabilidadeBNCC.objects.filter(id=int(ref)).first()
+        if encontrada:
+            return encontrada
+    else:
+        try:
+            encontrada = HabilidadeBNCC.objects.filter(uuid=uuid_lib.UUID(ref)).first()
+            if encontrada:
+                return encontrada
+        except ValueError:
+            pass  # não é uuid: segue para o código BNCC
+    return HabilidadeBNCC.objects.filter(codigo=ref).first()

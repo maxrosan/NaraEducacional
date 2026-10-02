@@ -113,15 +113,17 @@ export default function TemplateEditorPage() {
   const navigate = useNavigate();
   const { templateId: templateIdDaRota } = useParams();
   const [searchParams] = useSearchParams();
-  // Coordenação: /coordenacao/templates/<id>. Painel admin: /admin/capa?template=<id>.
+  // Coordenação: /coordenacao/templates/<uuid>. Painel admin: /admin/capa?template=<uuid>.
+  // É o UUID do template (vai nas URLs da API), não o id.
   const templateId = templateIdDaRota || searchParams.get('template');
   const rotas = useRotasTemplate();
   const modeloDaUrl = searchParams.get('modelo');
   const modoEdicao = Boolean(templateId);
-  const { escolaId: escolaDaUrl, comEscola, pronto } = useEscolaTemplate();
+  const { escolaUuid: escolaUuidDaUrl, escolaId: escolaIdDaUrl, comEscola, pronto } = useEscolaTemplate();
   // Editando: a escola é a do template (não muda). Criando: a da URL.
+  // escolaAlvo é o UUID (links e prévia); no body de criação vai escolaIdDaUrl.
   const [escolaDoTemplate, setEscolaDoTemplate] = useState(null);
-  const escolaAlvo = modoEdicao ? escolaDoTemplate : escolaDaUrl;
+  const escolaAlvo = modoEdicao ? escolaDoTemplate : escolaUuidDaUrl;
   const rotaModelos = comEscola(rotas.modelos, escolaAlvo);
 
   const [carregando, setCarregando] = useState(modoEdicao);
@@ -180,7 +182,7 @@ export default function TemplateEditorPage() {
       try {
         const t = await buscarRelatorioTemplate(templateId);
         setModeloId(t.modelo);
-        setEscolaDoTemplate(t.escola ? String(t.escola) : null);
+        setEscolaDoTemplate(t.escola_uuid ? String(t.escola_uuid) : null);
         setItemsSumario(Array.isArray(t.items_sumario) && t.items_sumario.length ? t.items_sumario : SECOES_PADRAO);
         setTemplateAtivoId(t.ativo ? t.id : null);
         // O campo do model é usa_foto_aluno (usa_foto_crianca era do legado).
@@ -329,9 +331,16 @@ export default function TemplateEditorPage() {
         // forçava visivel: true e desfazia essa configuração a cada salvar).
         items_sumario: itemsSumario.map((i) => ({ ...i, visivel: i.visivel !== false })),
       };
-      // Na criação, diz de qual escola é o template (admin/superadmin
-      // precisam; para o coordenador o backend usa sempre a escola dele).
-      if (!modoEdicao && escolaAlvo) payload.escola = escolaAlvo;
+      if (!modoEdicao) {
+        // Criar = "Selecionar" um modelo que a escola ainda não tinha: o novo
+        // template passa a valer (o backend desativa os outros da escola).
+        // Antes nascia inativo e a capa escolhida não era usada. Na edição,
+        // `ativo` não é enviado: editar não troca a capa em uso.
+        payload.ativo = true;
+        // Escola do template (admin/superadmin precisam; para o coordenador
+        // o backend usa sempre a escola dele).
+        if (escolaIdDaUrl) payload.escola = escolaIdDaUrl;
+      }
       if (modoEdicao) {
         await atualizarRelatorioTemplate(templateId, payload);
       } else {

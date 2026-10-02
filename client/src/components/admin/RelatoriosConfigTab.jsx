@@ -116,7 +116,9 @@ const RelatoriosConfigTab = () => {
   const navigate = useNavigate();
 
   const [escolas, setEscolas] = useState([]);
-  const [escolaId, setEscolaId] = useState('');
+  // UUID da escola selecionada: vai na URL (link da capa) e no GET de templates.
+  // No body de criação vai o id (escolaAtual.id).
+  const [escolaUuid, setEscolaUuid] = useState('');
   const [templates, setTemplates] = useState([]);
   const [itens, setItens] = useState(SECOES_PADRAO);
   const [salvos, setSalvos] = useState(SECOES_PADRAO);
@@ -137,7 +139,7 @@ const RelatoriosConfigTab = () => {
         setEscolas(ativas);
         const propria = String(user?.escola_id ?? user?.escola ?? '');
         const inicial = ativas.find((e) => String(e.id) === propria) || ativas[0];
-        if (inicial) setEscolaId(String(inicial.id));
+        if (inicial) setEscolaUuid(String(inicial.uuid));
         else setCarregando(false);
       })
       .catch((err) => {
@@ -146,11 +148,11 @@ const RelatoriosConfigTab = () => {
       });
   }, [toast, user]);
 
-  const carregarTemplates = useCallback(async (id) => {
+  const carregarTemplates = useCallback(async (uuid) => {
     const carga = ++ultimaCarga.current;
     setCarregando(true);
     try {
-      const lista = await listarRelatorioTemplates({ escola: id });
+      const lista = await listarRelatorioTemplates({ escola: uuid });
       if (carga !== ultimaCarga.current) return; // troca rápida de escola
       setTemplates(lista || []);
       const ativo = (lista || []).find((t) => t.ativo);
@@ -166,19 +168,19 @@ const RelatoriosConfigTab = () => {
     }
   }, [toast]);
 
-  useEffect(() => { if (escolaId) carregarTemplates(escolaId); }, [escolaId, carregarTemplates]);
+  useEffect(() => { if (escolaUuid) carregarTemplates(escolaUuid); }, [escolaUuid, carregarTemplates]);
 
   const templateAtivo = templates.find((t) => t.ativo) || null;
   // Lista vem com o ativo primeiro e depois o mais recente.
   const templateParaAtivar = templateAtivo ? null : templates[0] || null;
-  const escolaAtual = escolas.find((e) => String(e.id) === escolaId);
+  const escolaAtual = escolas.find((e) => String(e.uuid) === escolaUuid);
   const alterado = useMemo(() => JSON.stringify(itens) !== JSON.stringify(salvos), [itens, salvos]);
   const ehPadrao = useMemo(() => JSON.stringify(itens) === JSON.stringify(SECOES_PADRAO), [itens]);
   const nenhumaVisivel = itens.every((i) => !i.visivel);
 
-  function trocarEscola(id) {
+  function trocarEscola(uuid) {
     if (alterado && !window.confirm('Há alterações não salvas nesta escola. Descartar?')) return;
-    setEscolaId(id);
+    setEscolaUuid(uuid);
   }
 
   function aoSoltar({ active, over }) {
@@ -198,12 +200,12 @@ const RelatoriosConfigTab = () => {
     setSalvando(true);
     try {
       if (templateAtivo) {
-        await atualizarRelatorioTemplate(templateAtivo.id, { items_sumario });
+        await atualizarRelatorioTemplate(templateAtivo.uuid, { items_sumario });
       } else if (templateParaAtivar) {
-        await atualizarRelatorioTemplate(templateParaAtivar.id, { items_sumario, ativo: true });
+        await atualizarRelatorioTemplate(templateParaAtivar.uuid, { items_sumario, ativo: true });
       } else {
         await criarRelatorioTemplate({
-          escola: escolaId,
+          escola: escolaAtual?.id,
           nome: `Clássico — ${escolaAtual?.nome || 'Escola'}`,
           modelo: 'classico',
           ativo: true,
@@ -211,7 +213,7 @@ const RelatoriosConfigTab = () => {
         });
       }
       toast({ title: 'Configuração salva!', description: `Vale para os próximos relatórios de ${escolaAtual?.nome || 'a escola'}.` });
-      await carregarTemplates(escolaId);
+      await carregarTemplates(escolaUuid);
     } catch (err) {
       toast({ variant: 'destructive', title: 'Erro ao salvar', description: err.message });
     } finally {
@@ -220,7 +222,7 @@ const RelatoriosConfigTab = () => {
   }
 
   let aviso = null;
-  if (!carregando && escolaId && !templateAtivo) {
+  if (!carregando && escolaUuid && !templateAtivo) {
     aviso = templateParaAtivar
       ? `Esta escola não tem template ativo. Ao salvar, o template "${templateParaAtivar.nome}" será ativado.`
       : 'Esta escola ainda não tem template de relatório. Ao salvar, será criado um template com a capa Clássica.';
@@ -239,20 +241,20 @@ const RelatoriosConfigTab = () => {
         {escolas.length > 1 && (
           <div className="max-w-sm">
             <Label htmlFor="escola-relatorio">Escola</Label>
-            <Select value={escolaId} onValueChange={trocarEscola}>
+            <Select value={escolaUuid} onValueChange={trocarEscola}>
               <SelectTrigger id="escola-relatorio"><SelectValue placeholder="Selecione a escola" /></SelectTrigger>
               <SelectContent>
-                {escolas.map((e) => <SelectItem key={e.id} value={String(e.id)}>{e.nome}</SelectItem>)}
+                {escolas.map((e) => <SelectItem key={e.uuid} value={String(e.uuid)}>{e.nome}</SelectItem>)}
               </SelectContent>
             </Select>
           </div>
         )}
 
-        {!escolaId && !carregando && (
+        {!escolaUuid && !carregando && (
           <p className="py-8 text-center text-sm text-gray-500">Nenhuma escola ativa disponível para configurar.</p>
         )}
 
-        {escolaId && (carregando ? (
+        {escolaUuid && (carregando ? (
           <p className="py-8 text-center text-sm text-gray-500">Carregando configuração...</p>
         ) : (
           <>
@@ -267,7 +269,7 @@ const RelatoriosConfigTab = () => {
                 size="sm"
                 onClick={() => {
                   if (alterado && !window.confirm('Há alterações não salvas. Sair mesmo assim?')) return;
-                  navigate(`/admin/capa?escola=${escolaId}`);
+                  navigate(`/admin/capa?escola=${escolaUuid}`);
                 }}
               >
                 <Palette className="mr-2 h-4 w-4" /> Editar capa desta escola

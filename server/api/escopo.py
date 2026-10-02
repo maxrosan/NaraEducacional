@@ -30,7 +30,7 @@ def _erro(mensagem, codigo=status.HTTP_400_BAD_REQUEST):
 
 def _buscar_escola(escola_id):
     """Escola por id, sem filtro de tenant (a checagem de dono é feita por quem chama).
-    UUID malformado vira None em vez de 500."""
+    Id malformado (ex.: texto em vez de inteiro) vira None em vez de 500."""
     try:
         return Escola.objects.filter(id=escola_id).first()
     except (DjangoValidationError, ValueError):
@@ -124,7 +124,7 @@ def filtro_oficiais_e_da_escola(escola_id) -> Q:
 
 def buscar_visivel(model, pk, user):
     """Registro "oficial OU customizado" que o usuário pode ver (ver
-    `filtro_visiveis`), ou None — inexistente, de outro escopo ou UUID
+    `filtro_visiveis`), ou None — inexistente, de outro escopo ou id
     malformado. Fora do escopo vira 404, sem revelar que o id existe."""
     try:
         return model._base_manager.filter(filtro_visiveis(user), pk=pk).first()
@@ -134,7 +134,7 @@ def buscar_visivel(model, pk, user):
 
 def buscar_oficial_ou_da_escola(model, pk, escola_id):
     """Registro "oficial OU customizado" utilizável pela escola informada, ou
-    None (inexistente, de outra escola/rede ou UUID malformado)."""
+    None (inexistente, de outra escola/rede ou id malformado)."""
     try:
         return model._base_manager.filter(filtro_oficiais_e_da_escola(escola_id), pk=pk).first()
     except (DjangoValidationError, ValueError, TypeError):
@@ -275,20 +275,33 @@ def pode_gerenciar(user) -> bool:
 
 def buscar_no_escopo(model, pk):
     """Objeto pelo id via `model.objects` (TenantManager): fora do escopo do
-    usuário → None, igual a inexistente. UUID malformado → None em vez de 500."""
+    usuário → None, igual a inexistente. Id malformado → None em vez de 500."""
     try:
         return model.objects.filter(pk=pk).first()
     except (DjangoValidationError, ValueError, TypeError):
         return None
 
 
+def buscar_no_escopo_por_uuid(model, valor):
+    """Como `buscar_no_escopo`, mas pelo `uuid` — para valores vindos da URL
+    (rota ou query string), que pela regra do sistema são sempre o uuid
+    público, nunca o id. UUID inexistente, fora do escopo ou malformado → None."""
+    try:
+        return model.objects.filter(uuid=valor).first()
+    except (DjangoValidationError, ValueError, TypeError):
+        return None
+
+
 def filtrar_por(qs, request, parametro, model, campo):
-    """Aplica `?<parametro>=<uuid>` como filtro por FK. Id inexistente, fora do
-    escopo ou malformado → queryset vazio (em vez de 500)."""
+    """Aplica `?<parametro>=<uuid>` como filtro por FK.
+
+    Query string é URL, então recebe o uuid (nunca o id). O filtro em si é
+    feito pelo id do objeto encontrado. UUID inexistente, fora do escopo ou
+    malformado → queryset vazio (em vez de 500)."""
     valor = request.query_params.get(parametro)
     if not valor:
         return qs
-    obj = buscar_no_escopo(model, valor)
+    obj = buscar_no_escopo_por_uuid(model, valor)
     return qs.filter(**{campo: obj}) if obj else qs.none()
 
 
@@ -345,7 +358,9 @@ def resolver_escola_painel(request):
     """Escola alvo dos painéis da coordenação. Retorna `(escola_id, erro)`.
 
     * coordenador: sempre a própria escola (query string ignorada);
-    * admin/superadmin: `?escola_id=` obrigatório (podem gerenciar várias);
+    * admin/superadmin: `?escola_id=<uuid>` obrigatório (podem gerenciar várias).
+      O parâmetro mantém o nome por compatibilidade, mas recebe o UUID da
+      escola (é URL); o retorno é o id (int).
     * demais perfis: 403.
     """
     user = request.user
@@ -361,7 +376,11 @@ def resolver_escola_painel(request):
     if not escola_id:
         return None, _erro('Parâmetro escola_id é obrigatório para este nível.')
 
-    escola = _buscar_escola(escola_id)  # UUID malformado → None, não 500
+    try:
+        # _base_manager: a checagem de dono é feita logo abaixo (pode_ver_escola).
+        escola = Escola._base_manager.filter(uuid=escola_id).first()
+    except (DjangoValidationError, ValueError):
+        escola = None  # uuid malformado → 404, não 500
     if escola is None:
         return None, _erro('Escola não encontrada.', status.HTTP_404_NOT_FOUND)
     if not pode_ver_escola(user, escola):

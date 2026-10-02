@@ -1,7 +1,7 @@
 from django.db import models
 from django.utils import timezone
 from django.contrib.auth.models import AbstractBaseUser, BaseUserManager, PermissionsMixin
-import uuid
+import uuid as uuid_lib
 
 from ..managers import TenantManager
 
@@ -24,8 +24,24 @@ class UsuarioManager(TenantManager, BaseUserManager):
         return self.create_user(email, password, **extra_fields)
 
 
-class Instituicao(models.Model):
-    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+class ModeloBase(models.Model):
+    """Base de TODOS os models do sistema.
+
+    * ``id``   — inteiro (bigint auto-incremento). É a chave primária e o que
+                 TODAS as chaves estrangeiras referenciam (``escola_id``,
+                 ``instituicao_id``...). Nunca expor em URL.
+    * ``uuid`` — identificador público, separado do id. É o que aparece nas
+                 URLs da API (ver ``api/converters.py``), para não expor ids
+                 sequenciais.
+    """
+    id = models.BigAutoField(primary_key=True)
+    uuid = models.UUIDField(default=uuid_lib.uuid4, unique=True, editable=False)
+
+    class Meta:
+        abstract = True
+
+
+class Instituicao(ModeloBase):
     nome = models.CharField(max_length=200, verbose_name="Nome da Instituição")
     cnpj = models.CharField(max_length=18, unique=True, null=True, blank=True)
     email_institucional = models.EmailField(max_length=254, null=True, blank=True)
@@ -49,13 +65,12 @@ class Instituicao(models.Model):
         return self.nome
 
 
-class Escola(models.Model):
+class Escola(ModeloBase):
     TIPOS_UNIDADE = [
         ('matriz', 'Matriz'),
         ('filial', 'Filial'),
     ]
 
-    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     instituicao = models.ForeignKey(
         'Instituicao', on_delete=models.CASCADE, related_name='escolas',
     )
@@ -92,7 +107,7 @@ class Escola(models.Model):
         return f"{self.nome} ({self.instituicao.nome})"
 
 
-class Especialista(models.Model):
+class Especialista(ModeloBase):
     TIPOS_ESPECIALISTA = [
         ('psicopedagogo', 'Psicopedagogo'),
         ('psicologo', 'Psicólogo'),
@@ -101,7 +116,6 @@ class Especialista(models.Model):
         ('outro', 'Outro'),
     ]
 
-    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     tipo_especialista = models.CharField(max_length=30, choices=TIPOS_ESPECIALISTA)
     escola = models.ForeignKey(
         'Escola', on_delete=models.SET_NULL, related_name='especialistas',
@@ -129,7 +143,7 @@ class Especialista(models.Model):
         return self.get_tipo_especialista_display()
 
 
-class Usuario(AbstractBaseUser, PermissionsMixin):
+class Usuario(ModeloBase, AbstractBaseUser, PermissionsMixin):
     NIVEIS = [
         ('superadmin', 'Super Administrador'),
         ('admin', 'Administrador'),
@@ -147,7 +161,6 @@ class Usuario(AbstractBaseUser, PermissionsMixin):
         'professor_especialista',
     ]
 
-    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     email = models.EmailField(unique=True, verbose_name="Email")
     nome = models.CharField(max_length=200, verbose_name="Nome Completo")
     numero = models.CharField(max_length=10, null=True, blank=True)
@@ -196,7 +209,7 @@ class Usuario(AbstractBaseUser, PermissionsMixin):
         return f"{self.nome} ({self.get_nivel_display()})"
 
 
-class Turma(models.Model):
+class Turma(ModeloBase):
     TURNOS = [
         ('manha', 'Manhã'),
         ('tarde', 'Tarde'),
@@ -214,7 +227,6 @@ class Turma(models.Model):
         ('mensal', 'Mensal'),
     ]
 
-    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     nome = models.CharField(max_length=100)
     faixa_etaria = models.CharField(max_length=50, blank=True, default='')
     turno = models.CharField(max_length=20, choices=TURNOS, default='manha')
@@ -247,7 +259,7 @@ class Turma(models.Model):
         return f"{self.nome} - {self.faixa_etaria} ({self.ano_letivo})"
 
 
-class UsuarioTurma(models.Model):
+class UsuarioTurma(ModeloBase):
     usuario = models.ForeignKey('Usuario', on_delete=models.CASCADE, related_name='usuario_turmas')
     turma = models.ForeignKey('Turma', on_delete=models.CASCADE, related_name='usuario_turmas')
     data_vinculo = models.DateTimeField(default=timezone.now)
@@ -267,8 +279,7 @@ class UsuarioTurma(models.Model):
         return f"{self.usuario.nome} → {self.turma.nome}"
 
 
-class Disciplina(models.Model):
-    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+class Disciplina(ModeloBase):
     nome = models.CharField(max_length=100)
     ativo = models.BooleanField(default=True)
     escola = models.ForeignKey('Escola', on_delete=models.CASCADE, related_name='disciplinas')
@@ -292,8 +303,7 @@ class Disciplina(models.Model):
         return self.nome
 
 
-class UsuarioDisciplina(models.Model):
-    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+class UsuarioDisciplina(ModeloBase):
     usuario = models.ForeignKey('Usuario', on_delete=models.CASCADE, related_name='usuario_disciplinas')
     disciplina = models.ForeignKey('Disciplina', on_delete=models.CASCADE, related_name='usuario_disciplinas')
     escola = models.ForeignKey('Escola', on_delete=models.CASCADE, related_name='usuario_disciplinas')
@@ -320,7 +330,7 @@ class UsuarioDisciplina(models.Model):
         return f"{self.usuario.nome} - {self.disciplina.nome}"
 
 
-class Aluno(models.Model):
+class Aluno(ModeloBase):
     STATUS_VINCULO = [
         ('ativo', 'Ativo'),
         ('inativo', 'Inativo'),
@@ -332,7 +342,6 @@ class Aluno(models.Model):
         ('O', 'Outro'),
     ]
 
-    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     nome_completo = models.CharField(max_length=200, verbose_name="Nome Completo")
     data_nascimento = models.DateField(null=True, blank=True)
     genero = models.CharField(max_length=1, choices=GENERO_CHOICES, null=True, blank=True)
@@ -367,14 +376,13 @@ class Aluno(models.Model):
         return self.nome_completo
 
 
-class Projeto(models.Model):
+class Projeto(ModeloBase):
     STATUS_CHOICES = [
         ('em_andamento', 'Em Andamento'),
         ('concluido', 'Concluído'),
         ('cancelado', 'Cancelado'),
     ]
 
-    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     nome = models.CharField(max_length=200)
     descricao = models.TextField(blank=True, null=True)
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='em_andamento')
@@ -401,7 +409,7 @@ class Projeto(models.Model):
     def __str__(self):
         return self.nome
 
-class Producao(models.Model):
+class Producao(ModeloBase):
     TIPOS = [
         ('foto', 'Foto'),
         ('video', 'Vídeo'),
@@ -409,7 +417,6 @@ class Producao(models.Model):
         ('documento', 'Documento'),
     ]
 
-    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     tipo = models.CharField(max_length=20, choices=TIPOS, default='foto')
     titulo = models.CharField(max_length=200, blank=True, null=True)
     descricao = models.TextField(blank=True, null=True)
@@ -451,8 +458,7 @@ class Producao(models.Model):
         return self.titulo or self.arquivo_nome or str(self.id)
 
 
-class ProducaoAluno(models.Model):
-    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+class ProducaoAluno(ModeloBase):
     legenda = models.TextField(blank=True, default='')
     legenda_ia = models.TextField(blank=True, default='')
     destaque = models.BooleanField(default=False)
@@ -475,13 +481,12 @@ class ProducaoAluno(models.Model):
 
     def __str__(self):
         return f"{self.aluno.nome_completo} - {self.producao_id}"
-class RegistroEscrita(models.Model):
+class RegistroEscrita(ModeloBase):
     ETAPAS = [
         ('educacao_infantil', 'Educação Infantil'),
         ('ensino_fundamental', 'Ensino Fundamental'),
     ]
 
-    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     etapa = models.CharField(max_length=30, choices=ETAPAS, blank=True, null=True)
     arquivo_nome = models.CharField(max_length=255)
     arquivo_hash = models.CharField(max_length=50, unique=True)
@@ -519,13 +524,12 @@ class RegistroEscrita(models.Model):
         return f"{self.aluno.nome_completo} - {self.etapa_ia or 'sem etapa'}"
 
 
-class RegistroDesenho(models.Model):
+class RegistroDesenho(ModeloBase):
     ETAPAS = [
         ('educacao_infantil', 'Educação Infantil'),
         ('ensino_fundamental', 'Ensino Fundamental'),
     ]
 
-    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     etapa = models.CharField(max_length=30, choices=ETAPAS, blank=True, null=True)
     atividade = models.CharField(max_length=200, default='Desenho Livre')
     contexto = models.TextField(blank=True, null=True)
@@ -565,7 +569,7 @@ class RegistroDesenho(models.Model):
     def __str__(self):
         return f"Desenho de {self.aluno.nome_completo} - {self.fase_desenho or 'sem fase'}"
 
-class RegistroLeitura(models.Model):
+class RegistroLeitura(ModeloBase):
     STATUS_CHOICES = [
         ('pendente', 'Análise em andamento no NaraNN'),
         ('analisado', 'Análise pronta — aguardando confirmação da professora'),
@@ -574,7 +578,6 @@ class RegistroLeitura(models.Model):
         ('cancelado', 'Cancelado'),
     ]
 
-    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     nara_job_id = models.CharField(max_length=64, blank=True, default='')
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='pendente')
     arquivo_path = models.CharField(max_length=500, blank=True, default='')
@@ -615,13 +618,12 @@ class RegistroLeitura(models.Model):
     def __str__(self):
         return f"Leitura de {self.aluno.nome_completo} - {self.classe_escolhida or 'pendente'}"
 
-class CampoPedagogico(models.Model):
+class CampoPedagogico(ModeloBase):
     ETAPAS = [
         ('educacao_infantil', 'Educação Infantil'),
         ('ensino_fundamental', 'Ensino Fundamental'),
     ]
 
-    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     nome = models.CharField(max_length=200)
     etapa = models.CharField(max_length=30, choices=ETAPAS, blank=True, null=True)
     icone = models.CharField(max_length=50, default='BookOpen', blank=True)
@@ -658,8 +660,7 @@ class CampoPedagogico(models.Model):
         return self.nome
 
 
-class HabilidadeBNCC(models.Model):
-    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+class HabilidadeBNCC(ModeloBase):
     codigo = models.CharField(max_length=20, unique=True)
     descricao = models.TextField()
     componente_curricular = models.CharField(max_length=100, blank=True, null=True)
@@ -679,13 +680,12 @@ class HabilidadeBNCC(models.Model):
     def __str__(self):
         return f"{self.codigo} - {self.descricao[:50]}"
 
-class Pergunta(models.Model):
+class Pergunta(ModeloBase):
     ORIGENS = [
         ('bncc', 'BNCC (obrigatória)'),
         ('escola', 'Customizada pela Escola'),
     ]
 
-    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     pergunta = models.TextField()
     pergunta_norma = models.TextField(blank=True, null=True)
     area_conhecimento = models.TextField(blank=True, null=True)
@@ -735,13 +735,12 @@ class Pergunta(models.Model):
         return self.pergunta[:80]
 
 
-class PerguntaEspecialista(models.Model):
+class PerguntaEspecialista(ModeloBase):
     STATUS_CHOICES = [
         ('ativa', 'Ativa'),
         ('inativa', 'Inativa'),
     ]
 
-    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     pergunta = models.TextField()
     pergunta_facilitadora = models.TextField(blank=True, null=True)
     nivel = models.CharField(max_length=50, blank=True, null=True)
@@ -779,8 +778,7 @@ class PerguntaEspecialista(models.Model):
     def __str__(self):
         return self.pergunta[:80]
 
-class RegistroObservacao(models.Model):
-    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+class RegistroObservacao(ModeloBase):
     resposta = models.CharField(max_length=50, blank=True, null=True)
     observacao = models.TextField(blank=True, null=True)
     data_observacao = models.DateField(null=True, blank=True)
@@ -818,8 +816,7 @@ class RegistroObservacao(models.Model):
     def __str__(self):
         return f"{self.aluno.nome_completo} - {self.data_observacao}"
 
-class ObservacaoTranscricao(models.Model):
-    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+class ObservacaoTranscricao(ModeloBase):
     aluno_nome = models.CharField(max_length=200, blank=True, null=True)
     observacao_texto = models.TextField(blank=True, null=True)
     tipo_observacao = models.CharField(max_length=30, default='TRANSCRICAO_IA')
@@ -856,8 +853,7 @@ class ObservacaoTranscricao(models.Model):
 
     def __str__(self):
         return f"{self.aluno_nome or 'não identificado'} - {self.data_observacao}"
-class PlanejamentoSemanal(models.Model):
-    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+class PlanejamentoSemanal(ModeloBase):
     semana_inicio = models.DateField()
     semana_fim = models.DateField()
     ano_letivo = models.IntegerField(default=2027)
@@ -885,7 +881,7 @@ class PlanejamentoSemanal(models.Model):
         return f"{self.turma.nome} - {self.semana_inicio}"
 
 
-class PlanejamentoDiario(models.Model):
+class PlanejamentoDiario(ModeloBase):
     DIAS_SEMANA = [
         ('segunda', 'Segunda-feira'),
         ('terca', 'Terça-feira'),
@@ -894,7 +890,6 @@ class PlanejamentoDiario(models.Model):
         ('sexta', 'Sexta-feira'),
     ]
 
-    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     dia_semana = models.CharField(max_length=10, choices=DIAS_SEMANA, blank=True, null=True)
     data = models.DateField(null=True, blank=True)
     atividades_propostas = models.TextField(blank=True, null=True)
@@ -933,8 +928,7 @@ class PlanejamentoDiario(models.Model):
         return f"{self.planejamento_semanal} - {self.get_dia_semana_display()}"
 
 
-class PlanejamentoHabilidade(models.Model):
-    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+class PlanejamentoHabilidade(ModeloBase):
     observacao_habilidade = models.TextField(blank=True, null=True)
 
     habilidade_bncc = models.ForeignKey(
@@ -962,7 +956,7 @@ class PlanejamentoHabilidade(models.Model):
     def __str__(self):
         return f"{self.planejamento_diario} - {self.habilidade_bncc.codigo}"
 
-class PeriodoAvaliativo(models.Model):
+class PeriodoAvaliativo(ModeloBase):
     TIPOS_PERIODO = [
         ('bimestral', 'Bimestral'),
         ('trimestral', 'Trimestral'),
@@ -970,7 +964,6 @@ class PeriodoAvaliativo(models.Model):
         ('anual', 'Anual'),
     ]
 
-    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     descricao = models.CharField(max_length=200)
     tipo_periodo = models.CharField(max_length=20, choices=TIPOS_PERIODO)
     ano = models.IntegerField(null=True, blank=True)
@@ -1000,8 +993,7 @@ class PeriodoAvaliativo(models.Model):
         return f"{self.descricao} ({self.get_tipo_periodo_display()})"
 
 
-class RelatorioTemplate(models.Model):
-    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+class RelatorioTemplate(ModeloBase):
     nome = models.CharField(max_length=100)
     modelo = models.CharField(max_length=20)
     usa_foto_aluno = models.BooleanField(default=False)
@@ -1024,20 +1016,13 @@ class RelatorioTemplate(models.Model):
         verbose_name_plural = 'Templates de Relatório'
         constraints = [
             models.UniqueConstraint(fields=['escola', 'modelo'], name='unique_relatorio_template_por_escola'),
-            # No máximo UM template ativo por escola: é ele que o gerador usa
-            # (ordem/títulos das seções em `items_sumario` e a capa em `config`).
-            models.UniqueConstraint(
-                fields=['escola'], condition=models.Q(ativo=True),
-                name='unique_relatorio_template_ativo_por_escola',
-            ),
         ]
 
     def __str__(self):
         return self.nome
 
 
-class Relatorio(models.Model):
-    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+class Relatorio(ModeloBase):
     conteudo = models.TextField(blank=True, null=True)
     pdf_url = models.URLField(max_length=500, null=True, blank=True)
     pdf_storage_key = models.CharField(max_length=500, null=True, blank=True)
@@ -1072,8 +1057,7 @@ class Relatorio(models.Model):
     def __str__(self):
         return f"Relatório de {self.aluno.nome_completo} ({self.periodo})"
 
-class Notificacao(models.Model):
-    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+class Notificacao(ModeloBase):
     tipo = models.CharField(max_length=50)
     titulo = models.CharField(max_length=200, blank=True, null=True)
     conteudo = models.TextField(blank=True, null=True)
@@ -1110,14 +1094,13 @@ class Notificacao(models.Model):
         return f"{self.titulo or self.tipo} → {self.usuario.nome}"
 
 
-class MetaPAEE(models.Model):
+class MetaPAEE(ModeloBase):
     STATUS_CHOICES = [
         ('ativa', 'Ativa'),
         ('concluida', 'Concluída'),
         ('cancelada', 'Cancelada'),
     ]
 
-    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     categoria = models.CharField(max_length=30, blank=True, null=True)
     inicio = models.DateField(null=True, blank=True)
     fim = models.DateField(null=True, blank=True)
@@ -1156,14 +1139,13 @@ class MetaPAEE(models.Model):
         return f"{self.aluno.nome_completo} - {self.categoria or 'sem categoria'}"
 
 
-class SessaoEspecialista(models.Model):
+class SessaoEspecialista(ModeloBase):
     STATUS_CHOICES = [
         ('pendente', 'Pendente'),
         ('realizada', 'Realizada'),
         ('cancelada', 'Cancelada'),
     ]
 
-    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     data_atendimento = models.DateField(null=True, blank=True)
     duracao = models.IntegerField(null=True, blank=True, help_text="Duração em minutos")
     resumo = models.TextField(blank=True, default='')
@@ -1198,8 +1180,7 @@ class SessaoEspecialista(models.Model):
         return f"{self.aluno.nome_completo} - {self.data_atendimento}"
 
 
-class SessaoPAEEMeta(models.Model):
-    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+class SessaoPAEEMeta(ModeloBase):
     sessao_especialista = models.ForeignKey(
         'SessaoEspecialista', on_delete=models.CASCADE, related_name='sessao_metas',
     )
@@ -1224,8 +1205,7 @@ class SessaoPAEEMeta(models.Model):
         return f"{self.sessao_especialista} - {self.meta_paee}"
 
 
-class TarefaPAEE(models.Model):
-    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+class TarefaPAEE(ModeloBase):
     descricao = models.TextField(blank=True, null=True)
     concluida = models.BooleanField(default=False)
     observacao_professor = models.TextField(blank=True, default='')
@@ -1257,8 +1237,7 @@ class TarefaPAEE(models.Model):
         return f"{self.descricao[:60] if self.descricao else self.id}"
 
 
-class DispositivoGravador(models.Model):
-    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+class DispositivoGravador(ModeloBase):
     device_id = models.CharField(max_length=100, unique=True)
     nome = models.CharField(max_length=120, blank=True, default='')
     token_hash = models.CharField(max_length=128, blank=True, null=True)
@@ -1295,8 +1274,7 @@ class DispositivoGravador(models.Model):
         return self.nome or self.device_id
 
 
-class DispositivoGravadorTurma(models.Model):
-    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+class DispositivoGravadorTurma(ModeloBase):
     dispositivo = models.ForeignKey(
         'DispositivoGravador', on_delete=models.CASCADE, related_name='turmas_vinculadas',
     )
@@ -1318,8 +1296,7 @@ class DispositivoGravadorTurma(models.Model):
         return f"{self.dispositivo} - {self.turma.nome}"
 
 
-class CodigoPareamento(models.Model):
-    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+class CodigoPareamento(ModeloBase):
     codigo = models.CharField(max_length=12)
     expira_em = models.DateTimeField(null=True, blank=True)
     usado_em = models.DateTimeField(null=True, blank=True)
@@ -1362,8 +1339,7 @@ class CodigoPareamento(models.Model):
         return self.codigo
 
 
-class CodigoPareamentoTurma(models.Model):
-    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+class CodigoPareamentoTurma(ModeloBase):
     codigo_pareamento = models.ForeignKey(
         'CodigoPareamento', on_delete=models.CASCADE, related_name='turmas_vinculadas',
     )
@@ -1387,7 +1363,7 @@ class CodigoPareamentoTurma(models.Model):
         return f"{self.codigo_pareamento.codigo} - {self.turma.nome}"
 
 
-class AudioDispositivo(models.Model):
+class AudioDispositivo(ModeloBase):
     STATUS_CHOICES = [
         ('recebido', 'Recebido'),
         ('processando', 'Processando'),
@@ -1396,7 +1372,6 @@ class AudioDispositivo(models.Model):
         ('comando', 'Comando de sala (sem relato)'),
     ]
 
-    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     upload_id = models.UUIDField()
     sha256 = models.CharField(max_length=64, blank=True, null=True)
     tamanho_arquivo = models.IntegerField(null=True, blank=True)
@@ -1493,8 +1468,7 @@ class AudioDispositivo(models.Model):
         return {'sinal': 'ok', 'mensagem': 'Áudio processado com sucesso.'}
 
 
-class PromptCategoria(models.Model):
-    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+class PromptCategoria(ModeloBase):
     titulo = models.CharField(max_length=200)
     ativo = models.BooleanField(default=True)
 
@@ -1511,8 +1485,7 @@ class PromptCategoria(models.Model):
         return self.titulo
 
 
-class PromptTemplate(models.Model):
-    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+class PromptTemplate(ModeloBase):
     prompt_global = models.TextField(blank=True, default='')
     personalizado = models.TextField(blank=True, default='')
 
@@ -1542,12 +1515,7 @@ class PromptTemplate(models.Model):
         return f"{self.categoria.titulo} - {self.escola or 'padrão do sistema'}"
 
 
-class OpenAIUsage(models.Model):
-    # BigAutoField, não UUID: tabela de log de alto volume/append-only, onde
-    # um id sequencial é mais eficiente que UUID (mesmo padrão que já
-    # existia no código antigo para esta tabela).
-    id = models.BigAutoField(primary_key=True)
-
+class OpenAIUsage(ModeloBase):
     input_tokens = models.BigIntegerField()
     image_tokens = models.BigIntegerField(default=0)
     output_tokens = models.BigIntegerField()
@@ -1591,9 +1559,7 @@ class OpenAIUsage(models.Model):
         return f"OpenAIUsage #{self.id} {self.model or '?'} (${self.total_cost})"
 
 
-class CoordenacaoCache(models.Model):
-    id = models.BigAutoField(primary_key=True)
-
+class CoordenacaoCache(ModeloBase):
     data_referencia = models.DateField(db_index=True)
     janela_dias = models.PositiveIntegerField(default=30)
     payload = models.JSONField()
@@ -1625,14 +1591,13 @@ class CoordenacaoCache(models.Model):
     def __str__(self):
         return f"CoordenacaoCache {self.escola_id} @ {self.data_referencia}"
 
-class TemplateDocumento(models.Model):
+class TemplateDocumento(ModeloBase):
     TIPOS = [
         ('contrato', 'Contrato'),
         ('termo', 'Termo'),
         ('outro', 'Outro'),
     ]
 
-    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     titulo = models.CharField(max_length=200)
     documento = models.TextField()
     tipo = models.CharField(max_length=30, choices=TIPOS, default='contrato')
@@ -1672,7 +1637,7 @@ class TemplateDocumento(models.Model):
         return self.titulo
 
 
-class Contrato(models.Model):
+class Contrato(ModeloBase):
     STATUS_CHOICES = [
         ('rascunho', 'Rascunho'),
         ('gerado', 'Gerado'),
@@ -1681,7 +1646,6 @@ class Contrato(models.Model):
         ('cancelado', 'Cancelado'),
     ]
 
-    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     documento = models.TextField()
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='rascunho')
     arquivo_url = models.URLField(max_length=500, null=True, blank=True)
@@ -1720,7 +1684,7 @@ class Contrato(models.Model):
     def __str__(self):
         return f"Contrato {self.id} - {self.escola.nome} ({self.status})"
 
-class Ticket(models.Model):
+class Ticket(ModeloBase):
     STATUS_CHOICES = [
         ('em_aberto', 'Em Aberto'),
         ('em_atendimento', 'Em Atendimento'),
@@ -1739,7 +1703,6 @@ class Ticket(models.Model):
         ('baixa', 'Baixa'),
     ]
 
-    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     protocolo = models.CharField(max_length=20, unique=True)
     titulo = models.CharField(max_length=200)
     descricao = models.TextField()
@@ -1779,8 +1742,7 @@ class Ticket(models.Model):
         return f"{self.protocolo} - {self.titulo}"
 
 
-class RespostaTicket(models.Model):
-    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+class RespostaTicket(ModeloBase):
     descricao = models.TextField()
 
     usuario = models.ForeignKey('Usuario', on_delete=models.PROTECT, related_name='respostas_tickets')
@@ -1810,8 +1772,7 @@ class RespostaTicket(models.Model):
         return f"Resposta ao {self.ticket.protocolo}"
 
 
-class AnexoTicket(models.Model):
-    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+class AnexoTicket(ModeloBase):
     arquivo_url = models.URLField(max_length=500)
     arquivo_nome = models.CharField(max_length=255, blank=True, null=True)
     mime_type = models.CharField(max_length=100, blank=True, null=True)
@@ -1837,18 +1798,16 @@ class AnexoTicket(models.Model):
     def __str__(self):
         return self.arquivo_nome or str(self.id)
 
-class LogAuditoria(models.Model):
+class LogAuditoria(ModeloBase):
     ACOES = [
         ('create', 'Criação'),
         ('update', 'Atualização'),
         ('delete', 'Exclusão'),
     ]
 
-    id = models.BigAutoField(primary_key=True)
-
     acao = models.CharField(max_length=20, choices=ACOES)
     tabela_afetada = models.CharField(max_length=100)
-    registro_id = models.UUIDField()
+    registro_id = models.BigIntegerField()  # id (int) do registro afetado
     alteracoes = models.JSONField(default=dict, blank=True)
     ip = models.CharField(max_length=255, blank=True, null=True)
 
@@ -1886,7 +1845,7 @@ class LogAuditoria(models.Model):
         return f"{self.acao} em {self.tabela_afetada}#{self.registro_id}"
 
 
-class PermissaoUsuario(models.Model):
+class PermissaoUsuario(ModeloBase):
     ACOES = [
         ('criar', 'Criar'),
         ('ver', 'Ver'),
@@ -1894,7 +1853,6 @@ class PermissaoUsuario(models.Model):
         ('deletar', 'Deletar'),
     ]
 
-    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     modulo = models.CharField(max_length=100)
     acao = models.CharField(max_length=20, choices=ACOES)
     concedido = models.BooleanField()

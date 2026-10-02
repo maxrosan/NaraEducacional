@@ -63,13 +63,13 @@ class TurmaSerializer(serializers.ModelSerializer):
     """
     escola_nome = serializers.CharField(source='escola.nome', read_only=True)
     professores = serializers.ListField(
-        child=serializers.UUIDField(), write_only=True, required=False,
+        child=serializers.IntegerField(min_value=1), write_only=True, required=False,
     )
 
     class Meta:
         model = Turma
         fields = [
-            'id', 'nome', 'faixa_etaria', 'turno', 'ano_letivo', 'ativa',
+            'id', 'uuid', 'nome', 'faixa_etaria', 'turno', 'ano_letivo', 'ativa',
             'etapa', 'ordem', 'idade_min', 'idade_max', 'frequencia_registro',
             'escola', 'escola_nome', 'instituicao', 'professores',
             'criado_em', 'atualizado_em',
@@ -181,7 +181,7 @@ class UsuarioTurmaSerializer(serializers.ModelSerializer):
     class Meta:
         model = UsuarioTurma
         fields = [
-            'id', 'usuario', 'usuario_nome', 'usuario_email', 'usuario_nivel',
+            'id', 'uuid', 'usuario', 'usuario_nome', 'usuario_email', 'usuario_nivel',
             'turma', 'data_vinculo', 'criado_em',
         ]
         read_only_fields = ['id', 'turma', 'criado_em']
@@ -212,7 +212,7 @@ class TurmaListaSerializer(serializers.ModelSerializer):
     class Meta:
         model = Turma
         fields = [
-            'id', 'nome', 'faixa_etaria', 'turno', 'ano_letivo', 'ativa',
+            'id', 'uuid', 'nome', 'faixa_etaria', 'turno', 'ano_letivo', 'ativa',
             'etapa', 'ordem', 'idade_min', 'idade_max', 'frequencia_registro',
             'escola', 'escola_nome', 'professores',
         ]
@@ -229,7 +229,7 @@ class TurmaFrequenciaSerializer(serializers.ModelSerializer):
     class Meta:
         model = Turma
         fields = [
-            'id', 'nome', 'turno', 'ano_letivo', 'etapa', 'ativa',
+            'id', 'uuid', 'nome', 'turno', 'ano_letivo', 'etapa', 'ativa',
             'escola', 'escola_nome', 'frequencia_registro',
         ]
         read_only_fields = fields
@@ -239,17 +239,17 @@ class AtualizarFrequenciaSerializer(serializers.Serializer):
     """Body do PATCH /turmas/frequencia-registro/atualizar/.
 
     Informe UM dos alvos:
-      turmas: [uuid, ...]  — as turmas indicadas (máx. 200)
-      escola: uuid         — todas as turmas ATIVAS da escola
+      turmas: [id, ...]  — ids (int) das turmas indicadas (máx. 200)
+      escola: id         — id (int) da escola: todas as turmas ATIVAS dela
     """
     LIMITE_TURMAS = 200
 
     frequencia_registro = serializers.ChoiceField(choices=Turma.FREQUENCIAS_REGISTRO)
     turmas = serializers.ListField(
-        child=serializers.UUIDField(), required=False, allow_empty=False,
+        child=serializers.IntegerField(min_value=1), required=False, allow_empty=False,
         max_length=LIMITE_TURMAS,
     )
-    escola = serializers.UUIDField(required=False)
+    escola = serializers.IntegerField(min_value=1, required=False)
 
     def validate(self, attrs):
         if bool(attrs.get('turmas')) == bool(attrs.get('escola')):
@@ -289,12 +289,12 @@ class DisciplinaSerializer(serializers.ModelSerializer):
     """
     escola_nome = serializers.CharField(source='escola.nome', read_only=True)
     professores = serializers.ListField(
-        child=serializers.UUIDField(), write_only=True, required=False,
+        child=serializers.IntegerField(min_value=1), write_only=True, required=False,
     )
 
     class Meta:
         model = Disciplina
-        fields = ['id', 'nome', 'ativo', 'escola', 'escola_nome', 'instituicao', 'professores', 'criado_em']
+        fields = ['id', 'uuid', 'nome', 'ativo', 'escola', 'escola_nome', 'instituicao', 'professores', 'criado_em']
         read_only_fields = ['id', 'escola', 'instituicao', 'criado_em']
 
     def _escola_id(self):
@@ -380,7 +380,7 @@ class DisciplinaListaSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Disciplina
-        fields = ['id', 'nome', 'ativo', 'escola', 'escola_nome', 'professores']
+        fields = ['id', 'uuid', 'nome', 'ativo', 'escola', 'escola_nome', 'professores']
         read_only_fields = fields
 
 
@@ -391,7 +391,7 @@ class UsuarioDisciplinaSerializer(serializers.ModelSerializer):
     class Meta:
         model = UsuarioDisciplina
         fields = [
-            'id', 'usuario', 'usuario_nome', 'disciplina', 'disciplina_nome',
+            'id', 'uuid', 'usuario', 'usuario_nome', 'disciplina', 'disciplina_nome',
             'escola', 'instituicao', 'criado_em', 'atualizado_em',
         ]
         read_only_fields = ['id', 'escola', 'instituicao', 'criado_em', 'atualizado_em']
@@ -401,7 +401,7 @@ class InstituicaoSerializer(serializers.ModelSerializer):
     class Meta:
         model = Instituicao
         fields = [
-            'id', 'nome', 'cnpj', 'email_institucional', 'endereco',
+            'id', 'uuid', 'nome', 'cnpj', 'email_institucional', 'endereco',
             'cidade', 'estado', 'telefone', 'logo_url', 'ativa',
             'criado_em', 'atualizado_em',
         ]
@@ -410,11 +410,13 @@ class InstituicaoSerializer(serializers.ModelSerializer):
 
 class EscolaSerializer(serializers.ModelSerializer):
     instituicao_nome = serializers.CharField(source='instituicao.nome', read_only=True)
+    # uuid da instituição: para montar a URL /instituicoes/<uuid>/ a partir da escola.
+    instituicao_uuid = serializers.UUIDField(source='instituicao.uuid', read_only=True)
 
     class Meta:
         model = Escola
         fields = [
-            'id', 'instituicao', 'instituicao_nome', 'nome', 'tipo_unidade',
+            'id', 'uuid', 'instituicao', 'instituicao_uuid', 'instituicao_nome', 'nome', 'tipo_unidade',
             'cnpj', 'endereco', 'cidade', 'estado', 'telefone', 'ativa',
             'tipo_relatorio', 'report_settings', 'ordem_relatorio',
             'criado_em', 'atualizado_em',
@@ -429,7 +431,7 @@ class EspecialistaSerializer(serializers.ModelSerializer):
     class Meta:
         model = Especialista
         fields = [
-            'id', 'tipo_especialista', 'escola', 'escola_nome',
+            'id', 'uuid', 'tipo_especialista', 'escola', 'escola_nome',
             'instituicao', 'instituicao_nome', 'criado_em', 'atualizado_em',
         ]
         read_only_fields = ['id', 'instituicao', 'criado_em', 'atualizado_em']
@@ -455,12 +457,15 @@ class UsuarioSerializer(serializers.ModelSerializer):
     escola_nome = serializers.CharField(source='escola.nome', read_only=True, default=None)
     instituicao_nome = serializers.CharField(source='instituicao.nome', read_only=True, default=None)
     tipo_especialista = serializers.CharField(source='especialista.tipo_especialista', read_only=True, default=None)
+    # uuids da escola/instituição do usuário: o front usa em URLs (o id vai só no body).
+    escola_uuid = serializers.UUIDField(source='escola.uuid', read_only=True, allow_null=True)
+    instituicao_uuid = serializers.UUIDField(source='instituicao.uuid', read_only=True, allow_null=True)
 
     class Meta:
         model = Usuario
         fields = [
-            'id', 'nome', 'email', 'numero', 'nivel',
-            'escola', 'escola_nome', 'instituicao', 'instituicao_nome',
+            'id', 'uuid', 'nome', 'email', 'numero', 'nivel',
+            'escola', 'escola_uuid', 'escola_nome', 'instituicao', 'instituicao_uuid', 'instituicao_nome',
             'especialista', 'tipo_especialista', 'is_active',
         ]
         read_only_fields = fields
@@ -514,8 +519,8 @@ class UsuarioWriteSerializer(serializers.ModelSerializer):
     """
 
     password = serializers.CharField(write_only=True, required=False, min_length=8)
-    turmas = serializers.ListField(child=serializers.UUIDField(), write_only=True, required=False)
-    disciplinas = serializers.ListField(child=serializers.UUIDField(), write_only=True, required=False)
+    turmas = serializers.ListField(child=serializers.IntegerField(min_value=1), write_only=True, required=False)
+    disciplinas = serializers.ListField(child=serializers.IntegerField(min_value=1), write_only=True, required=False)
     tipo_especialista = serializers.ChoiceField(
         choices=Especialista._meta.get_field('tipo_especialista').choices,
         write_only=True, required=False, allow_null=True, allow_blank=True,
@@ -524,7 +529,7 @@ class UsuarioWriteSerializer(serializers.ModelSerializer):
     class Meta:
         model = Usuario
         fields = [
-            'id', 'nome', 'email', 'numero', 'nivel',
+            'id', 'uuid', 'nome', 'email', 'numero', 'nivel',
             'escola', 'instituicao', 'especialista', 'is_active', 'password',
             'turmas', 'disciplinas', 'tipo_especialista',
         ]
@@ -677,7 +682,7 @@ class AlunoSerializer(serializers.ModelSerializer):
     class Meta:
         model = Aluno
         fields = [
-            'id', 'nome_completo', 'data_nascimento', 'genero',
+            'id', 'uuid', 'nome_completo', 'data_nascimento', 'genero',
             'nome_responsavel', 'telefone_responsavel', 'status_vinculo',
             'observacoes', 'foto_url', 'turma', 'turma_nome',
             'escola', 'escola_nome', 'instituicao',
@@ -775,7 +780,7 @@ class ProjetoSerializer(serializers.ModelSerializer):
     class Meta:
         model = Projeto
         fields = [
-            'id', 'nome', 'descricao', 'status', 'data_inicio', 'data_fim',
+            'id', 'uuid', 'nome', 'descricao', 'status', 'data_inicio', 'data_fim',
             'escola', 'escola_nome', 'instituicao', 'criado_em', 'atualizado_em',
         ]
         read_only_fields = ['id', 'escola', 'instituicao', 'criado_em', 'atualizado_em']
@@ -788,7 +793,7 @@ class ProducaoSerializer(serializers.ModelSerializer):
     class Meta:
         model = Producao
         fields = [
-            'id', 'tipo', 'titulo', 'descricao', 'arquivo_url', 'arquivo_nome',
+            'id', 'uuid', 'tipo', 'titulo', 'descricao', 'arquivo_url', 'arquivo_nome',
             'arquivo_hash', 'mime_type', 'tamanho_bytes', 'tags', 'data_registro',
             'turma', 'turma_nome', 'professor', 'professor_nome', 'projeto',
             'escola', 'instituicao', 'criado_em', 'atualizado_em',
@@ -804,7 +809,7 @@ class ProducaoAlunoSerializer(serializers.ModelSerializer):
     class Meta:
         model = ProducaoAluno
         fields = [
-            'id', 'legenda', 'legenda_ia', 'destaque', 'incluir_relatorio',
+            'id', 'uuid', 'legenda', 'legenda_ia', 'destaque', 'incluir_relatorio',
             'producao', 'aluno', 'aluno_nome', 'criado_em', 'atualizado_em',
         ]
         read_only_fields = ['id', 'producao', 'aluno', 'criado_em', 'atualizado_em']
@@ -817,7 +822,7 @@ class RegistroEscritaSerializer(serializers.ModelSerializer):
     class Meta:
         model = RegistroEscrita
         fields = [
-            'id', 'etapa', 'arquivo_nome', 'arquivo_hash', 'arquivo_path',
+            'id', 'uuid', 'etapa', 'arquivo_nome', 'arquivo_hash', 'arquivo_path',
             'arquivo_original', 'tamanho_arquivo', 'tipo_arquivo', 'etapa_ia',
             'analise_detalhada', 'anotacoes_professora',
             'aluno', 'aluno_nome', 'turma', 'professor', 'professor_nome',
@@ -836,7 +841,7 @@ class RegistroDesenhoSerializer(serializers.ModelSerializer):
     class Meta:
         model = RegistroDesenho
         fields = [
-            'id', 'etapa', 'atividade', 'contexto', 'fase_desenho',
+            'id', 'uuid', 'etapa', 'atividade', 'contexto', 'fase_desenho',
             'elementos_detectados', 'analise_detalhada', 'anotacoes_professora',
             'arquivo_nome', 'arquivo_hash', 'arquivo_path', 'arquivo_original',
             'tamanho_arquivo', 'tipo_arquivo',
@@ -856,7 +861,7 @@ class RegistroLeituraSerializer(serializers.ModelSerializer):
     class Meta:
         model = RegistroLeitura
         fields = [
-            'id', 'nara_job_id', 'status', 'arquivo_path', 'arquivo_nome',
+            'id', 'uuid', 'nara_job_id', 'status', 'arquivo_path', 'arquivo_nome',
             'arquivo_hash', 'tamanho_arquivo', 'tipo_arquivo', 'duracao_seg',
             'pieces', 'feat_dim', 'classe_predita', 'classe_escolhida',
             'probabilidades', 'anotacoes_professora',
@@ -874,7 +879,7 @@ class CampoPedagogicoSerializer(serializers.ModelSerializer):
     class Meta:
         model = CampoPedagogico
         fields = [
-            'id', 'nome', 'etapa', 'icone', 'cor', 'ativo',
+            'id', 'uuid', 'nome', 'etapa', 'icone', 'cor', 'ativo',
             'escola', 'escola_nome', 'instituicao', 'criado_em', 'atualizado_em',
         ]
         read_only_fields = ['id', 'criado_em', 'atualizado_em', 'escola', 'instituicao']
@@ -884,7 +889,7 @@ class HabilidadeBNCCSerializer(serializers.ModelSerializer):
     class Meta:
         model = HabilidadeBNCC
         fields = [
-            'id', 'codigo', 'descricao', 'componente_curricular', 'ano_serie',
+            'id', 'uuid', 'codigo', 'descricao', 'componente_curricular', 'ano_serie',
             'campo_atuacao', 'ativa', 'criado_em', 'atualizado_em',
         ]
         read_only_fields = ['id', 'criado_em', 'atualizado_em']
@@ -955,7 +960,7 @@ class PerguntaSerializer(_ReferenciaBNCCMixin, serializers.ModelSerializer):
     class Meta:
         model = Pergunta
         fields = [
-            'id', 'pergunta', 'pergunta_norma', 'area_conhecimento', 'origem', 'ativa', 'faixa_etaria',
+            'id', 'uuid', 'pergunta', 'pergunta_norma', 'area_conhecimento', 'origem', 'ativa', 'faixa_etaria',
             'campo_experiencia', 'campo_experiencia_nome', 'campo_experiencia_icone',
             'habilidade_bncc', 'habilidade_bncc_codigo', 'habilidade_bncc_descricao', 'referencia_bncc',
             'escola', 'escola_nome', 'instituicao', 'criado_em', 'atualizado_em',
@@ -991,7 +996,7 @@ class PerguntaEspecialistaSerializer(_ReferenciaBNCCMixin, serializers.ModelSeri
     class Meta:
         model = PerguntaEspecialista
         fields = [
-            'id', 'pergunta', 'pergunta_facilitadora', 'nivel', 'status',
+            'id', 'uuid', 'pergunta', 'pergunta_facilitadora', 'nivel', 'status',
             'campo_experiencia', 'campo_experiencia_nome', 'campo_experiencia_icone',
             'habilidade_bncc', 'habilidade_bncc_codigo', 'habilidade_bncc_descricao', 'referencia_bncc',
             'usuario_especialista', 'usuario_especialista_nome',
@@ -1016,7 +1021,7 @@ class RegistroObservacaoSerializer(serializers.ModelSerializer):
     class Meta:
         model = RegistroObservacao
         fields = [
-            'id', 'resposta', 'observacao', 'data_observacao',
+            'id', 'uuid', 'resposta', 'observacao', 'data_observacao',
             'pergunta', 'pergunta_especialista',
             'aluno', 'aluno_nome', 'professor', 'escola', 'instituicao',
             'criado_em', 'atualizado_em',
@@ -1039,7 +1044,7 @@ class ObservacaoTranscricaoSerializer(serializers.ModelSerializer):
     class Meta:
         model = ObservacaoTranscricao
         fields = [
-            'id', 'aluno_nome', 'observacao_texto', 'tipo_observacao', 'data_observacao',
+            'id', 'uuid', 'aluno_nome', 'observacao_texto', 'tipo_observacao', 'data_observacao',
             'transcricao_completa', 'metadados_ia',
             'aluno', 'aluno_nome_vinculado', 'turma', 'professor',
             'escola', 'instituicao', 'criado_em', 'atualizado_em',
@@ -1054,7 +1059,7 @@ class PlanejamentoSemanalSerializer(serializers.ModelSerializer):
     class Meta:
         model = PlanejamentoSemanal
         fields = [
-            'id', 'semana_inicio', 'semana_fim', 'ano_letivo',
+            'id', 'uuid', 'semana_inicio', 'semana_fim', 'ano_letivo',
             'turma', 'turma_nome', 'professor', 'professor_nome',
             'escola', 'instituicao', 'criado_em', 'atualizado_em',
         ]
@@ -1079,7 +1084,7 @@ class PeriodoAvaliativoSerializer(serializers.ModelSerializer):
     class Meta:
         model = PeriodoAvaliativo
         fields = [
-            'id', 'descricao', 'tipo_periodo', 'ano', 'numero',
+            'id', 'uuid', 'descricao', 'tipo_periodo', 'ano', 'numero',
             'data_inicio', 'data_fim', 'escola', 'escola_nome', 'instituicao',
             'criado_em', 'atualizado_em',
         ]
@@ -1134,59 +1139,16 @@ class PeriodoAvaliativoSerializer(serializers.ModelSerializer):
 
 
 class RelatorioTemplateSerializer(serializers.ModelSerializer):
+    # uuid da escola: o front leva a escola na URL (?escola=<uuid>) ao abrir o editor.
+    escola_uuid = serializers.UUIDField(source='escola.uuid', read_only=True, allow_null=True)
+
     class Meta:
         model = RelatorioTemplate
         fields = [
-            'id', 'nome', 'modelo', 'usa_foto_aluno', 'config', 'items_sumario',
-            'ativo', 'escola', 'instituicao', 'criado_em', 'atualizado_em',
+            'id', 'uuid', 'nome', 'modelo', 'usa_foto_aluno', 'config', 'items_sumario',
+            'ativo', 'escola', 'escola_uuid', 'instituicao', 'criado_em', 'atualizado_em',
         ]
         read_only_fields = ['id', 'escola', 'instituicao', 'criado_em', 'atualizado_em']
-
-    def validate_config(self, valor):
-        if valor in (None, ''):
-            return {}
-        if not isinstance(valor, dict):
-            raise serializers.ValidationError('config deve ser um objeto JSON.')
-        return valor
-
-    def validate_items_sumario(self, valor):
-        """Só as seções que o gerador conhece (services/relatorio._SECOES_PADRAO).
-
-        Antes aceitava qualquer JSON: a tela do legado gravava chaves que o
-        gerador não tem (introducao_coletiva, analise_leitura...) e elas eram
-        ignoradas em silêncio na geração. Seção que faltar não é erro — o
-        gerador a acrescenta no fim, visível.
-        """
-        from api.services.relatorio import _CHAVES_VALIDAS, _TITULOS_PADRAO
-
-        if valor in (None, ''):
-            return []
-        if not isinstance(valor, list):
-            raise serializers.ValidationError('items_sumario deve ser uma lista.')
-
-        normalizado, vistas = [], set()
-        for item in valor:
-            if not isinstance(item, dict):
-                raise serializers.ValidationError('Cada item deve ser um objeto {chave, titulo, visivel}.')
-            chave = item.get('chave')
-            if chave not in _CHAVES_VALIDAS:
-                raise serializers.ValidationError(
-                    f"Seção desconhecida: {chave!r}. Válidas: {', '.join(sorted(_CHAVES_VALIDAS))}."
-                )
-            if chave in vistas:
-                raise serializers.ValidationError(f'Seção repetida: {chave!r}.')
-            vistas.add(chave)
-
-            titulo = item.get('titulo')
-            titulo = titulo.strip() if isinstance(titulo, str) else ''
-            if len(titulo) > 120:
-                raise serializers.ValidationError(f'Título da seção {chave!r} passa de 120 caracteres.')
-            normalizado.append({
-                'chave': chave,
-                'titulo': titulo or _TITULOS_PADRAO[chave],
-                'visivel': bool(item.get('visivel', True)),
-            })
-        return normalizado
 
 
 class RelatorioSerializer(serializers.ModelSerializer):
@@ -1196,7 +1158,7 @@ class RelatorioSerializer(serializers.ModelSerializer):
     class Meta:
         model = Relatorio
         fields = [
-            'id', 'conteudo', 'pdf_url', 'periodo',
+            'id', 'uuid', 'conteudo', 'pdf_url', 'periodo',
             'aluno', 'aluno_nome', 'template',
             'revisado_por', 'revisado_por_nome',
             'escola', 'instituicao', 'criado_em', 'atualizado_em',
@@ -1212,7 +1174,7 @@ class NotificacaoSerializer(serializers.ModelSerializer):
     class Meta:
         model = Notificacao
         fields = [
-            'id', 'tipo', 'titulo', 'conteudo', 'lido_em',
+            'id', 'uuid', 'tipo', 'titulo', 'conteudo', 'lido_em',
             'remetente', 'remetente_nome', 'usuario', 'escola', 'instituicao',
             'criado_em', 'atualizado_em',
         ]
@@ -1228,7 +1190,7 @@ class MetaPAEESerializer(serializers.ModelSerializer):
     class Meta:
         model = MetaPAEE
         fields = [
-            'id', 'categoria', 'inicio', 'fim', 'objetivo', 'criterio', 'estrategia', 'status',
+            'id', 'uuid', 'categoria', 'inicio', 'fim', 'objetivo', 'criterio', 'estrategia', 'status',
             'aluno', 'aluno_nome', 'usuario_especialista', 'usuario_especialista_nome', 'turma',
             'escola', 'instituicao', 'criado_em', 'atualizado_em',
         ]
@@ -1244,7 +1206,7 @@ class SessaoEspecialistaSerializer(serializers.ModelSerializer):
     class Meta:
         model = SessaoEspecialista
         fields = [
-            'id', 'data_atendimento', 'duracao', 'resumo', 'status',
+            'id', 'uuid', 'data_atendimento', 'duracao', 'resumo', 'status',
             'aluno', 'aluno_nome', 'usuario_especialista', 'usuario_especialista_nome', 'turma',
             'escola', 'instituicao', 'criado_em', 'atualizado_em',
         ]
@@ -1258,7 +1220,7 @@ class SessaoPAEEMetaSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = SessaoPAEEMeta
-        fields = ['id', 'sessao_especialista', 'meta_paee', 'meta_paee_objetivo', 'criado_em']
+        fields = ['id', 'uuid', 'sessao_especialista', 'meta_paee', 'meta_paee_objetivo', 'criado_em']
         read_only_fields = ['id', 'sessao_especialista', 'criado_em']
 
 
@@ -1268,7 +1230,7 @@ class TarefaPAEESerializer(serializers.ModelSerializer):
     class Meta:
         model = TarefaPAEE
         fields = [
-            'id', 'descricao', 'concluida', 'observacao_professor', 'data_conclusao',
+            'id', 'uuid', 'descricao', 'concluida', 'observacao_professor', 'data_conclusao',
             'meta_paee', 'professor_conclusao', 'professor_conclusao_nome',
             'escola', 'instituicao', 'criado_em', 'atualizado_em',
         ]
@@ -1280,7 +1242,7 @@ class TarefaPAEESerializer(serializers.ModelSerializer):
 class AnexoTicketSerializer(serializers.ModelSerializer):
     class Meta:
         model = AnexoTicket
-        fields = ['id', 'arquivo_url', 'arquivo_nome', 'mime_type', 'tamanho_bytes',
+        fields = ['id', 'uuid', 'arquivo_url', 'arquivo_nome', 'mime_type', 'tamanho_bytes',
                   'ticket', 'ticket_reply', 'criado_em']
         read_only_fields = ['id', 'ticket', 'ticket_reply', 'criado_em']
 
@@ -1291,7 +1253,7 @@ class RespostaTicketSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = RespostaTicket
-        fields = ['id', 'descricao', 'usuario', 'usuario_nome', 'ticket', 'anexos', 'criado_em', 'atualizado_em']
+        fields = ['id', 'uuid', 'descricao', 'usuario', 'usuario_nome', 'ticket', 'anexos', 'criado_em', 'atualizado_em']
         read_only_fields = ['id', 'usuario', 'ticket', 'criado_em', 'atualizado_em']
 
 
@@ -1302,7 +1264,7 @@ class TicketSerializer(serializers.ModelSerializer):
     class Meta:
         model = Ticket
         fields = [
-            'id', 'protocolo', 'titulo', 'descricao', 'status', 'categoria', 'prioridade',
+            'id', 'uuid', 'protocolo', 'titulo', 'descricao', 'status', 'categoria', 'prioridade',
             'usuario_solicitante', 'usuario_solicitante_nome', 'escola', 'instituicao',
             'responsavel', 'responsavel_nome', 'criado_em', 'atualizado_em',
         ]
@@ -1317,7 +1279,7 @@ class LogAuditoriaSerializer(serializers.ModelSerializer):
     class Meta:
         model = LogAuditoria
         fields = [
-            'id', 'acao', 'tabela_afetada', 'registro_id', 'alteracoes', 'ip',
+            'id', 'uuid', 'acao', 'tabela_afetada', 'registro_id', 'alteracoes', 'ip',
             'usuario', 'usuario_nome', 'escola', 'instituicao', 'criado_em',
         ]
         read_only_fields = fields
@@ -1330,7 +1292,7 @@ class PermissaoUsuarioSerializer(serializers.ModelSerializer):
     class Meta:
         model = PermissaoUsuario
         fields = [
-            'id', 'modulo', 'acao', 'concedido', 'usuario', 'usuario_nome',
+            'id', 'uuid', 'modulo', 'acao', 'concedido', 'usuario', 'usuario_nome',
             'escola', 'instituicao', 'concedido_por', 'concedido_por_nome',
             'criado_em', 'atualizado_em',
         ]
@@ -1343,7 +1305,7 @@ class TemplateDocumentoSerializer(serializers.ModelSerializer):
     class Meta:
         model = TemplateDocumento
         fields = [
-            'id', 'titulo', 'documento', 'tipo', 'ativo',
+            'id', 'uuid', 'titulo', 'documento', 'tipo', 'ativo',
             'responsavel', 'criado_por', 'atualizado_por',
             'escola', 'instituicao', 'criado_em', 'atualizado_em',
         ]
@@ -1356,7 +1318,7 @@ class ContratoSerializer(serializers.ModelSerializer):
     class Meta:
         model = Contrato
         fields = [
-            'id', 'documento', 'status', 'arquivo_url', 'template',
+            'id', 'uuid', 'documento', 'status', 'arquivo_url', 'template',
             'escola', 'escola_nome', 'instituicao',
             'responsavel', 'gerado_por', 'atualizado_por',
             'criado_em', 'atualizado_em',
@@ -1372,7 +1334,7 @@ class PromptTemplateSerializer(serializers.ModelSerializer):
     class Meta:
         model = PromptTemplate
         fields = [
-            'id', 'categoria', 'prompt_global', 'personalizado',
+            'id', 'uuid', 'categoria', 'prompt_global', 'personalizado',
             'escola', 'instituicao', 'instituicao_nome', 'criado_em', 'atualizado_em',
         ]
         read_only_fields = ['id', 'categoria', 'criado_em', 'atualizado_em', 'escola', 'instituicao']
@@ -1389,7 +1351,7 @@ class PromptCategoriaSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = PromptCategoria
-        fields = ['id', 'titulo', 'ativo', 'template_resolvido', 'criado_em', 'atualizado_em']
+        fields = ['id', 'uuid', 'titulo', 'ativo', 'template_resolvido', 'criado_em', 'atualizado_em']
         read_only_fields = ['id', 'criado_em', 'atualizado_em']
 
     def get_template_resolvido(self, categoria):

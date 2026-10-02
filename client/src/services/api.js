@@ -978,16 +978,18 @@ export async function listarRelatorioTemplates({ escola, ativo } = {}) {
   );
 }
 
-export async function buscarRelatorioTemplate(templateId) {
-  return getJson(`/relatorio-templates/${templateId}/`, 'buscar template de relatório');
+// `escola` (filtro) e `templateUuid` vão na URL: são UUIDs. No body de
+// criar/atualizar, `escola` é o id (int).
+export async function buscarRelatorioTemplate(templateUuid) {
+  return getJson(`/relatorio-templates/${templateUuid}/`, 'buscar template de relatório');
 }
 
 export async function criarRelatorioTemplate(dados) {
   return enviarJson('/relatorio-templates/criar/', 'POST', dados, 'criar template de relatório');
 }
 
-export async function atualizarRelatorioTemplate(templateId, dados) {
-  return enviarJson(`/relatorio-templates/${templateId}/atualizar/`, 'PATCH', dados, 'atualizar template de relatório');
+export async function atualizarRelatorioTemplate(templateUuid, dados) {
+  return enviarJson(`/relatorio-templates/${templateUuid}/atualizar/`, 'PATCH', dados, 'atualizar template de relatório');
 }
 
 // ─── Consumo da API OpenAI (só superadmin) ───────────────────────────────────

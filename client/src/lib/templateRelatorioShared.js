@@ -750,19 +750,20 @@ export const apiDelete = (url) => requisitar(url, 'DELETE');
 // Cabeçalho da prévia no mesmo critério de _dados_cabecalho
 // (server/api/services/relatorio.py): dados da ESCOLA, com fallback campo a
 // campo para a INSTITUIÇÃO; o logo vem da instituição.
-// `escolaId` = escola que está sendo configurada; sem ela, a do usuário.
-export async function fetchInstituicao(escolaId) {
+// `escolaUuid` = UUID da escola que está sendo configurada; sem ela, a do
+// usuário. URLs da API sempre levam o UUID (o id inteiro vai só no body).
+export async function fetchInstituicao(escolaUuid) {
   const vazio = { nome: 'Sua Escola', cnpj: '', contato: '', logoUrl: null };
   try {
-    let instituicaoId = null;
-    if (!escolaId) {
+    let instituicaoUuid = null;
+    if (!escolaUuid) {
       const me = await apiGet('/me/');
-      escolaId = me.escola ?? me.escola_id;
-      instituicaoId = me.instituicao ?? me.instituicao_id;
+      escolaUuid = me.escola_uuid;
+      instituicaoUuid = me.instituicao_uuid;
     }
-    const escola = escolaId ? await apiGet(`/escolas/${escolaId}/`).catch(() => null) : null;
-    instituicaoId = escola?.instituicao ?? instituicaoId;
-    const inst = instituicaoId ? await apiGet(`/instituicoes/${instituicaoId}/`).catch(() => null) : null;
+    const escola = escolaUuid ? await apiGet(`/escolas/${escolaUuid}/`).catch(() => null) : null;
+    instituicaoUuid = escola?.instituicao_uuid ?? instituicaoUuid;
+    const inst = instituicaoUuid ? await apiGet(`/instituicoes/${instituicaoUuid}/`).catch(() => null) : null;
     if (!escola && !inst) return vazio;
 
     const campo = (nome) => (escola && escola[nome]) || (inst && inst[nome]) || '';
@@ -785,15 +786,15 @@ export async function fetchInstituicao(escolaId) {
   }
 }
 
-/** Modelo (ex.: "classico") do template ativo da escola (`escolaId`, ou a
+/** Modelo (ex.: "classico") do template ativo da escola (`escolaUuid`, ou a
  * do usuário), ou null. Mesmo retorno de antes — só passou a ser por escola. */
-export async function fetchModeloAtivo(escolaId) {
+export async function fetchModeloAtivo(escolaUuid) {
   try {
-    if (!escolaId) {
+    if (!escolaUuid) {
       const me = await apiGet('/me/');
-      escolaId = me.escola ?? me.escola_id;
+      escolaUuid = me.escola_uuid;
     }
-    const url = escolaId ? `/relatorio-templates/?escola=${escolaId}&ativo=1` : '/relatorio-templates/?ativo=1';
+    const url = escolaUuid ? `/relatorio-templates/?escola=${escolaUuid}&ativo=1` : '/relatorio-templates/?ativo=1';
     const ativo = ((await apiGet(url)) || []).find((t) => t.ativo);
     return ativo ? ativo.modelo : null;
   } catch (error) {
@@ -803,21 +804,29 @@ export async function fetchModeloAtivo(escolaId) {
 }
 
 // ---------------- Escola em configuração ----------------
-// Template é POR ESCOLA. A escola vai na URL (?escola=<id>) para acompanhar a
+// Template é POR ESCOLA. A escola vai na URL (?escola=<uuid>) para acompanhar a
 // navegação lista → escolher modelo → editor (e vir de Admin → Relatórios).
 // Sem ?escola, usa a escola do usuário ou, na falta, a primeira ativa do
 // escopo — e grava na URL. Coordenador só enxerga a própria (o backend recorta).
+//
+// Regra do sistema: na URL (rota ou query string) vai o UUID; no body vai o
+// id inteiro. Por isso o hook devolve os dois:
+//   * escolaUuid — o que está na URL; use em links e em chamadas GET;
+//   * escolaId   — o id (int) da mesma escola; use no body de POST/PATCH.
+
+const PARECE_ID = /^\d+$/;
 
 export function useEscolaTemplate() {
   const [searchParams, setSearchParams] = useSearchParams();
-  const escolaId = searchParams.get('escola') || null;
+  const escolaUuid = searchParams.get('escola') || null;
   const [escolas, setEscolas] = useState([]);
   const [pronto, setPronto] = useState(false);
 
-  const trocarEscola = useCallback((id) => {
+  /** Troca a escola em configuração. Recebe o UUID da escola. */
+  const trocarEscola = useCallback((uuid) => {
     setSearchParams((atual) => {
       const novo = new URLSearchParams(atual);
-      if (id) novo.set('escola', String(id)); else novo.delete('escola');
+      if (uuid) novo.set('escola', String(uuid)); else novo.delete('escola');
       return novo;
     }, { replace: true });
   }, [setSearchParams]);
@@ -830,10 +839,16 @@ export function useEscolaTemplate() {
         if (cancelado) return;
         const ativas = (lista || []).filter((e) => e.ativa !== false);
         setEscolas(ativas);
-        if (!escolaId) {
-          const propria = String(me.escola ?? me.escola_id ?? '');
-          const padrao = ativas.find((e) => String(e.id) === propria) || ativas[0];
-          if (padrao) trocarEscola(padrao.id);
+        let atual = escolaUuid;
+        if (atual && PARECE_ID.test(atual)) {
+          // Link/favorito antigo com ?escola=<id>: troca pelo uuid da mesma escola.
+          atual = ativas.find((e) => String(e.id) === atual)?.uuid || null;
+          if (atual) trocarEscola(atual);
+        }
+        if (!atual) {
+          const propria = me.escola_uuid ? String(me.escola_uuid) : '';
+          const padrao = ativas.find((e) => String(e.uuid) === propria) || ativas[0];
+          trocarEscola(padrao ? padrao.uuid : null);
         }
       } catch {
         // Sem a lista de escolas a tela segue com o que vier na URL.
@@ -846,17 +861,30 @@ export function useEscolaTemplate() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  /** Acrescenta ?escola=<id> a uma rota das telas de template. */
-  const comEscola = useCallback((rota, id = escolaId) => {
-    if (!id) return rota;
-    return `${rota}${rota.includes('?') ? '&' : '?'}escola=${id}`;
-  }, [escolaId]);
+  /** Acrescenta ?escola=<uuid> a uma rota (de tela ou de GET na API). */
+  const comEscola = useCallback((rota, uuid = escolaUuid) => {
+    if (!uuid) return rota;
+    return `${rota}${rota.includes('?') ? '&' : '?'}escola=${uuid}`;
+  }, [escolaUuid]);
 
-  const escolaAtual = escolas.find((e) => String(e.id) === String(escolaId)) || null;
-  // `pronto` só quando a escola já está decidida (ou não há nenhuma).
-  return { escolaId, escolas, escolaAtual, trocarEscola, comEscola, pronto: pronto && (Boolean(escolaId) || escolas.length === 0) };
+  const escolaAtual = escolas.find((e) => String(e.uuid) === String(escolaUuid)) || null;
+  const escolaId = escolaAtual ? escolaAtual.id : null;
+  // `pronto` só quando a escola já está decidida (ou não há nenhuma) e não é
+  // um ?escola=<id> antigo esperando a troca pelo uuid.
+  const decidida = Boolean(escolaUuid) && !PARECE_ID.test(escolaUuid);
+  return {
+    escolaUuid, escolaId, escolas, escolaAtual, trocarEscola, comEscola,
+    pronto: pronto && (decidida || escolas.length === 0),
+  };
 }
 
+// ---------------- Rotas das telas de template ----------------
+// As mesmas telas abrem em dois lugares, cada um com a SUA navbar:
+//   * coordenação: /coordenacao/templates/...  (layout do coordenador)
+//   * painel admin: /admin/capa?...            (aba do AdminPage)
+// Os links internos seguem o lugar onde a tela está aberta, para o usuário
+// não ser jogado para o layout do outro perfil.
+// `editar(uuid)` recebe o UUID do template (t.uuid), nunca o id.
 
 export function useRotasTemplate() {
   const { pathname } = useLocation();
@@ -866,12 +894,44 @@ export function useRotasTemplate() {
       noAdmin: true,
       modelos: '/admin/capa',
       nova: (modelo) => `/admin/capa?tela=nova&modelo=${modelo}`,
-      editar: (id) => `/admin/capa?template=${id}`,
+      editar: (uuid) => `/admin/capa?template=${uuid}`,
     }
     : {
       noAdmin: false,
       modelos: '/coordenacao/templates/escolher-modelo',
       nova: (modelo) => `/coordenacao/templates/nova?modelo=${modelo}`,
-      editar: (id) => `/coordenacao/templates/${id}`,
+      editar: (uuid) => `/coordenacao/templates/${uuid}`,
     }), [noAdmin]);
+}
+
+// ---------------- Template novo com a configuração padrão ----------------
+// Usado pelo "Selecionar" de um modelo que a escola ainda não tinha: cria o
+// template já pronto para uso, sem passar pelo editor. Mesmos valores
+// iniciais do TemplateEditorPage para um template novo — se mudar um, mude
+// o outro.
+// `itemsSumario`: a ordem/visibilidade em uso na escola (trocar a capa não
+// deve desfazer o que foi configurado em "Ordem das seções").
+export function templatePadraoDoModelo(modeloId, nomeEscola, itemsSumario) {
+  const modelo = MODELOS.find((m) => m.id === modeloId);
+  const comMascote = MODELOS_COM_IMAGEM_PRINCIPAL.includes(modeloId);
+  return {
+    nome: `${modelo?.nome || 'Template'} — ${nomeEscola || 'Sua Escola'}`,
+    modelo: modeloId,
+    usa_foto_aluno: false,
+    config: {
+      paleta: PALETAS.padrao.cores,
+      tipoRelatorio: 'Relatório Individual',
+      tituloRelatorio: 'Relatório de Acompanhamento da Aprendizagem',
+      fraseDestaque: '',
+      elementos: { ...ELEMENTOS_VISIVEIS_PADRAO, mascot: comMascote },
+      imagemPrincipal: comMascote ? 'mascote' : 'nenhuma',
+      fonteCombo: TIPOGRAFIA_PADRAO.fonteCombo,
+      corTexto: TIPOGRAFIA_PADRAO.corTexto,
+      nomeTamanho: TIPOGRAFIA_PADRAO.nomeTamanho,
+      tituloTamanho: TIPOGRAFIA_PADRAO.tituloTamanho,
+      alinhamento: null,
+    },
+    items_sumario: (Array.isArray(itemsSumario) && itemsSumario.length ? itemsSumario : SECOES_PADRAO)
+      .map((item) => ({ ...item })),
+  };
 }

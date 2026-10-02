@@ -544,9 +544,9 @@ function Navbar({ onTabChange, tabAtiva }) {
 // ─── Capa do relatório (aba "capa") ──────────────────────────────────────────
 // As mesmas telas de template da coordenação, abertas DENTRO do painel admin
 // (mesma navbar). Qual tela aparece vem da URL:
-//   /admin/capa?escola=..                       → escolher modelo
-//   /admin/capa?tela=nova&modelo=..&escola=..   → editor (novo)
-//   /admin/capa?template=<id>&escola=..         → editor (existente)
+//   /admin/capa?escola=<uuid>                         → escolher modelo
+//   /admin/capa?tela=nova&modelo=..&escola=<uuid>     → editor (novo)
+//   /admin/capa?template=<uuid>&escola=<uuid>         → editor (existente)
 
 function CapaRelatorioAdmin() {
   const [searchParams] = useSearchParams();
