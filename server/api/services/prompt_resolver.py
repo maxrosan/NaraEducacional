@@ -48,7 +48,19 @@ def resolver_prompt(titulo_categoria: str, escola_id=None, fallback_arquivo: str
     try:
         from api.models import PromptCategoria, PromptTemplate
 
-        categoria = PromptCategoria.objects.filter(titulo=titulo_categoria, ativo=True).first()
+        # iexact: mesmo critério da migration 0003. Renomear só a caixa no
+        # admin ("relatórios - conclusão") não pode desligar o banco em
+        # silêncio e jogar tudo para o .txt.
+        categoria = (
+            PromptCategoria.objects.filter(titulo__iexact=titulo_categoria.strip(), ativo=True)
+            .order_by('criado_em')
+            .first()
+        )
+        if categoria is None:
+            logger.warning(
+                "[prompt_resolver] Categoria '%s' não existe ou está inativa no banco; usando fallback.",
+                titulo_categoria,
+            )
         if categoria:
             # 1. Personalizado mais recente da escola
             if escola_id:

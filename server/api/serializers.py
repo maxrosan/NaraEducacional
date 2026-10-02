@@ -1348,16 +1348,14 @@ class PromptCategoriaSerializer(serializers.ModelSerializer):
 
     def get_template_resolvido(self, categoria):
         escola_id = self.context.get('escola_id')
-        templates = list(categoria.templates.all())
+        base = PromptTemplate._base_manager.filter(categoria=categoria).order_by('-criado_em')
 
         if escola_id:
-            personalizado = next(
-                (t for t in templates if str(t.escola_id) == str(escola_id)), None,
-            )
+            personalizado = base.filter(escola_id=escola_id).first()
             if personalizado and personalizado.personalizado.strip():
                 return {'origem': 'personalizado', 'texto': personalizado.personalizado}
 
-        global_tpl = next((t for t in templates if t.escola_id is None and t.instituicao_id is None), None)
+        global_tpl = base.filter(escola__isnull=True, instituicao__isnull=True).first()
         if global_tpl and global_tpl.prompt_global.strip():
             return {'origem': 'global', 'texto': global_tpl.prompt_global}
 

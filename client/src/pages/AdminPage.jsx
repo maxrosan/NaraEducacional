@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useMemo } from 'react';
 import { Helmet } from 'react-helmet-async';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
@@ -54,6 +54,23 @@ const NAV_ITEMS = [
   },
 ];
 
+// Abas exclusivas do superadmin: somem do menu e a URL direta redireciona.
+// O backend também barra (403) — isto é só para não mostrar tela quebrada.
+const ABAS_SOMENTE_SUPERADMIN = new Set(["categorias-prompt"]);
+
+/** Nível do usuário logado. O backend novo manda `nivel`; `perfil` é do legado. */
+function nivelDoUsuario(user) {
+  return user?.nivel ?? user?.perfil ?? user?.user_metadata?.perfil ?? "";
+}
+
+/** Remove do menu o que o usuário não pode ver (e grupos que ficarem vazios). */
+function filtrarNav(itens, ehSuperadmin) {
+  return itens
+    .filter((item) => ehSuperadmin || !ABAS_SOMENTE_SUPERADMIN.has(item.tab))
+    .map((item) => (item.children ? { ...item, children: filtrarNav(item.children, ehSuperadmin) } : item))
+    .filter((item) => !item.children || item.children.length > 0);
+}
+
 /** O item (ou algum descendente dele) aponta para `tab`. */
 function contemTab(item, tab) {
   return item.tab === tab || (item.children ?? []).some((c) => contemTab(c, tab));
@@ -62,6 +79,9 @@ function contemTab(item, tab) {
 // ─── Helpers de usuário ───────────────────────────────────────────────────────
 
 const PERFIL_LABEL = {
+  superadmin:             "Super Administrador",
+  suporte:                "Suporte",
+  vendedor:               "Vendedor",
   admin:                  "Administrador",
   coordenador:            "Coordenador",
   professor:              "Professor",
@@ -175,9 +195,10 @@ function Navbar({ onTabChange, tabAtiva }) {
 
   const nomeCompleto = user?.user_metadata?.full_name || user?.nome || user?.email || "Usuário";
   const email        = user?.email ?? "";
-  const perfil       = user?.perfil ?? user?.user_metadata?.perfil ?? "";
+  const perfil       = nivelDoUsuario(user);
   const iniciais     = nomeIniciais(nomeCompleto);
   const perfilLabel  = PERFIL_LABEL[perfil] || perfil || "Usuário";
+  const navItems     = useMemo(() => filtrarNav(NAV_ITEMS, perfil === "superadmin"), [perfil]);
 
   async function handleSair(close) {
     close?.();
@@ -204,7 +225,7 @@ function Navbar({ onTabChange, tabAtiva }) {
 
         {/* Menu central — desktop */}
         <nav className="hidden lg:flex items-center gap-1">
-          {NAV_ITEMS.map((item) => {
+          {navItems.map((item) => {
             if (!item.children) {
               const ativo = tabAtiva === item.tab;
               return (
@@ -380,7 +401,7 @@ function Navbar({ onTabChange, tabAtiva }) {
 
               {/* Navegação */}
               <nav className="flex-1 overflow-y-auto px-3 py-3 space-y-0.5">
-                {NAV_ITEMS.map((item) => {
+                {navItems.map((item) => {
                   if (!item.children) {
                     const ativo = tabAtiva === item.tab;
                     return (
@@ -527,6 +548,8 @@ const AdminPage = () => {
   const { tab }  = useParams();
   const query    = useQuery();
   const turmaId  = query.get('turma_id');
+  const { user } = useAuth();
+  const ehSuperadmin = nivelDoUsuario(user) === 'superadmin';
 
   // /admin sem aba abre o dashboard; /admin?turma_id=... continua abrindo Alunos.
   const initialTab = tab || (turmaId ? 'alunos' : 'dashboard');
@@ -536,7 +559,12 @@ const AdminPage = () => {
   useEffect(() => {
     if (!tab && !turmaId) navigate('/admin/dashboard', { replace: true });
     else if (ABAS_REMOVIDAS[tab]) navigate(`/admin/${ABAS_REMOVIDAS[tab]}`, { replace: true });
-  }, [tab, turmaId, navigate]);
+    // Aba exclusiva do superadmin acessada por URL direta. Só decide com o
+    // usuário já carregado, para não expulsar o superadmin durante o login.
+    else if (user && ABAS_SOMENTE_SUPERADMIN.has(tab) && !ehSuperadmin) {
+      navigate('/admin/dashboard', { replace: true });
+    }
+  }, [tab, turmaId, navigate, user, ehSuperadmin]);
 
   function handleTabChange(value) {
     navigate(`/admin/${value}`);
@@ -575,7 +603,7 @@ const AdminPage = () => {
               <TabsTrigger value="registros">Registros</TabsTrigger>
               <TabsTrigger value="openai">OpenAI</TabsTrigger>
               <TabsTrigger value="prompts">Prompts</TabsTrigger>
-              <TabsTrigger value="categorias-prompt">Categorias</TabsTrigger>
+              {ehSuperadmin && <TabsTrigger value="categorias-prompt">Categorias</TabsTrigger>}
             </TabsList>
 
             <AnimatePresence mode="wait">
@@ -600,7 +628,10 @@ const AdminPage = () => {
                 <TabsContent value="registros"><RegistrosTab /></TabsContent>
                 <TabsContent value="openai"><OpenAIUsagePage /></TabsContent>
                 <TabsContent value="prompts"><PromptsTab /></TabsContent>
-                <TabsContent value="categorias-prompt"><CategoriasPromptTab /></TabsContent>
+                {/* Nem monta para os demais: evita chamadas que voltariam 403. */}
+                {ehSuperadmin && (
+                  <TabsContent value="categorias-prompt"><CategoriasPromptTab /></TabsContent>
+                )}
               </motion.div>
             </AnimatePresence>
           </Tabs>

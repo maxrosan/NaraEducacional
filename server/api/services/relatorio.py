@@ -34,7 +34,8 @@ from api.models import (
 from api.openai_client import get_openai_client
 from api.storage import refresh_presigned_url
 
-from api.services.openai_usage import registrar_uso_openai
+from api.services.guarda_idioma import criar_completion_com_guarda
+from api.services.html_seguro import fechar_html
 from api.services.prompt_resolver import resolver_prompt
 from api.services.relatorio_capa import renderizar_capa, ELEMENTOS_VISIVEIS_PADRAO
 from api.escopo import filtro_oficiais_e_da_escola
@@ -70,96 +71,112 @@ _ICONES_SECAO = {
     "conclusao": "💛",
 }
 
-# ── Rede de segurança contra vazamento de idioma da IA ──────────────────
-# Modelos de raciocínio (como o GPT_MODEL configurado acima) ocasionalmente
-# intercalam trechos em outro alfabeto (hebraico/aramaico, árabe, cirílico,
-# etc.) no meio de uma resposta majoritariamente em português. Isso não tem
-# a ver com o conteúdo dos dados de entrada — é um comportamento conhecido
-# desses modelos quando o idioma de saída não é reforçado explicitamente.
-_REFORCO_IDIOMA = (
-    "\n\nREGRA DE IDIOMA (OBRIGATÓRIA, PRIORIDADE MÁXIMA): responda sempre e "
-    "exclusivamente em português do Brasil, do início ao fim do texto. Nunca "
-    "inclua palavras, nomes, expressões ou caracteres de outro idioma ou "
-    "alfabeto (árabe, hebraico, aramaico, cirílico, chinês, etc.), mesmo que "
-    "isolados no meio de uma frase em português."
-)
-
-# Faixas Unicode de alfabetos que não deveriam aparecer em um relatório em
-# português — sinal de vazamento de idioma do modelo.
-_FAIXAS_SCRIPT_ESTRANHO = [
-    (0x0590, 0x05FF),  # Hebraico (também usado para transliterar aramaico)
-    (0x0600, 0x06FF),  # Árabe
-    (0x0700, 0x074F),  # Siríaco (aramaico moderno)
-    (0x0400, 0x04FF),  # Cirílico
-    (0x0900, 0x097F),  # Devanágari
-    (0x3040, 0x30FF),  # Japonês (hiragana/katakana)
-    (0x4E00, 0x9FFF),  # CJK (chinês/kanji)
-    (0xAC00, 0xD7A3),  # Coreano (hangul)
-]
+# ── Rede de segurança contra vazamento de idioma da IA ──────────────
+# A guarda vive em api/services/guarda_idioma.py, compartilhada com os
+# outros serviços que geram texto por IA (análise de produções, extração de
+# observações, planejamento). Aqui fica só o adaptador com a assinatura que
+# as seções do relatório já usavam.
 
 
-def _contem_script_estranho(texto: str) -> bool:
-    """Detecta caracteres de alfabetos que não deveriam aparecer em texto
-    em português — sinal de vazamento de idioma do modelo."""
-    if not texto:
-        return False
-    return any(
-        inicio <= ord(ch) <= fim
-        for ch in texto
-        for inicio, fim in _FAIXAS_SCRIPT_ESTRANHO
-    )
+# Placeholder de prompt que ninguém substituiu: `{habilidades_bncc}` e
+# `{analises_producoes}` iam literalmente para a IA no relato desde abril.
+_PLACEHOLDER_RE = re.compile(r"\{[a-z_]+\}")
 
 
-def _remover_script_estranho(texto: str) -> str:
-    """Última rede de segurança: remove apenas os caracteres do alfabeto
-    estranho, preservando o resto do texto em português."""
+def _sem_placeholder_sobrando(conteudo, log_prefix="[OPENAI]"):
+    """Troca por "(não informado)" o placeholder que chegou até aqui sem
+    substituição, e registra. Os prompts são editáveis por escola: um
+    placeholder novo, ou com erro de digitação, não pode virar texto cru na
+    frente da IA."""
+    if not isinstance(conteudo, str):
+        return conteudo
+    sobrando = sorted(set(_PLACEHOLDER_RE.findall(conteudo)))
+    if not sobrando:
+        return conteudo
+    logger.warning("%s Placeholder sem substituição no prompt: %s", log_prefix, ", ".join(sobrando))
+    return _PLACEHOLDER_RE.sub("(não informado)", conteudo)
+
+
+def _preencher_prompt(template, **valores):
+    """Substitui `{chave}` pelos valores, tolerando None/números.
+
+    `str.replace` com None lança TypeError — e como cada seção engole
+    exceções, um `idade=None` derrubava a seção inteira para o fallback sem
+    nenhuma pista no log. Aqui None/vazio vira "Não informado".
+    """
+    resultado = template or ""
+    for chave, valor in valores.items():
+        texto = "Não informado" if valor is None or str(valor).strip() == "" else str(valor)
+        resultado = resultado.replace("{" + chave + "}", texto)
+    return resultado
+
+
+def _tem_placeholder(template, chave):
+    return ("{" + chave + "}") in (template or "")
+
+
+def _texto_para_html(texto):
+    """Texto puro (com quebras de linha) -> parágrafos HTML escapados.
+    Usado nos fallbacks, para não jogar texto cru com \\n dentro de um <p>."""
+    blocos = [b.strip() for b in re.split(r"\n\s*\n", texto or "") if b.strip()]
     return "".join(
-        ch for ch in texto
-        if not any(inicio <= ord(ch) <= fim for inicio, fim in _FAIXAS_SCRIPT_ESTRANHO)
+        "<p>" + "<br>".join(escape(linha) for linha in bloco.splitlines()) + "</p>"
+        for bloco in blocos
     )
+
+
+# Schema da seção de atividades: o código sempre fez json.loads esperando
+# {"texto": ...}, mas não impunha o formato — resposta em texto livre caía no
+# fallback e o relatório saía com o planejamento cru.
+_SCHEMA_ATIVIDADES = {
+    "type": "json_schema",
+    "json_schema": {
+        "name": "secao_atividades",
+        "strict": True,
+        "schema": {
+            "type": "object",
+            "additionalProperties": False,
+            "properties": {
+                "texto": {
+                    "type": "string",
+                    "description": "Narrativa da seção 'O que vivemos juntos' em HTML (parágrafos <p>), sem título.",
+                },
+            },
+            "required": ["texto"],
+        },
+    },
+}
 
 
 def _gerar_com_guarda_idioma(
     openai_client, *, model, messages, max_completion_tokens,
     usuario=None, response_format=None, log_prefix="[OPENAI]",
 ):
-    """Chama chat.completions.create com uma rede de segurança contra
-    vazamento de idioma: se a resposta vier com caracteres de outro
-    alfabeto, tenta de novo uma vez reforçando a instrução de idioma. Se
-    persistir mesmo assim, remove só os caracteres estranhos e loga um
-    aviso para investigação — nunca bloqueia a geração do relatório.
+    """Chama chat.completions.create com a guarda de idioma
+    (guarda_idioma.criar_completion_com_guarda): a regra de idioma entra no
+    prompt de toda chamada e, se a resposta ainda vier com letra de outro
+    alfabeto, tenta de novo com a regra reforçada e só então remove os
+    trechos estranhos — nunca bloqueia a geração do relatório.
 
     Retorna o texto bruto (str) da resposta; quem chamar continua fazendo o
     parsing específico da seção (JSON, code fences etc.) normalmente.
     """
-    kwargs = {"model": model, "messages": messages, "max_completion_tokens": max_completion_tokens}
+    kwargs = {"model": model, "max_completion_tokens": max_completion_tokens}
     if response_format is not None:
         kwargs["response_format"] = response_format
 
-    response = openai_client.chat.completions.create(**kwargs)
-    registrar_uso_openai(response=response, usuario=usuario)
-    texto = response.choices[0].message.content or ""
+    # Só a mensagem de instrução (o template do prompt); a de dados traz texto
+    # da professora, que pode ter chaves por conta própria.
+    if messages:
+        messages = [dict(messages[0], content=_sem_placeholder_sobrando(messages[0].get("content"), log_prefix))] + list(messages[1:])
 
-    if not _contem_script_estranho(texto):
-        return texto
-
-    logger.warning("%s Vazamento de idioma detectado; tentando novamente com reforço de instrução.", log_prefix)
-    mensagens_reforcadas = [dict(m) for m in messages]
-    mensagens_reforcadas[0] = {
-        **mensagens_reforcadas[0],
-        "content": mensagens_reforcadas[0]["content"] + _REFORCO_IDIOMA,
-    }
-    kwargs["messages"] = mensagens_reforcadas
-
-    response_retry = openai_client.chat.completions.create(**kwargs)
-    registrar_uso_openai(response=response_retry, usuario=usuario)
-    texto_retry = response_retry.choices[0].message.content or ""
-
-    if not _contem_script_estranho(texto_retry):
-        return texto_retry
-
-    logger.warning("%s Vazamento de idioma persistiu; removendo caracteres estranhos.", log_prefix)
-    return _remover_script_estranho(texto_retry)
+    return criar_completion_com_guarda(
+        openai_client,
+        messages=messages,
+        usuario=usuario,
+        log_prefix=log_prefix,
+        **kwargs,
+    )
 
 def _normalizar_elementos(template):
     """Valida template.config['elementos'] (JSON sem schema garantido).
@@ -569,7 +586,7 @@ def _gerar_secao_atividades(info_crianca, periodo, nome_crianca, usuario=None, e
         o_que_vivemos_juntos = "Diversas experiências de aprendizagem foram vivenciadas durante este período.\n\n"
 
     if not tem_atividade:
-        return f"<p>{o_que_vivemos_juntos}</p>" if o_que_vivemos_juntos else ""
+        return _texto_para_html(o_que_vivemos_juntos)
 
     try:
         logger.debug("[OPENAI] enviando prompt da seção de atividades")
@@ -583,12 +600,18 @@ def _gerar_secao_atividades(info_crianca, periodo, nome_crianca, usuario=None, e
             fallback_arquivo="relatorio_atividades.txt",
         )
 
-        prompt = (
-            prompt_template
-            .replace("{turma}", turma_nome)
-            .replace("{idade}", idade)
-            .replace("{planejamentos}", o_que_vivemos_juntos)
+        prompt = _preencher_prompt(
+            prompt_template,
+            turma=turma_nome,
+            idade=idade,
+            planejamentos=o_que_vivemos_juntos,
         )
+        # Se o prompt já embute os planejamentos, não manda de novo como
+        # mensagem do usuário (antes ia duas vezes e comia o limite de tokens).
+        if _tem_placeholder(prompt_template, "planejamentos"):
+            mensagem_usuario = "Gere a seção conforme as instruções, usando os planejamentos acima."
+        else:
+            mensagem_usuario = o_que_vivemos_juntos
         openai_client = get_openai_client()
 
         raw_content = _gerar_com_guarda_idioma(
@@ -596,21 +619,16 @@ def _gerar_secao_atividades(info_crianca, periodo, nome_crianca, usuario=None, e
             model=GPT_MODEL,
             messages=[
                 {"role": "system", "content": prompt},
-                {"role": "user", "content": o_que_vivemos_juntos},
+                {"role": "user", "content": mensagem_usuario},
             ],
             max_completion_tokens=MAX_TOKENS,
             usuario=usuario,
+            response_format=_SCHEMA_ATIVIDADES,
             log_prefix="[OPENAI-ATIVIDADES]",
-        ).strip()
+        )
 
-        cleaned_content = raw_content.strip()
-        if cleaned_content.startswith('```'):
-            cleaned_content = cleaned_content.strip('`').strip()
-            if cleaned_content.lower().startswith('json'):
-                cleaned_content = cleaned_content[4:].strip()
-
-        parsed = json.loads(cleaned_content)
-        texto = parsed.get('texto', '').strip()
+        parsed = json.loads(_strip_code_fences(raw_content))
+        texto = (parsed.get('texto') or '').strip()
         if not texto:
             raise ValueError("Resposta JSON sem campo 'texto'.")
 
@@ -621,10 +639,28 @@ def _gerar_secao_atividades(info_crianca, periodo, nome_crianca, usuario=None, e
         return "<p>A geração automática de narrativa está temporariamente indisponível.</p>"
     except Exception:
         logger.exception("[OPENAI] falha ao gerar a seção de atividades.")
-        return f"<p>{o_que_vivemos_juntos}</p>" if o_que_vivemos_juntos else "<p>Diversas experiências de aprendizagem foram vivenciadas durante este período.</p>"
+        return _texto_para_html(o_que_vivemos_juntos) or "<p>Diversas experiências de aprendizagem foram vivenciadas durante este período.</p>"
 
 
-def _gerar_secao_relatos(nome_crianca, periodo, info_crianca, usuario=None, escola_id=None):
+_SEM_BNCC = "Nenhuma habilidade da BNCC registrada para a criança no período."
+_SEM_PRODUCOES = "Nenhuma produção (escrita ou desenho) analisada no período."
+_TAG_HTML_RE = re.compile(r"<[^>]+>")
+
+
+def _insumo_ou_ausente(texto, ausente):
+    """Texto para o prompt; sem dado (vazio, "Sem registros…", "Erro…"), a frase
+    que diz à IA que não há — nunca campo em branco, que ela leria como
+    esquecimento do sistema."""
+    limpo = _TAG_HTML_RE.sub("", texto or "").strip()
+    if not limpo or limpo.startswith((
+        "Sem ", "Erro ", "Não foi possível", "A análise automática", "A geração automática",
+    )):
+        return ausente
+    return limpo
+
+
+def _gerar_secao_relatos(nome_crianca, periodo, info_crianca, usuario=None, escola_id=None,
+                        habilidades_bncc=None, analises_producoes=None):
     """Seção 2: Relatos individuais — busca observações e gera narrativa via IA."""
     relatos_individuais = buscar_relatos_individuais_crianca(
         nome_crianca, periodo, aluno_id=info_crianca.get('id'),
@@ -651,13 +687,20 @@ def _gerar_secao_relatos(nome_crianca, periodo, info_crianca, usuario=None, esco
             escola_id=escola_id,
             fallback_arquivo="relatorio_relato_individual.txt",
         )
-        prompt = (
-            prompt_template
-            .replace("{nome_aluno}", nome_crianca)
-            .replace("{turma}", turma_nome)
-            .replace("{idade}", idade)
-            .replace("{observacoes}", observacoes_texto)
+        prompt = _preencher_prompt(
+            prompt_template,
+            nome_aluno=nome_crianca,
+            turma=turma_nome,
+            idade=idade,
+            observacoes=observacoes_texto,
+            habilidades_bncc=_insumo_ou_ausente(habilidades_bncc, _SEM_BNCC),
+            analises_producoes=_insumo_ou_ausente(analises_producoes, _SEM_PRODUCOES),
         )
+        # Observações já embutidas no prompt -> não reenviar como mensagem.
+        if _tem_placeholder(prompt_template, "observacoes"):
+            mensagem_usuario = "Escreva o relato individual conforme as instruções, usando as observações acima."
+        else:
+            mensagem_usuario = observacoes_texto
         openai_client = get_openai_client()
 
         raw_content = _gerar_com_guarda_idioma(
@@ -665,7 +708,7 @@ def _gerar_secao_relatos(nome_crianca, periodo, info_crianca, usuario=None, esco
             model=GPT_MODEL,
             messages=[
                 {"role": "system", "content": prompt},
-                {"role": "user", "content": observacoes_texto},
+                {"role": "user", "content": mensagem_usuario},
             ],
             max_completion_tokens=MAX_TOKENS,
             usuario=usuario,
@@ -711,6 +754,10 @@ _SCHEMA_PRODUCOES = {
 }
 
 
+def _analise_falhou(registro) -> bool:
+    return (registro.analise_detalhada or '').lstrip().startswith('FALHA NA ANÁLISE')
+
+
 def _gerar_secao_producoes(nome_crianca, aluno_id, periodo=None, usuario=None, escola_id=None):
     """Seção 3: Produções — busca registros de escrita/desenho e gera narrativa via IA.
 
@@ -739,8 +786,12 @@ def _gerar_secao_producoes(nome_crianca, aluno_id, periodo=None, usuario=None, e
             criado_em__date__gte=data_inicio, criado_em__date__lte=data_fim
         )
 
-    registros_escrita = list(registros_escrita.order_by('-criado_em'))
-    registros_desenho = list(registros_desenho.order_by('-criado_em'))
+    # Análise que falhou (IA fora do ar, tempo esgotado, JSON que não abriu)
+    # não é insumo: o texto "FALHA NA ANÁLISE TÉCNICA" iria para a IA que
+    # escreve a seção e de lá para a família. A professora vê a falha na tela
+    # de produções e manda de novo.
+    registros_escrita = [r for r in registros_escrita.order_by('-criado_em') if not _analise_falhou(r)]
+    registros_desenho = [r for r in registros_desenho.order_by('-criado_em') if not _analise_falhou(r)]
     logger.debug("[PRODUÇÕES] %d escritas e %d desenhos no período", len(registros_escrita), len(registros_desenho))
 
     resultado = {
@@ -784,7 +835,9 @@ def _gerar_secao_producoes(nome_crianca, aluno_id, periodo=None, usuario=None, e
                 escola_id=escola_id,
                 fallback_arquivo="relatorio_producoes.txt",
             )
-            .replace("{nome_crianca}", nome_crianca)
+        )
+        prompts_producoes = _preencher_prompt(
+            prompts_producoes, nome_crianca=nome_crianca, nome_aluno=nome_crianca,
         )
         openai_client = get_openai_client()
 
@@ -936,6 +989,44 @@ _ASSINATURA_IA_RE = re.compile(
 )
 
 
+# Parágrafo de despedida/assinatura escrito pela IA, em QUALQUER posição.
+# A regex acima só pega o último parágrafo; quando a IA emite algo depois da
+# assinatura (visto em relatório real: uma linha solta vinda do planejamento),
+# a assinatura dela sobrevivia e o PDF saía com duas — a da IA grudada,
+# "Com carinho,SilvanaProfessora da Turma", e logo abaixo a do backend.
+_PARAGRAFO_RE = re.compile(r'<p\b[^>]*>.*?</p>', re.IGNORECASE | re.DOTALL)
+_DESPEDIDA_RE = re.compile(
+    r'^\s*(com carinho|com afeto|com amor|carinhosamente|atenciosamente|'
+    r'um abraço|abraços|um grande abraço)\b',
+    re.IGNORECASE,
+)
+# Despedida de verdade é curta. Parágrafo longo que por acaso começa com
+# "Com carinho, ela cuidou das plantas..." é conteúdo e fica.
+_DESPEDIDA_MAX_CARACTERES = 120
+
+
+def _remover_assinaturas_da_ia(html):
+    """Tira do corpo da carta todo parágrafo que seja assinatura/despedida da
+    IA — a assinatura oficial é anexada pelo backend (_montar_assinatura_html).
+
+    Critérios, em ordem de certeza:
+      - usa `class="nome"`/`class="cargo"`: marcação do prompt antigo, que só
+        existe em assinatura;
+      - texto visível curto que começa com uma fórmula de despedida.
+    """
+    def _talvez_remover(m):
+        paragrafo = m.group(0)
+        if re.search(r'class="(nome|cargo)"', paragrafo, re.IGNORECASE):
+            return ''
+        texto = re.sub(r'<[^>]+>', ' ', paragrafo)
+        texto = re.sub(r'\s+', ' ', texto).strip()
+        if len(texto) <= _DESPEDIDA_MAX_CARACTERES and _DESPEDIDA_RE.match(texto):
+            return ''
+        return paragrafo
+
+    return _PARAGRAFO_RE.sub(_talvez_remover, html or '')
+
+
 def _montar_assinatura_html(nome_professora):
     """Bloco fixo de assinatura da conclusão — montado pelo backend, e não pela
     IA, porque o prompt antigo pedia <span class="nome">/<span class="cargo">
@@ -967,22 +1058,40 @@ def _gerar_secao_conclusao(
         fallback_arquivo="relatorio_conclusao.txt",
     )
 
-    prompt = (
-        template_prompt
-        .replace("{nome_aluno}", nome_crianca)
-        .replace("{turma}", turma_nome)
-        .replace("{idade}", idade)
-        .replace("{nome_professora}", nome_professora)
-        .replace("{relato_individual}", secao_relatos)
+    # Insumos "sem dado" (ex.: "<p>Sem registros de observação BNCC...</p>",
+    # "<p>Erro ao recuperar...</p>") viram uma frase explícita para a IA,
+    # como já acontecia no relato.
+    relato_ia = _insumo_ou_ausente(secao_relatos, "Sem relatos individuais registrados no período.")
+    atividades_ia = _insumo_ou_ausente(analise_completa, "Sem planejamentos registrados no período.")
+    bncc_ia = _insumo_ou_ausente(secao_registros_observacao, _SEM_BNCC)
+    producoes_ia = _insumo_ou_ausente(secao_producoes, _SEM_PRODUCOES)
+
+    prompt = _preencher_prompt(
+        template_prompt,
+        nome_aluno=nome_crianca,
+        turma=turma_nome,
+        idade=idade,
+        nome_professora=nome_professora,
+        relato_individual=relato_ia,
+        habilidades_bncc=bncc_ia,
+        analises_producoes=producoes_ia,
+        atividades=atividades_ia,
     )
 
-    contexto = (
-        f"Nome da criança: {nome_crianca}\n\n"
-        f"--- RELATO INDIVIDUAL ---\n{secao_relatos}\n\n"
-        f"--- O QUE VIVEMOS JUNTOS ---\n{analise_completa}\n\n"
-        f"--- HABILIDADES BNCC ---\n{secao_registros_observacao}\n\n"
-        f"--- ANÁLISES DE PRODUÇÕES ---\n{secao_producoes}\n"
-    )
+    # Só manda no contexto o que o prompt ainda não embutiu (antes o relato
+    # ia duas vezes: no {relato_individual} e no bloco abaixo).
+    blocos = [f"Nome da criança: {nome_crianca}"]
+    if not _tem_placeholder(template_prompt, "relato_individual"):
+        blocos.append(f"--- RELATO INDIVIDUAL ---\n{relato_ia}")
+    if not _tem_placeholder(template_prompt, "atividades"):
+        blocos.append(f"--- O QUE VIVEMOS JUNTOS ---\n{atividades_ia}")
+    if not _tem_placeholder(template_prompt, "habilidades_bncc"):
+        blocos.append(f"--- HABILIDADES BNCC ---\n{bncc_ia}")
+    if not _tem_placeholder(template_prompt, "analises_producoes"):
+        blocos.append(f"--- ANÁLISES DE PRODUÇÕES ---\n{producoes_ia}")
+    contexto = "\n\n".join(blocos) + "\n"
+
+    assinatura = _montar_assinatura_html(nome_professora)
 
     try:
         openai_client = get_openai_client()
@@ -994,23 +1103,29 @@ def _gerar_secao_conclusao(
                 {"role": "system", "content": prompt},
                 {"role": "user", "content": contexto},
             ],
-            max_completion_tokens=1200,
+            max_completion_tokens=MAX_TOKENS,
             usuario=usuario,
             log_prefix="[OPENAI-CONCLUSAO]",
         )
 
         secao_conclusao = _strip_code_fences(raw_content)
         logger.debug("[OPENAI-CONCLUSAO] análise recebida (%d caracteres)", len(secao_conclusao))
-        # Remove assinatura/despedida que a IA ainda possa ter emitido...
+        # Remove assinatura/despedida que a IA ainda possa ter emitido — em
+        # qualquer posição, não só no fim (ver _remover_assinaturas_da_ia)...
+        secao_conclusao = _remover_assinaturas_da_ia(secao_conclusao)
         secao_conclusao = _ASSINATURA_IA_RE.sub("", secao_conclusao).rstrip()
+        if not secao_conclusao:
+            logger.warning("[OPENAI-CONCLUSAO] resposta vazia da IA.")
+            secao_conclusao = "<p>Não foi possível gerar a conclusão automaticamente neste momento.</p>"
         # ...e anexa o bloco fixo, estilizado pelo CSS do relatório.
-        return secao_conclusao + _montar_assinatura_html(nome_professora)
+        return secao_conclusao + assinatura
     except RuntimeError as openai_config_error:
         logger.error("[OPENAI] configuração ausente para conclusão: %s", openai_config_error)
-        return "<p>Não foi possível gerar a conclusão.</p>" + _montar_assinatura_html(nome_professora)
+        return "<p>Não foi possível gerar a conclusão.</p>" + assinatura
     except Exception:
+        # Antes devolvia "" — o relatório saía sem conclusão E sem assinatura.
         logger.exception("[OPENAI] falha ao gerar a conclusão.")
-        return ""
+        return "<p>Não foi possível gerar a conclusão automaticamente neste momento.</p>" + assinatura
 
 
 def _dados_cabecalho(info_crianca) -> dict:
@@ -1066,6 +1181,47 @@ def _dados_cabecalho(info_crianca) -> dict:
         'escola_contato': ' | '.join(partes_contato),
         'logo_escola_html': logo_html,
     }
+
+
+def montar_pagina_relatorio(icone, titulo, corpo_html, *, logo_escola_html='',
+                            escola_nome='', linha_identificacao=''):
+    """Uma `.pagina` A4 completa (cabeçalho, seção, rodapé).
+
+    É a unidade que o paginador da impressão (api/static/pdf/paginacao.js)
+    mede e, quando passa da folha, clona para a continuação — então esta
+    marcação é contrato com ele: `.pagina` > `.header-escola` ... `.secao-header
+    h2` + `.secao-body` ... `.rodape`. No nível do módulo (e não aninhada em
+    gerar_relatorio_com_ia) para o teste de paginação contra o renderizador de
+    verdade montar exatamente a mesma página que a produção.
+
+    O corpo passa por `fechar_html`: é onde entra o texto da IA, e uma tag
+    cortada nele (`</final` sem `>`) já aninhou o relatório inteiro dentro de
+    uma seção. Nenhum corpo sai daqui desequilibrado.
+    """
+    corpo_html = fechar_html(corpo_html)
+    return (
+        '<div class="pagina">'
+        '<div class="barra-topo"></div>'
+        '<div class="header-escola">'
+        f'<div class="logo-escola">{logo_escola_html}</div>'
+        '<div class="escola-info">'
+        f'<h1>{escola_nome}</h1>'
+        f'<p>{linha_identificacao}</p>'
+        '</div>'
+        '</div>'
+        '<div class="conteudo">'
+        '<div class="secao sec-producoes">'
+        f'<div class="secao-header"><span class="icone">{icone}</span><h2>{titulo}</h2></div>'
+        f'<div class="secao-body">{corpo_html}</div>'
+        '</div>'
+        '</div>'
+        '<div class="rodape">'
+        '<span class="rodape-nota">💫 Relatório elaborado com base em observações sistemáticas e análise do desenvolvimento integral da criança.</span>'
+        '<span class="rodape-nara">NARAEDU • naraeducacional.com</span>'
+        '</div>'
+        '<div class="barra-rodape"></div>'
+        '</div>'
+    )
 
 
 def gerar_relatorio_com_ia(nome_crianca, dados_estudante, periodo, crianca_id, nome_professora='Professora', usuario=None):
@@ -1166,9 +1322,15 @@ def gerar_relatorio_com_ia(nome_crianca, dados_estudante, periodo, crianca_id, n
     # contexto (secao_relatos, producoes, secao_registros_observacao), então
     # ocultar uma seção não deve empobrecer a análise das outras.
     analise_completa = _gerar_secao_atividades(info_crianca, periodo, nome_crianca, usuario=usuario, escola_id=escola_id)
-    secao_relatos = _gerar_secao_relatos(nome_crianca, periodo, info_crianca, usuario=usuario, escola_id=escola_id)
+    # Produções e BNCC ANTES do relato: o prompt do relato cruza as
+    # observações com as duas ({habilidades_bncc}, {analises_producoes}).
     producoes = _gerar_secao_producoes(nome_crianca, crianca_id, periodo=periodo, usuario=usuario, escola_id=escola_id)
     secao_registros_observacao, secao_bncc = _gerar_secao_bncc(crianca_id, periodo, escola_id=info_crianca.get('escola_id'))
+    secao_relatos = _gerar_secao_relatos(
+        nome_crianca, periodo, info_crianca, usuario=usuario, escola_id=escola_id,
+        habilidades_bncc=secao_registros_observacao,
+        analises_producoes=producoes['texto_conclusao'],
+    )
     secao_conclusao = _gerar_secao_conclusao(
         nome_crianca, secao_relatos, producoes['texto_conclusao'], secao_registros_observacao,
         analise_completa, turma_nome, nome_professora, idade or 'Não informada', usuario=usuario, escola_id=escola_id,
@@ -1186,28 +1348,11 @@ def gerar_relatorio_com_ia(nome_crianca, dados_estudante, periodo, crianca_id, n
     # pelo coordenador (items_sumario) simplesmente não existam no relatório. ──
     def _pagina_relatorio(icone, titulo, corpo_html):
         """Uma `.pagina` A4 completa (header/rodapé) com uma seção `sec-producoes`."""
-        return (
-            '<div class="pagina">'
-            '<div class="barra-topo"></div>'
-            '<div class="header-escola">'
-            f'<div class="logo-escola">{logo_escola_html}</div>'
-            '<div class="escola-info">'
-            f'<h1>{escola_nome}</h1>'
-            f'<p>{nome_crianca} &nbsp;|&nbsp; {periodo_label} &nbsp;|&nbsp; {tipo_relatorio}</p>'
-            '</div>'
-            '</div>'
-            '<div class="conteudo">'
-            '<div class="secao sec-producoes">'
-            f'<div class="secao-header"><span class="icone">{icone}</span><h2>{titulo}</h2></div>'
-            f'<div class="secao-body">{corpo_html}</div>'
-            '</div>'
-            '</div>'
-            '<div class="rodape">'
-            '<span class="rodape-nota">💫 Relatório elaborado com base em observações sistemáticas e análise do desenvolvimento integral da criança.</span>'
-            '<span class="rodape-nara">NARAEDU • naraeducacional.com</span>'
-            '</div>'
-            '<div class="barra-rodape"></div>'
-            '</div>'
+        return montar_pagina_relatorio(
+            icone, titulo, corpo_html,
+            logo_escola_html=logo_escola_html,
+            escola_nome=escola_nome,
+            linha_identificacao=f'{nome_crianca} &nbsp;|&nbsp; {periodo_label} &nbsp;|&nbsp; {tipo_relatorio}',
         )
 
     def _quadro_producao(registro, texto, rotulo, emoji):

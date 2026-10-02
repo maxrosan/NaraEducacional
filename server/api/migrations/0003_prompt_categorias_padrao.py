@@ -11,10 +11,12 @@ trocadas por simples, porque o código substitui com .replace(), não .format())
 Só é preenchido o global que não existe ou está vazio: um texto já editado
 pelo superadmin nunca é sobrescrito.
 
-Planejamento fica sem global de propósito: a mesma categoria é usada por duas
-tarefas diferentes (sugestão de atividades e sugestão de habilidades BNCC, que
-precisa responder em JSON), cada uma com o seu fallback no código. Um texto
-global único substituiria os dois.
+Planejamento: cada tarefa tem a sua categoria (ver services/planejamento_ia.py).
+"Planejamento" é a sugestão de atividades e recebe o texto global do sistema
+legado; "Planejamento - Habilidades BNCC" é a sugestão de habilidades, com o
+texto que era o fallback do código. O formato JSON da BNCC é anexado pelo
+código, então editar esse texto na tela não quebra a resposta. (Antes as duas
+tarefas dividiam "Planejamento", e um global único quebrava a de BNCC.)
 
 Desfazer a migration não apaga nada (as categorias podem ter prompts ligados).
 """
@@ -25,6 +27,7 @@ CATEGORIAS_PADRAO = [
     'Voz',
     'Desenho',
     'Planejamento',
+    'Planejamento - Habilidades BNCC',
     'Escrita',
     'Relatórios - Relato Individual',
     'Relatórios - Produções',
@@ -434,6 +437,13 @@ REGRAS:
 - As observações devem ser completas e educacionalmente relevantes
 - Mantenha a ordem: primeiro nome corresponde à primeira observação
 - Não inclua explicações, apenas o JSON'''
+
+# Origem: prompt_templates do sistema legado (categoria Planejamento)
+PROMPT_PLANEJAMENTO = r'''Com base nas habilidades BNCC informadas e no histórico da turma, sugira atividades.'''
+
+# Origem: planejamento_ia.py (_PROMPT_PLANEJAMENTO_BNCC_FALLBACK, sem o trecho
+# de formato JSON, que o código anexa sempre)
+PROMPT_PLANEJAMENTO_BNCC = r'''Você é uma especialista pedagógica. Selecione as habilidades BNCC mais relevantes para as atividades descritas. USE APENAS habilidades presentes na lista enviada — não invente códigos. Para cada habilidade, escreva uma justificativa curta ligando-a às atividades.'''
 
 # Origem: relatorio_atividades.txt
 PROMPT_RELATORIO_ATIVIDADES = r'''Você é uma especialista em documentação pedagógica 
@@ -1357,6 +1367,8 @@ PROMPTS_GLOBAIS = {
     'Escrita': PROMPT_ESCRITA,
     'Desenho': PROMPT_DESENHO,
     'Voz': PROMPT_VOZ,
+    'Planejamento': PROMPT_PLANEJAMENTO,
+    'Planejamento - Habilidades BNCC': PROMPT_PLANEJAMENTO_BNCC,
     'Relatórios - Atividades': PROMPT_RELATORIO_ATIVIDADES,
     'Relatórios - Relato Individual': PROMPT_RELATORIO_RELATO_INDIVIDUAL,
     'Relatórios - Produções': PROMPT_RELATORIO_PRODUCOES,

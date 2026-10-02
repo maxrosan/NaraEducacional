@@ -50,6 +50,23 @@ _PROMPT_PLANEJAMENTO_ATIVIDADES_FALLBACK = (
     "extras. Não cite habilidades BNCC nesta resposta."
 )
 
+# Categorias no banco. "Planejamento" continua sendo a de SUGESTÃO DE
+# ATIVIDADES (mesmo título do legado — personalizações existentes seguem
+# valendo). A sugestão de habilidades BNCC tem categoria própria: antes as
+# duas tarefas dividiam "Planejamento", e um texto global pensado para
+# atividades (como o do legado) quebrava a de BNCC, que precisa de JSON.
+CATEGORIA_PLANEJAMENTO_ATIVIDADES = "Planejamento"
+CATEGORIA_PLANEJAMENTO_BNCC = "Planejamento - Habilidades BNCC"
+
+# Anexado SEMPRE ao prompt de BNCC, independente do texto editável no banco:
+# o código depende deste formato, e a OpenAI recusa `response_format=json_object`
+# se a palavra "JSON" não aparecer nas mensagens.
+_FORMATO_RESPOSTA_BNCC = (
+    "\n\nFORMATO OBRIGATÓRIO DA RESPOSTA: responda somente com JSON válido, "
+    'no formato {"habilidades":[{"id":"...","codigo":"...","justificativa":"..."}]}, '
+    "usando apenas habilidades da lista de candidatas enviada."
+)
+
 _PROMPT_PLANEJAMENTO_BNCC_FALLBACK = (
     "Você é uma especialista pedagógica. Selecione as habilidades BNCC mais "
     "relevantes para as atividades descritas. USE APENAS habilidades "
@@ -723,7 +740,7 @@ def sugerir_atividades_a_partir_de_prompt(
         raise ValueError("Descreva o objetivo/tema com pelo menos 10 caracteres.")
 
     system_prompt = (
-        resolver_prompt("Planejamento", escola_id=escola_id)
+        resolver_prompt(CATEGORIA_PLANEJAMENTO_ATIVIDADES, escola_id=escola_id)
         or _PROMPT_PLANEJAMENTO_ATIVIDADES_FALLBACK
     )
 
@@ -806,8 +823,9 @@ def sugerir_habilidades_bncc(
 ) -> dict:
     """
     Devolve {habilidades, origem, mensagem?}.
-    O system_prompt é resolvido do banco (categoria "Planejamento"),
-    com fallback para _PROMPT_PLANEJAMENTO_BNCC_FALLBACK.
+    O system_prompt é resolvido do banco (categoria "Planejamento - Habilidades
+    BNCC"), com fallback para _PROMPT_PLANEJAMENTO_BNCC_FALLBACK; o formato
+    JSON é sempre anexado pelo código (_FORMATO_RESPOSTA_BNCC).
     """
     texto = (atividades_texto or "").strip()
     if len(texto) < 10:
@@ -840,9 +858,9 @@ def sugerir_habilidades_bncc(
     ]
 
     system_prompt = (
-        resolver_prompt("Planejamento", escola_id=escola_id)
+        resolver_prompt(CATEGORIA_PLANEJAMENTO_BNCC, escola_id=escola_id)
         or _PROMPT_PLANEJAMENTO_BNCC_FALLBACK
-    )
+    ) + _FORMATO_RESPOSTA_BNCC
 
     user_prompt = (
         f"Ano/série: {ano_serie or 'não informado'}\n\n"
