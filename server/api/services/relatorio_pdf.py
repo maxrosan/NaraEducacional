@@ -22,10 +22,9 @@ import httpx
 from PIL import Image, ImageOps
 from django.utils import timezone
 
-from api.models import Crianca, Relatorio, RegistroDesenho, RegistroEscrita
+from api.models import Relatorio, RegistroDesenho, RegistroEscrita
 from api.services.pdf_renderer import render_html_to_pdf
 from api.storage import (
-    delete_from_s3,
     extract_storage_key_from_url,
     generate_presigned_url,
     is_s3_configured,
@@ -349,7 +348,7 @@ def _ler_bytes_do_registro(registro, tipo: str) -> Tuple[Optional[bytes], Option
             return None, None, motivo
 
     # Path absoluto, ou relativo que já existe no disco local (ex.: fallback
-    # local de `upload_para_s3` quando o S3 falhou no momento do upload) —
+    # local de `o antigo fallback de disco do upload` quando o S3 falhou no momento do upload) —
     # mesma condição de `views.servir_arquivo` para o branch "serve local".
     try:
         with open(arquivo_path, "rb") as f:
@@ -588,9 +587,9 @@ def _slugify(value: str) -> str:
 def build_filename(relatorio: Relatorio) -> str:
     """Nome de arquivo com sufixo aleatório para evitar colisões em downloads."""
     nome = "Estudante"
-    crianca = Crianca.objects.filter(id=relatorio.id_crianca).only("nome_completo").first()
-    if crianca and crianca.nome_completo:
-        nome = crianca.nome_completo
+    aluno = getattr(relatorio, "aluno", None)
+    if aluno and aluno.nome_completo:
+        nome = aluno.nome_completo
     periodo = _slugify(relatorio.periodo or "periodo")[:40]
     estudante = _slugify(nome)[:60]
     suffix = secrets.token_hex(4)
@@ -729,42 +728,6 @@ def ensure_pdf(relatorio: Relatorio) -> Tuple[bytes, bool, Optional[str]]:
         (time.monotonic() - start) * 1000,
     )
     return pdf_bytes, False, presigned
-
-
-def invalidate_pdf_cache(relatorio: Relatorio) -> bool:
-    """Descarta o PDF cacheado de um relatório.
-
-    Usado após edições de `conteudo`: `ensure_pdf` trata a presença de
-    `pdf_storage_key` como cache válido e devolveria bytes obsoletos. Zerar
-    os campos força a próxima renderização. Também remove o objeto do S3
-    para não acumular órfãos.
-
-    Retorna True se havia algo para invalidar.
-    """
-    old_key = relatorio.pdf_storage_key
-    if not old_key and not relatorio.pdf_url:
-        return False
-
-    relatorio.pdf_storage_key = None
-    relatorio.pdf_url = None
-    relatorio.save(update_fields=["pdf_storage_key", "pdf_url"])
-
-    if old_key and is_s3_configured():
-        try:
-            delete_from_s3(old_key)
-        except Exception:  # noqa: BLE001
-            # Falha ao deletar S3 não deve derrubar a edição; o objeto vira
-            # um órfão de storage até ser coletado por rotina externa.
-            logger.exception(
-                "Falha ao remover PDF obsoleto do S3 (relatorio=%s key=%s)",
-                relatorio.id, old_key,
-            )
-
-    logger.info(
-        "PDF cache invalidado para relatorio=%s (key anterior=%s)",
-        relatorio.id, old_key,
-    )
-    return True
 
 
 def _download_from_s3(key: str) -> Optional[bytes]:

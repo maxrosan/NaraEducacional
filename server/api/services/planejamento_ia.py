@@ -5,8 +5,8 @@ Funções puras chamadas pelas views REST:
 - extrair_texto_arquivo(uploaded_file) -> str
 - salvar_arquivo_planejamento(uploaded_file, turma_id, dia_semana) -> dict
 - sugerir_atividades_a_partir_de_arquivo(texto) -> str
-- sugerir_atividades_a_partir_de_prompt(prompt, contexto_turma, cliente_id) -> str
-- sugerir_habilidades_bncc(atividades_texto, ano_serie, limite, cliente_id) -> dict
+- sugerir_atividades_a_partir_de_prompt(prompt, contexto_turma, escola_id) -> str
+- sugerir_habilidades_bncc(atividades_texto, ano_serie, limite, escola_id) -> dict
 """
 
 from __future__ import annotations
@@ -17,21 +17,18 @@ import json
 import logging
 import os
 import re
-import time
 from datetime import date
 from pathlib import Path
-from typing import Any, Optional
+from typing import Optional
 from uuid import uuid4
 
-from django.db.models import Q
-
-from api.models import HabilidadeBNCC, PerguntaBNCC
+from api.models import HabilidadeBNCC
+from api.ia_utils import _get_int_env
 from api.openai_client import get_openai_client
 from api.storage import (
     delete_from_s3,
     generate_presigned_url,
     is_s3_configured,
-    refresh_presigned_url,
     upload_bytes_to_storage,
 )
 from api.services.prompt_resolver import resolver_prompt
@@ -51,6 +48,23 @@ _PROMPT_PLANEJAMENTO_ATIVIDADES_FALLBACK = (
     "é propor uma sequência curta e prática de atividades para um dia de "
     "aula, em português do Brasil, em formato de bullets, sem títulos "
     "extras. Não cite habilidades BNCC nesta resposta."
+)
+
+# Categorias no banco. "Planejamento" continua sendo a de SUGESTÃO DE
+# ATIVIDADES (mesmo título do legado — personalizações existentes seguem
+# valendo). A sugestão de habilidades BNCC tem categoria própria: antes as
+# duas tarefas dividiam "Planejamento", e um texto global pensado para
+# atividades (como o do legado) quebrava a de BNCC, que precisa de JSON.
+CATEGORIA_PLANEJAMENTO_ATIVIDADES = "Planejamento"
+CATEGORIA_PLANEJAMENTO_BNCC = "Planejamento - Habilidades BNCC"
+
+# Anexado SEMPRE ao prompt de BNCC, independente do texto editável no banco:
+# o código depende deste formato, e a OpenAI recusa `response_format=json_object`
+# se a palavra "JSON" não aparecer nas mensagens.
+_FORMATO_RESPOSTA_BNCC = (
+    "\n\nFORMATO OBRIGATÓRIO DA RESPOSTA: responda somente com JSON válido, "
+    'no formato {"habilidades":[{"id":"...","codigo":"...","justificativa":"..."}]}, '
+    "usando apenas habilidades da lista de candidatas enviada."
 )
 
 _PROMPT_PLANEJAMENTO_BNCC_FALLBACK = (
@@ -74,11 +88,10 @@ ALLOWED_PLANEJAMENTO_MIME_TYPES = {
 ALLOWED_PLANEJAMENTO_EXTENSIONS = {".pdf", ".doc", ".docx"}
 
 
-def _get_int_env(var_name: str, default: int) -> int:
-    try:
-        return int(os.getenv(var_name, default))
-    except (TypeError, ValueError):
-        return int(default)
+def _dir_upload_local() -> Path:
+    """Pasta do fallback local (sem S3). Upload, URL e remoção usam a MESMA —
+    antes a remoção ignorava PLANEJAMENTO_UPLOAD_DIR e apagava em "uploads/"."""
+    return Path(os.getenv("PLANEJAMENTO_UPLOAD_DIR", "uploads"))
 
 
 MAX_PLANEJAMENTO_SIZE_BYTES = (
@@ -256,7 +269,7 @@ def salvar_arquivo_planejamento(
         )
     else:
         storage_key = key
-        base_dir = Path(os.getenv("PLANEJAMENTO_UPLOAD_DIR", "uploads"))
+        base_dir = _dir_upload_local()
         destino = base_dir / key
         destino.parent.mkdir(parents=True, exist_ok=True)
         with destino.open("wb") as fh:
@@ -278,7 +291,7 @@ def regenerar_url_arquivo(storage_key: Optional[str]) -> Optional[str]:
     if not storage_key:
         return None
     if not is_s3_configured():
-        return f"/{Path('uploads') / storage_key}".replace("\\", "/")
+        return f"/{(_dir_upload_local() / storage_key).as_posix()}"
     return generate_presigned_url(storage_key)
 
 
@@ -289,7 +302,7 @@ def remover_arquivo_planejamento(storage_key: Optional[str]) -> None:
         delete_from_s3(storage_key)
         return
     try:
-        caminho = Path("uploads") / storage_key
+        caminho = _dir_upload_local() / storage_key
         if caminho.exists():
             caminho.unlink()
     except Exception as exc:
@@ -715,7 +728,7 @@ def detectar_data_planejamento(texto_extraido: str) -> Optional[dict]:
 def sugerir_atividades_a_partir_de_prompt(
     prompt: str,
     contexto_turma: str = "",
-    cliente_id: str = None,
+    escola_id: str = None,
 ) -> str:
     """
     Assistente IA livre — gera sugestão a partir de descrição da professora.
@@ -727,7 +740,7 @@ def sugerir_atividades_a_partir_de_prompt(
         raise ValueError("Descreva o objetivo/tema com pelo menos 10 caracteres.")
 
     system_prompt = (
-        resolver_prompt("Planejamento", cliente_id=cliente_id)
+        resolver_prompt(CATEGORIA_PLANEJAMENTO_ATIVIDADES, escola_id=escola_id)
         or _PROMPT_PLANEJAMENTO_ATIVIDADES_FALLBACK
     )
 
@@ -745,43 +758,26 @@ def sugerir_atividades_a_partir_de_prompt(
 
 
 def _candidatos_bncc(ano_serie: str = "") -> list[dict]:
-    codigos = (
-        PerguntaBNCC.objects.exclude(habilidade_bncc__isnull=True)
-        .exclude(habilidade_bncc__exact="")
-        .values_list("habilidade_bncc", flat=True)
-        .distinct()
-    )
-    codigos = [c.strip() for c in codigos if c and c.strip()]
-    if not codigos:
-        return []
+    """
+    No schema novo, HabilidadeBNCC já É o catálogo oficial (Pergunta.habilidade_bncc
+    é uma FK de verdade pra cá, não um código texto solto) — não precisa mais
+    derivar candidatos a partir de perguntas.
+    """
+    queryset = HabilidadeBNCC.objects.filter(ativa=True)
+    if ano_serie:
+        queryset = queryset.filter(ano_serie__iexact=ano_serie)
 
-    descricoes = {
-        h.codigo: {
+    candidatos = [
+        {
             "id": str(h.id),
             "codigo": h.codigo,
             "descricao": h.descricao,
-            "componente_curricular": h.componente_curricular,
-            "ano_serie": h.ano_serie,
+            "componente_curricular": h.componente_curricular or "",
+            "ano_serie": h.ano_serie or "",
             "campo_atuacao": h.campo_atuacao or "",
         }
-        for h in HabilidadeBNCC.objects.filter(codigo__in=codigos, ativa=True)
-    }
-
-    ano_lower = ano_serie.lower() if ano_serie else ""
-
-    candidatos: list[dict] = []
-    for codigo in codigos:
-        info = descricoes.get(codigo)
-        if info is None:
-            info = {
-                "id": codigo,
-                "codigo": codigo,
-                "descricao": "",
-                "componente_curricular": "",
-                "ano_serie": "",
-                "campo_atuacao": "",
-            }
-        candidatos.append(info)
+        for h in queryset
+    ]
     return candidatos
 
 
@@ -823,12 +819,13 @@ def sugerir_habilidades_bncc(
     atividades_texto: str,
     ano_serie: str = "",
     limite: int = 6,
-    cliente_id: str = None,
+    escola_id: str = None,
 ) -> dict:
     """
     Devolve {habilidades, origem, mensagem?}.
-    O system_prompt é resolvido do banco (categoria "Planejamento"),
-    com fallback para _PROMPT_PLANEJAMENTO_BNCC_FALLBACK.
+    O system_prompt é resolvido do banco (categoria "Planejamento - Habilidades
+    BNCC"), com fallback para _PROMPT_PLANEJAMENTO_BNCC_FALLBACK; o formato
+    JSON é sempre anexado pelo código (_FORMATO_RESPOSTA_BNCC).
     """
     texto = (atividades_texto or "").strip()
     if len(texto) < 10:
@@ -843,7 +840,7 @@ def sugerir_habilidades_bncc(
         return {
             "habilidades": [],
             "origem": "fallback",
-            "mensagem": "Nenhuma habilidade candidata cadastrada em perguntas_bncc.",
+            "mensagem": "Nenhuma habilidade ativa cadastrada no catálogo BNCC.",
         }
 
     fallback_resultado = _fallback_por_palavras(candidatos, texto, limite)
@@ -861,9 +858,9 @@ def sugerir_habilidades_bncc(
     ]
 
     system_prompt = (
-        resolver_prompt("Planejamento", cliente_id=cliente_id)
+        resolver_prompt(CATEGORIA_PLANEJAMENTO_BNCC, escola_id=escola_id)
         or _PROMPT_PLANEJAMENTO_BNCC_FALLBACK
-    )
+    ) + _FORMATO_RESPOSTA_BNCC
 
     user_prompt = (
         f"Ano/série: {ano_serie or 'não informado'}\n\n"

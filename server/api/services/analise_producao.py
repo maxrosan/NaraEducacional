@@ -1,15 +1,12 @@
 """Serviço de análise de produções infantis (escrita e desenho): upload S3, análise via IA e persistência."""
 
-import base64
 import json
 import logging
-import os
-from pathlib import Path
+from datetime import date
 
 from api.models import RegistroEscrita, RegistroDesenho
 from api.openai_client import get_openai_client
-from api.storage import upload_bytes_to_storage
-from api.views_legacy import run_with_timeout, IA_REQUEST_TIMEOUT_SECONDS
+from api.ia_utils import run_with_timeout, IA_REQUEST_TIMEOUT_SECONDS
 
 from api.services.fases_producao import (
     FASES_ESCRITA,
@@ -23,43 +20,35 @@ from api.services.prompt_resolver import resolver_prompt
 
 logger = logging.getLogger(__name__)
 
-
-# ---------------------------------------------------------------------------
-# Upload para S3
-# ---------------------------------------------------------------------------
-
-def upload_para_s3(file_bytes: bytes, tipo: str, arquivo_nome: str, content_type: str) -> str:
-    s3_key = f"{tipo}/{arquivo_nome}"
-    try:
-        _, url = upload_bytes_to_storage(
-            key=s3_key,
-            content=file_bytes,
-            content_type=content_type or "image/jpeg",
-        )
-        if url:
-            logger.info("[S3] Upload de %s concluído: %s", tipo, url)
-            return s3_key
-    except Exception as e:
-        logger.warning("[S3] Falha no upload de %s para S3: %s", tipo, e)
-
-    upload_dir = f"uploads/{tipo}"
-    os.makedirs(upload_dir, exist_ok=True)
-    local_path = os.path.join(upload_dir, arquivo_nome)
-    with open(local_path, "wb") as f:
-        f.write(file_bytes)
-    return local_path
+# Varredura usada só no fallback textual do desenho (quando a IA não devolve JSON).
+ELEMENTOS_DESENHO_CONHECIDOS = ("casa", "sol", "árvore", "pessoa", "animal", "flor", "carro", "família", "nuvem")
 
 
 # ---------------------------------------------------------------------------
-# Helpers de prompt
+# Upload para S3 (com fallback em disco local)
 # ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+# Helpers de prompt e validação
+# ---------------------------------------------------------------------------
+
+def idade_do_aluno(aluno) -> str:
+    """Idade em anos completos a partir de ``aluno.data_nascimento`` (ou "Não informada")."""
+    nasc = getattr(aluno, "data_nascimento", None)
+    if not nasc:
+        return "Não informada"
+    hoje = date.today()
+    anos = hoje.year - nasc.year - ((hoje.month, hoje.day) < (nasc.month, nasc.day))
+    return f"{anos} anos"
+
 
 def _extrair_primeiro_nome(nome: str) -> str:
-    return (nome or "").strip().split()[0] if (nome or "").strip() else ""
+    partes = (nome or "").split()
+    return partes[0] if partes else ""
 
 
-def _prompt_escrita(nome_aluno: str, idade: str = "Não informada", cliente_id: str = None) -> str:
-    template = resolver_prompt("Escrita", cliente_id=cliente_id, fallback_arquivo="escrita.txt")
+def _montar_prompt(tipo: str, fallback_arquivo: str, nome_aluno: str, idade: str, escola_id: str | None) -> str:
+    template = resolver_prompt(tipo, escola_id=escola_id, fallback_arquivo=fallback_arquivo)
     primeiro_nome = _extrair_primeiro_nome(nome_aluno)
     return (
         template
@@ -69,10 +58,8 @@ def _prompt_escrita(nome_aluno: str, idade: str = "Não informada", cliente_id: 
     )
 
 
-def _prompt_desenho(nome_aluno: str, idade: str = "Não informada", cliente_id: str = None) -> str:
-    template = resolver_prompt("Desenho", cliente_id=cliente_id, fallback_arquivo="desenho.txt")
-    primeiro_nome = _extrair_primeiro_nome(nome_aluno)
-    return template.replace("{nome_aluno}", primeiro_nome).replace("{idade}", idade)
+def _classificacao_valida(classificacao: str, fases: list[str]) -> bool:
+    return classificacao in fases or classificacao == NAO_CLASSIFICAVEL
 
 
 # ---------------------------------------------------------------------------
@@ -173,7 +160,7 @@ def _parse_resposta_estruturada(raw: str, fases: list[str]) -> dict | None:
     try:
         dados = json.loads(raw)
         classificacao = (dados.get("classificacao") or "").strip()
-        if classificacao not in fases and classificacao != NAO_CLASSIFICAVEL:
+        if not _classificacao_valida(classificacao, fases):
             logger.warning("[ANALISE] Classificação fora do enum: %r", classificacao)
             return None
         return dados
@@ -201,7 +188,34 @@ def _montar_texto(cabecalho: str, dados: dict) -> str:
     return "\n\n".join(partes)
 
 
-def analisar_escrita(nome_aluno: str, imagem_base64: str, idade: str = "Não informada", usuario=None, cliente_id: str = None) -> tuple[str, str]:
+def _falha_analise(exc: Exception, producao: str) -> tuple[str, str]:
+    """Converte uma exceção da chamada à IA em (texto_para_o_registro, rótulo).
+
+    ``producao`` é "a escrita" ou "o desenho", usado só na mensagem.
+    """
+    if isinstance(exc, RuntimeError):
+        logger.error("[OPENAI ERROR] Configuração ausente: %s", exc)
+        return (
+            "FALHA NA ANÁLISE TÉCNICA:\nA configuração da OpenAI não está disponível. "
+            "Configure a variável OPENAI_API_KEY e tente novamente.",
+            "Configuração OpenAI ausente",
+        )
+    if isinstance(exc, TimeoutError):
+        logger.error("[OPENAI ERROR] Tempo limite excedido na análise de %s.", producao)
+        return (
+            f"FALHA NA ANÁLISE TÉCNICA:\nTempo limite excedido na análise de {producao}. "
+            "Envie um arquivo mais leve ou tente novamente mais tarde.",
+            "Tempo excedido",
+        )
+    logger.error("[OPENAI ERROR] Erro na chamada da OpenAI: %s", exc)
+    return (
+        f"FALHA NA ANÁLISE TÉCNICA:\nNão foi possível analisar {producao} automaticamente. "
+        "Envie a imagem novamente ou classifique manualmente.",
+        "Falha na OpenAI",
+    )
+
+
+def analisar_escrita(nome_aluno: str, imagem_base64: str, idade: str = "Não informada", usuario=None, escola_id: str = None) -> tuple[str, str]:
     """
     Analisa imagem de escrita infantil via IA.
     Retorna (analise_completa, etapa_detectada).
@@ -209,48 +223,28 @@ def analisar_escrita(nome_aluno: str, imagem_base64: str, idade: str = "Não inf
     logger.info("[OPENAI] Enviando prompt para análise da escrita de %s", nome_aluno)
     try:
         raw = _chamar_openai_com_imagem(
-            _prompt_escrita(nome_aluno, idade, cliente_id=cliente_id),
+            _montar_prompt("Escrita", "escrita.txt", nome_aluno, idade, escola_id),
             imagem_base64,
             usuario=usuario,
             response_format=_schema_analise("analise_escrita", FASES_ESCRITA),
             max_tokens=1500,
         )
-        logger.info("[OPENAI] Análise recebida com %d caracteres", len(raw))
-
-        dados = _parse_resposta_estruturada(raw, FASES_ESCRITA)
-        if dados:
-            return _montar_texto("ETAPA DA ESCRITA", dados), dados["classificacao"]
-
-        # Fallback: JSON inválido (ex.: prompt do banco desativou o formato) —
-        # match textual normalizado (acento/gênero), nunca "em processamento".
-        etapa = detectar_fase_em_texto(raw, FASES_ESCRITA) or FASE_NAO_IDENTIFICADA
-        return raw, etapa
-
-    except RuntimeError as e:
-        logger.error("[OPENAI ERROR] Configuração ausente: %s", e)
-        return (
-            "FALHA NA ANÁLISE TÉCNICA:\nA configuração da OpenAI não está disponível. "
-            "Configure a variável OPENAI_API_KEY e tente novamente.",
-            "Configuração OpenAI ausente",
-        )
-    except TimeoutError:
-        return (
-            "FALHA NA ANÁLISE TÉCNICA:\nTempo limite excedido para análise automática. "
-            "Tente novamente com um arquivo mais leve ou verifique a conexão.",
-            "Tempo excedido",
-        )
     except Exception as e:
-        logger.error("[OPENAI ERROR] Erro na chamada da OpenAI: %s", e)
-        return (
-            f"FALHA NA ANÁLISE TÉCNICA:\nA escrita de {nome_aluno} está em processo de análise. "
-            f"Aguarde o processamento completo.\n\nPARA FAMÍLIA:\nEstamos analisando a escrita "
-            f"de {nome_aluno} com muito carinho. Em breve teremos uma análise detalhada "
-            f"sobre o desenvolvimento da escrita.",
-            "Falha na OpenAI",
-        )
+        return _falha_analise(e, "a escrita")
+
+    logger.info("[OPENAI] Análise recebida com %d caracteres", len(raw))
+
+    dados = _parse_resposta_estruturada(raw, FASES_ESCRITA)
+    if dados:
+        return _montar_texto("ETAPA DA ESCRITA", dados), dados["classificacao"]
+
+    # Fallback: JSON inválido (ex.: prompt do banco desativou o formato) —
+    # match textual normalizado (acento/gênero), nunca "em processamento".
+    etapa = detectar_fase_em_texto(raw, FASES_ESCRITA) or FASE_NAO_IDENTIFICADA
+    return raw, etapa
 
 
-def analisar_desenho(nome_aluno: str, imagem_base64: str, idade: str = "Não informada", usuario=None, cliente_id: str = None) -> tuple[str, str, list]:
+def analisar_desenho(nome_aluno: str, imagem_base64: str, idade: str = "Não informada", usuario=None, escola_id: str = None) -> tuple[str, str, list]:
     """
     Analisa imagem de desenho infantil via IA.
     Retorna (analise_completa, fase_desenho, elementos_detectados).
@@ -258,68 +252,42 @@ def analisar_desenho(nome_aluno: str, imagem_base64: str, idade: str = "Não inf
     logger.info("[OPENAI] Enviando prompt para análise do desenho de %s", nome_aluno)
     try:
         raw = _chamar_openai_com_imagem(
-            _prompt_desenho(nome_aluno, idade, cliente_id=cliente_id),
+            _montar_prompt("Desenho", "desenho.txt", nome_aluno, idade, escola_id),
             imagem_base64,
-            temperature=0.7,
             usuario=usuario,
             response_format=_schema_analise("analise_desenho", FASES_DESENHO, com_elementos=True),
             max_tokens=1500,
         )
-        logger.info("[OPENAI] Análise de desenho recebida com %d caracteres", len(raw))
-
-        dados = _parse_resposta_estruturada(raw, FASES_DESENHO)
-        if dados:
-            elementos = [e.strip() for e in (dados.get("elementos_detectados") or []) if e and e.strip()]
-            return _montar_texto("FASE DO DESENHO", dados), dados["classificacao"], elementos
-
-        # Fallback: JSON inválido — match textual normalizado + varredura de elementos.
-        fase = detectar_fase_em_texto(raw, FASES_DESENHO) or FASE_NAO_IDENTIFICADA
-        raw_lower = raw.lower()
-        elementos = [
-            el.title()
-            for el in ['casa', 'sol', 'árvore', 'pessoa', 'animal', 'flor', 'carro', 'família', 'nuvem']
-            if el in raw_lower
-        ]
-        return raw, fase, elementos
-
-    except RuntimeError as e:
-        logger.error("[OPENAI ERROR] Configuração ausente: %s", e)
-        return (
-            "FALHA NA ANÁLISE TÉCNICA:\nA configuração da OpenAI não está disponível. "
-            "Configure a variável OPENAI_API_KEY e tente novamente.",
-            "Configuração OpenAI ausente",
-            [],
-        )
-    except TimeoutError:
-        return (
-            "FALHA NA ANÁLISE TÉCNICA:\nTempo limite excedido na análise do desenho. "
-            "Envie um arquivo menor ou tente novamente mais tarde.",
-            "Tempo excedido",
-            [],
-        )
     except Exception as e:
-        logger.error("[OPENAI ERROR] Erro na chamada da OpenAI: %s", e)
-        return (
-            f"ANÁLISE TÉCNICA:\nO desenho de {nome_aluno} está em processo de análise. "
-            f"Aguarde o processamento completo.\n\nPARA FAMÍLIA:\nEstamos analisando o desenho "
-            f"de {nome_aluno} com muito carinho. Em breve teremos uma análise detalhada "
-            f"sobre o desenvolvimento artístico.",
-            "Aguardando análise",
-            ["Elementos em análise"],
-        )
+        texto, rotulo = _falha_analise(e, "o desenho")
+        return texto, rotulo, []
+
+    logger.info("[OPENAI] Análise de desenho recebida com %d caracteres", len(raw))
+
+    dados = _parse_resposta_estruturada(raw, FASES_DESENHO)
+    if dados:
+        elementos = [e.strip() for e in (dados.get("elementos_detectados") or []) if e and e.strip()]
+        return _montar_texto("FASE DO DESENHO", dados), dados["classificacao"], elementos
+
+    # Fallback: JSON inválido — match textual normalizado + varredura de elementos.
+    fase = detectar_fase_em_texto(raw, FASES_DESENHO) or FASE_NAO_IDENTIFICADA
+    raw_lower = raw.lower()
+    elementos = [el.title() for el in ELEMENTOS_DESENHO_CONHECIDOS if el in raw_lower]
+    return raw, fase, elementos
 
 
 # ---------------------------------------------------------------------------
 # Revisão da classificação pela professora
 # ---------------------------------------------------------------------------
 
-def atualizar_classificacao_registro(tipo: str, arquivo_hash: str, classificacao: str, professora: str = None):
+def atualizar_classificacao_registro(tipo: str, arquivo_hash: str, classificacao: str, revisado_por: str | None = None):
     """Substitui a classificação sugerida pela IA pela escolhida pela professora.
 
     Chamado quando, no modal de confirmação, a professora discorda da sugestão.
     Valida contra a taxonomia canônica, atualiza o campo (`etapa_ia` ou
     `fase_desenho`) e registra a revisão no fim de `analise_detalhada` para
-    auditoria. Retorna o registro atualizado.
+    auditoria. O `professor` que criou o registro é preservado; quem revisou
+    fica apenas na nota. Retorna o registro atualizado.
 
     Levanta ValueError para tipo/classificação inválidos e
     RegistroEscrita.DoesNotExist / RegistroDesenho.DoesNotExist se o hash não existe.
@@ -334,7 +302,7 @@ def atualizar_classificacao_registro(tipo: str, arquivo_hash: str, classificacao
         raise ValueError(f"Tipo inválido: {tipo!r} (esperado 'escrita' ou 'desenho')")
 
     classificacao = (classificacao or "").strip()
-    if classificacao not in fases_validas and classificacao != NAO_CLASSIFICAVEL:
+    if not _classificacao_valida(classificacao, fases_validas):
         raise ValueError(f"Classificação inválida: {classificacao!r}")
 
     registro = modelo.objects.get(arquivo_hash=arquivo_hash)
@@ -345,16 +313,14 @@ def atualizar_classificacao_registro(tipo: str, arquivo_hash: str, classificacao
     setattr(registro, campo, classificacao)
     nota = (
         f"\n\nCLASSIFICAÇÃO REVISADA PELA PROFESSORA"
-        f"{f' ({professora})' if professora else ''}: "
+        f"{f' ({revisado_por})' if revisado_por else ''}: "
         f"{classificacao} (IA havia sugerido: {anterior})"
     )
     registro.analise_detalhada = (registro.analise_detalhada or "") + nota
-    if professora:
-        registro.professora = professora
-    registro.save(update_fields=[campo, "analise_detalhada", "professora"])
+    registro.save(update_fields=[campo, "analise_detalhada", "atualizado_em"])
     logger.info(
-        "[REVISAO] %s %s: %r -> %r (professora=%s)",
-        tipo, arquivo_hash, anterior, classificacao, professora,
+        "[REVISAO] %s %s: %r -> %r (revisado_por=%s)",
+        tipo, arquivo_hash, anterior, classificacao, revisado_por,
     )
     return registro
 
@@ -363,63 +329,64 @@ def atualizar_classificacao_registro(tipo: str, arquivo_hash: str, classificacao
 # Persistência
 # ---------------------------------------------------------------------------
 
+def _vinculos(aluno, turma, professor) -> dict:
+    """FKs obrigatórias de todo registro de produção (multi-tenant)."""
+    return {
+        "aluno": aluno,
+        "turma": turma,
+        "professor": professor,
+        "escola_id": turma.escola_id,
+        "instituicao_id": turma.instituicao_id,
+        "etapa": turma.etapa,
+    }
+
+
+def _criar_registro(modelo, rotulo: str, **campos):
+    """Cria o registro no banco. Erros NÃO são engolidos: sobem para a view."""
+    registro = modelo.objects.create(anotacoes_professora="", **campos)
+    logger.info("[DATABASE] Registro de %s salvo com ID: %s", rotulo, registro.id)
+    return registro
+
+
 def salvar_registro_escrita(
-    *, nome_aluno, turma_id, serie_aluno, arquivo_nome, file_hash,
+    *, aluno, turma, professor, arquivo_nome, file_hash,
     arquivo_path, arquivo_original, tamanho_arquivo, tipo_arquivo,
     etapa_ia, analise_detalhada,
-) -> RegistroEscrita | None:
-    """Persiste um RegistroEscrita no banco. Retorna o registro ou None em caso de erro."""
-    try:
-        registro = RegistroEscrita.objects.create(
-            nome_aluno=nome_aluno,
-            turma_id=turma_id,
-            serie_aluno=serie_aluno,
-            arquivo_nome=arquivo_nome,
-            arquivo_hash=file_hash,
-            arquivo_path=arquivo_path,
-            arquivo_original=arquivo_original,
-            tamanho_arquivo=tamanho_arquivo,
-            tipo_arquivo=tipo_arquivo,
-            etapa_ia=etapa_ia,
-            analise_detalhada=analise_detalhada,
-            professora="Sistema",
-            anotacoes_professora="",
-        )
-        logger.info("[DATABASE] Registro de escrita salvo com ID: %s", registro.id)
-        return registro
-    except Exception as e:
-        logger.error("[DATABASE ERROR] Erro ao salvar escrita no banco: %s", e)
-        return None
+) -> RegistroEscrita:
+    """Persiste um RegistroEscrita no banco e o retorna."""
+    return _criar_registro(
+        RegistroEscrita, "escrita",
+        **_vinculos(aluno, turma, professor),
+        arquivo_nome=arquivo_nome,
+        arquivo_hash=file_hash,
+        arquivo_path=arquivo_path,
+        arquivo_original=arquivo_original,
+        tamanho_arquivo=tamanho_arquivo,
+        tipo_arquivo=tipo_arquivo,
+        etapa_ia=etapa_ia,
+        analise_detalhada=analise_detalhada,
+    )
 
 
 def salvar_registro_desenho(
-    *, nome_aluno, turma_id, serie_aluno, atividade, contexto,
+    *, aluno, turma, professor, atividade, contexto,
     arquivo_nome, file_hash, arquivo_path, arquivo_original,
     tamanho_arquivo, tipo_arquivo, fase_desenho, elementos_detectados,
-    analise_detalhada, professora,
-) -> RegistroDesenho | None:
-    """Persiste um RegistroDesenho no banco. Retorna o registro ou None em caso de erro."""
-    try:
-        registro = RegistroDesenho.objects.create(
-            nome_aluno=nome_aluno,
-            turma_id=turma_id,
-            serie_aluno=serie_aluno,
-            atividade=atividade,
-            contexto=contexto,
-            arquivo_nome=arquivo_nome,
-            arquivo_hash=file_hash,
-            arquivo_path=arquivo_path,
-            arquivo_original=arquivo_original,
-            tamanho_arquivo=tamanho_arquivo,
-            tipo_arquivo=tipo_arquivo,
-            fase_desenho=fase_desenho,
-            elementos_detectados=elementos_detectados,
-            analise_detalhada=analise_detalhada,
-            professora=professora,
-            anotacoes_professora="",
-        )
-        logger.info("[DATABASE] Registro de desenho salvo com ID: %s", registro.id)
-        return registro
-    except Exception as e:
-        logger.error("[DATABASE ERROR] Erro ao salvar desenho no banco: %s", e)
-        return None
+    analise_detalhada,
+) -> RegistroDesenho:
+    """Persiste um RegistroDesenho no banco e o retorna."""
+    return _criar_registro(
+        RegistroDesenho, "desenho",
+        **_vinculos(aluno, turma, professor),
+        atividade=atividade or "Desenho Livre",
+        contexto=contexto,
+        arquivo_nome=arquivo_nome,
+        arquivo_hash=file_hash,
+        arquivo_path=arquivo_path,
+        arquivo_original=arquivo_original,
+        tamanho_arquivo=tamanho_arquivo,
+        tipo_arquivo=tipo_arquivo,
+        fase_desenho=fase_desenho,
+        elementos_detectados=elementos_detectados,
+        analise_detalhada=analise_detalhada,
+    )

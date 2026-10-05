@@ -22,7 +22,6 @@ import uuid
 from datetime import timedelta
 from typing import NamedTuple
 
-from django.conf import settings
 from django.db import IntegrityError, transaction
 from django.utils import timezone
 
@@ -51,15 +50,11 @@ class DispositivoServiceError(Exception):
 
 
 def instituicoes_divergem(id_a, id_b) -> bool:
-    """True quando A e B são de instituições diferentes E o modo estrito está ligado.
+    """True quando A e B pertencem a instituições diferentes.
 
-    Enquanto o sistema for single-tenant por implantação (ver
-    `settings.MULTI_TENANT_STRICT` e docs/PLANO_MULTI_TENANT.md), o
-    `instituicao_id` dos registros pode divergir legitimamente nos dados
-    legados — bloquear por isso geraria falsos "de outra instituição".
+    Se um dos lados não tem instituição (superadmin, suporte, vendedor), não há
+    divergência: esses perfis são globais e podem operar em qualquer tenant.
     """
-    if not getattr(settings, 'MULTI_TENANT_STRICT', False):
-        return False
     if not id_a or not id_b:
         return False
     return str(id_a) != str(id_b)
@@ -73,15 +68,16 @@ def _hash_segredo(segredo: str) -> str:
     return hashlib.sha256(segredo.encode('utf-8')).hexdigest()
 
 
-def gerar_token(dispositivo_id) -> tuple[str, str]:
+def gerar_token(dispositivo_uuid) -> tuple[str, str]:
     """Gera `(token_claro, token_hash)`.
 
-    Formato do token: ``<uuid-do-dispositivo>.<segredo>`` — o id localiza a
-    linha (sem varrer a tabela) e o segredo é conferido contra o hash.
+    Formato do token: ``<uuid-do-dispositivo>.<segredo>`` — o uuid (campo
+    público, nunca o id inteiro) localiza a linha pelo índice único, sem varrer
+    a tabela, e o segredo é conferido contra o hash.
     O valor claro só é exibido uma vez, na resposta do pareamento.
     """
     segredo = secrets.token_urlsafe(32)
-    return f"{dispositivo_id}.{segredo}", _hash_segredo(segredo)
+    return f"{dispositivo_uuid}.{segredo}", _hash_segredo(segredo)
 
 
 def autenticar_dispositivo(token: str) -> DispositivoGravador:
@@ -92,15 +88,15 @@ def autenticar_dispositivo(token: str) -> DispositivoGravador:
     if not token or '.' not in token:
         raise invalido
 
-    dispositivo_id, _, segredo = token.partition('.')
+    dispositivo_uuid, _, segredo = token.partition('.')
     try:
-        uuid.UUID(str(dispositivo_id))
+        uuid.UUID(str(dispositivo_uuid))
     except (ValueError, AttributeError):
         raise invalido
 
     dispositivo = DispositivoGravador.objects.filter(
-        id=dispositivo_id, ativo=True,
-    ).select_related('professora', 'turma_ativa', 'instituicao').first()
+        uuid=dispositivo_uuid, ativo=True,
+    ).select_related('professor', 'turma_ativa', 'escola', 'instituicao').first()
     if not dispositivo:
         raise invalido
 
@@ -122,24 +118,28 @@ def gerar_codigo_pareamento(professora, turmas=None) -> CodigoPareamento:
     turma, e o gravador cobre todas as escolhidas.
     """
     instituicao_id = getattr(professora, 'instituicao_id', None)
-    if not instituicao_id:
+    escola_id = getattr(professora, 'escola_id', None)
+    if not instituicao_id or not escola_id:
+        # O gravador sempre pertence a uma escola: perfis globais (superadmin,
+        # suporte, vendedor) precisam gerar o código EM NOME de uma professora.
         raise DispositivoServiceError(
-            'Usuário sem instituição vinculada.', http_status=400,
-            codigo='sem_instituicao',
+            'O gravador precisa ser vinculado a uma professora com escola e instituição.',
+            http_status=400, codigo='sem_escola',
         )
 
     turmas = list(turmas or [])
     for turma in turmas:
-        if instituicoes_divergem(turma.instituicao_id, instituicao_id):
+        if str(turma.escola_id) != str(escola_id):
             raise DispositivoServiceError(
-                'Turma não pertence à instituição do usuário.', http_status=403,
-                codigo='turma_de_outra_instituicao',
+                'Turma não pertence à escola da professora.', http_status=403,
+                codigo='turma_de_outra_escola',
             )
 
     codigo = ''.join(secrets.choice(CODIGO_ALFABETO) for _ in range(CODIGO_TAMANHO))
     registro = CodigoPareamento.objects.create(
         codigo=codigo,
-        professora=professora,
+        professor=professora,
+        escola_id=escola_id,
         instituicao_id=instituicao_id,
         expira_em=timezone.now() + timedelta(minutes=CODIGO_VALIDADE_MINUTOS),
     )
@@ -163,7 +163,7 @@ def parear_dispositivo(codigo: str, device_id: str, nome: str = '') -> tuple[Dis
 
     registro = CodigoPareamento.objects.select_for_update().filter(
         codigo=(codigo or '').strip().upper(),
-    ).order_by('-data_criacao').first()
+    ).order_by('-criado_em').first()
 
     if not registro or not registro.valido:
         raise DispositivoServiceError(
@@ -175,27 +175,31 @@ def parear_dispositivo(codigo: str, device_id: str, nome: str = '') -> tuple[Dis
     if dispositivo is None:
         dispositivo = DispositivoGravador(device_id=device_id)
 
-    dispositivo.professora = registro.professora
-    dispositivo.instituicao = registro.instituicao
+    dispositivo.professor_id = registro.professor_id
+    dispositivo.escola_id = registro.escola_id
+    dispositivo.instituicao_id = registro.instituicao_id
     dispositivo.ativo = True
     dispositivo.revogado_em = None
     if nome:
         dispositivo.nome = nome
-    if not dispositivo.pk:
-        dispositivo.pk = uuid.uuid4()
-
-    token_claro, token_hash = gerar_token(dispositivo.pk)
+    # O uuid já vem preenchido pelo default do model (mesmo antes do save);
+    # o id inteiro só existe depois do INSERT e não entra no token.
+    token_claro, token_hash = gerar_token(dispositivo.uuid)
     dispositivo.token_hash = token_hash
     dispositivo.save()
     dispositivo.turmas.set(registro.turmas.all())
+    # Turma ativa de um vínculo anterior (re-pareamento) não vale mais.
+    if dispositivo.turma_ativa_id and not dispositivo.turmas.filter(id=dispositivo.turma_ativa_id).exists():
+        dispositivo.turma_ativa = None
+        dispositivo.save(update_fields=['turma_ativa', 'atualizado_em'])
 
     registro.usado_em = timezone.now()
     registro.dispositivo = dispositivo
     registro.save(update_fields=['usado_em', 'dispositivo'])
 
     logger.info(
-        "[DISPOSITIVO] %s pareado com professora=%s turmas=%s",
-        device_id, dispositivo.professora_id,
+        "[DISPOSITIVO] %s pareado com professor=%s turmas=%s",
+        device_id, dispositivo.professor_id,
         list(dispositivo.turmas.values_list('id', flat=True)),
     )
     return dispositivo, token_claro
@@ -305,7 +309,7 @@ def resolver_turma_do_audio(
     if anunciada is not None:
         if dispositivo.turma_ativa_id != anunciada.id:
             dispositivo.turma_ativa = anunciada
-            dispositivo.save(update_fields=['turma_ativa', 'data_atualizacao'])
+            dispositivo.save(update_fields=['turma_ativa', 'atualizado_em'])
             logger.info(
                 "[DISPOSITIVO] %s trocou de turma por voz: %s",
                 dispositivo.device_id, anunciada.nome,
@@ -335,7 +339,7 @@ def revogar_dispositivo(dispositivo: DispositivoGravador) -> DispositivoGravador
     """Desativa o dispositivo — o token para de funcionar imediatamente."""
     dispositivo.ativo = False
     dispositivo.revogado_em = timezone.now()
-    dispositivo.save(update_fields=['ativo', 'revogado_em', 'data_atualizacao'])
+    dispositivo.save(update_fields=['ativo', 'revogado_em', 'atualizado_em'])
     return dispositivo
 
 
@@ -408,6 +412,7 @@ def registrar_audio(
         return existente, False
 
     validar_wav(conteudo)
+    agora = timezone.now()
 
     sha256_real = hashlib.sha256(conteudo).hexdigest()
     if sha256_informado and sha256_informado.lower() != sha256_real:
@@ -427,9 +432,11 @@ def registrar_audio(
     try:
         audio = AudioDispositivo.objects.create(
             dispositivo=dispositivo,
-            professora=dispositivo.professora,
+            professor_id=dispositivo.professor_id,
             turma=resolver_turma_do_audio(dispositivo).turma,  # provisória (sem transcrição)
-            instituicao=dispositivo.instituicao,
+            escola_id=dispositivo.escola_id,
+            instituicao_id=dispositivo.instituicao_id,
+            data_recebimento=agora,
             upload_id=upload_uuid,
             sha256=sha256_real,
             tamanho_arquivo=len(conteudo),
@@ -444,9 +451,7 @@ def registrar_audio(
         )
         return audio, False
 
-    DispositivoGravador.objects.filter(pk=dispositivo.pk).update(
-        last_seen=timezone.now(),
-    )
+    DispositivoGravador.objects.filter(pk=dispositivo.pk).update(visto_ultimo=agora)
 
     logger.info(
         "[DISPOSITIVO] Áudio %s recebido (%s bytes) de %s",

@@ -10,7 +10,7 @@ from openai import APIConnectionError
 
 from api.openai_client import get_openai_client
 from api.transcription import get_transcription_backend
-from api.views_legacy import run_with_timeout, IA_REQUEST_TIMEOUT_SECONDS
+from api.ia_utils import run_with_timeout, IA_REQUEST_TIMEOUT_SECONDS
 
 from api.services.openai_usage import registrar_uso_openai, registrar_uso_whisper
 from api.services.prompt_resolver import resolver_prompt
@@ -190,7 +190,7 @@ def modelo_transcricao_ativo() -> str:
     return getattr(get_transcription_backend(), "model", "") or "faster-whisper (local)"
 
 
-def extrair_observacoes(transcricao: str, cliente_id: str = None) -> dict:
+def extrair_observacoes(transcricao: str, escola_id: str = None) -> dict:
     """
     Usa GPT para extrair nomes de alunos e observações da transcrição.
     O prompt é resolvido pelo banco (categoria "Voz"), com fallback para o
@@ -201,7 +201,7 @@ def extrair_observacoes(transcricao: str, cliente_id: str = None) -> dict:
         raise ValueError("Transcrição vazia ou muito curta para extrair observações.")
 
     # Resolve prompt do banco com fallback para o padrão
-    prompt_template = resolver_prompt("Voz", cliente_id=cliente_id) or _PROMPT_VOZ_FALLBACK
+    prompt_template = resolver_prompt("Voz", escola_id=escola_id) or _PROMPT_VOZ_FALLBACK
     prompt = prompt_template.replace("{transcricao}", transcricao)
 
     openai_client = get_openai_client()
@@ -222,7 +222,8 @@ def extrair_observacoes(transcricao: str, cliente_id: str = None) -> dict:
         logger.error("[IA EXTRAÇÃO] Falha de conexão com a OpenAI durante extração: %s", e)
         raise ConnectionError("Falha de conexão com o serviço de análise.") from e
 
-    registrar_uso_openai(response=response, usuario=None)
+    # Áudio do dispositivo não tem usuário: a escola vem do contexto.
+    registrar_uso_openai(response=response, usuario=None, escola_id=escola_id)
     choice = response.choices[0]
     resultado_ia = (choice.message.content or "").strip()
 

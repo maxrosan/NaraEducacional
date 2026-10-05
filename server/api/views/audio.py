@@ -13,7 +13,7 @@ from rest_framework.response import Response
 from rest_framework import status
 
 from api.throttles import UploadRateThrottle
-from api.views_legacy import (
+from api.ia_utils import (
     validate_uploaded_file,
     ALLOWED_AUDIO_MIME_TYPES,
     ALLOWED_AUDIO_EXTENSIONS,
@@ -170,10 +170,14 @@ def upload_audio(request):
             )
 
         # --- Extração de observações via GPT-4 ---
-        # cliente_id resolve o prompt da categoria "Voz" do banco para a instituição do usuário
-        cliente_id = str(request.user.instituicao_id) if getattr(request.user, 'instituicao_id', None) else None
+        # O prompt da categoria "Voz" é personalizado POR ESCOLA: a da turma da
+        # gravação (admin/superadmin não têm escola); sem turma, a do usuário.
+        from api.escopo import buscar_no_escopo
+        from api.models import Turma
+        turma_prompt = buscar_no_escopo(Turma, turma_id) if turma_id else None
+        escola_id = turma_prompt.escola_id if turma_prompt else getattr(request.user, 'escola_id', None)
         try:
-            dados_extraidos = extrair_observacoes(transcribed, cliente_id=cliente_id)
+            dados_extraidos = extrair_observacoes(transcribed, escola_id=escola_id)
         except ValueError as e:
             logger.warning("[EXTRAÇÃO FALHOU] %s", e)
             mensagem_servico = str(e).strip()

@@ -16,11 +16,12 @@ class TenantManager(models.Manager):
         qs = TenantQuerySet(self.model, using=self._db)
         scope = get_current_tenant()
         if scope is None:
-            return qs
+            return qs  # perfil global ou requisição sem usuário
 
         nivel, valor = scope
         if nivel == 'escola':
             return qs.filter(escola_id=valor)
         if nivel == 'instituicao':
             return qs.filter(instituicao_id=valor)
-        return qs
+        # 'nenhum' ou qualquer nível desconhecido: fecha em vez de abrir.
+        return qs.none()

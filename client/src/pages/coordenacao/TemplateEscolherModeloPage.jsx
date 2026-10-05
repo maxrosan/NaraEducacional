@@ -7,9 +7,11 @@ import {
   SECOES_PADRAO,
   renderCapa,
   fetchInstituicao,
-  fetchModeloAtivo,
   apiGet,
   apiPost,
+  useEscolaTemplate,
+  useRotasTemplate,
+  templatePadraoDoModelo,
 } from '@/lib/templateRelatorioShared';
 
 function usePreviewScale(larguraBase = 794) {
@@ -101,6 +103,9 @@ function ModeloThumbnail({ modeloId, instituicao }) {
 
 export default function TemplateEscolherModeloPage() {
   const navigate = useNavigate();
+  // escolaUuid: URL e GET; escolaId (int): body do POST de criação.
+  const { escolaUuid, escolaId, escolas, trocarEscola, comEscola, pronto } = useEscolaTemplate();
+  const rotas = useRotasTemplate();
 
   const [instituicao, setInstituicao] = useState({
     nome: 'Sua Escola',
@@ -125,92 +130,44 @@ export default function TemplateEscolherModeloPage() {
   // -------------------------------------------------------
 
   useEffect(() => {
+    if (!pronto) return undefined;
+    let cancelado = false;
+
     async function carregarDados() {
       try {
         setCarregando(true);
         setErro(null);
 
-        const [
-          instituicaoData,
-          modeloAtivoData,
-          templatesData,
-        ] = await Promise.all([
-          fetchInstituicao(),
-          fetchModeloAtivo(),
-          apiGet('/api/templates-relatorio/'),
+        // Só os templates DA ESCOLA em configuração (o admin enxerga os da
+        // rede inteira; sem o filtro, modelos de escolas diferentes se
+        // misturavam na tela).
+        const [instituicaoData, templatesData] = await Promise.all([
+          fetchInstituicao(escolaUuid),
+          apiGet(comEscola('/relatorio-templates/')),
         ]);
+        if (cancelado) return;
 
-        // -------------------------------------------------
-        // Instituição
-        // -------------------------------------------------
+        if (instituicaoData) setInstituicao(instituicaoData);
 
-        if (instituicaoData) {
-          setInstituicao(instituicaoData);
-        }
-
-
-        // -------------------------------------------------
-        // Template/modelo atualmente ativo
-        //
-        // fetchModeloAtivo pode retornar:
-        //
-        // 1. um objeto:
-        //    { id: "...", modelo: "classico" }
-        //
-        // 2. apenas o ID:
-        //    "uuid..."
-        //
-        // 3. null
-        // -------------------------------------------------
-
-        let ativoId = null;
-
-        if (
-          modeloAtivoData !== null &&
-          modeloAtivoData !== undefined
-        ) {
-          if (typeof modeloAtivoData === 'object') {
-            ativoId =
-              modeloAtivoData.id ??
-              modeloAtivoData.templateId ??
-              modeloAtivoData.template_id ??
-              null;
-          } else {
-            ativoId = modeloAtivoData;
-          }
-        }
-
-        setTemplateAtivoId(ativoId);
-
-
-        // -------------------------------------------------
-        // Templates
-        // -------------------------------------------------
-
-        let listaTemplates = [];
-
-        if (Array.isArray(templatesData)) {
-          listaTemplates = templatesData;
-        } else if (Array.isArray(templatesData?.results)) {
-          listaTemplates = templatesData.results;
-        }
-
+        const listaTemplates = Array.isArray(templatesData)
+          ? templatesData
+          : (Array.isArray(templatesData?.results) ? templatesData.results : []);
         setTemplates(listaTemplates);
-
+        // O ativo vem da própria lista (antes usava fetchModeloAtivo, que
+        // devolvia o nome do MODELO e era comparado com o id do template).
+        setTemplateAtivoId(listaTemplates.find((t) => t.ativo)?.id ?? null);
       } catch (e) {
+        if (cancelado) return;
         console.error('Erro ao carregar templates:', e);
-
-        setErro(
-          e.message ||
-          'Não foi possível carregar os templates.'
-        );
+        setErro(e.message || 'Não foi possível carregar os templates.');
       } finally {
-        setCarregando(false);
+        if (!cancelado) setCarregando(false);
       }
     }
 
     carregarDados();
-  }, []);
+    return () => { cancelado = true; };
+  }, [pronto, escolaUuid, comEscola]);
 
 
   // -------------------------------------------------------
@@ -228,10 +185,34 @@ export default function TemplateEscolherModeloPage() {
   // Criar template
   // -------------------------------------------------------
 
-  function criar(modeloId) {
-    navigate(
-      `/coordenacao/templates/nova?modelo=${modeloId}`
-    );
+  // "Selecionar" um modelo que a escola ainda não tem: cria o template com a
+  // configuração padrão JÁ ATIVO (o backend desativa os outros da escola) e
+  // fica na tela — para personalizar, o botão "Editar" aparece em seguida.
+  // Antes abria o editor e a capa só passava a valer depois de salvar lá.
+  async function criar(modeloId) {
+    try {
+      setSelecionandoId(modeloId);
+      setErro(null);
+
+      const ativoAtual = templates.find((t) => t.ativo);
+      const payload = {
+        ...templatePadraoDoModelo(modeloId, instituicao?.nome, ativoAtual?.items_sumario),
+        ativo: true,
+        ...(escolaId ? { escola: escolaId } : {}),
+      };
+      const novo = await apiPost('/relatorio-templates/criar/', payload);
+
+      setTemplates((anteriores) => [
+        ...anteriores.map((item) => ({ ...item, ativo: false })),
+        novo,
+      ]);
+      setTemplateAtivoId(novo.id);
+    } catch (e) {
+      console.error('Erro ao selecionar modelo:', e);
+      setErro(e.message || 'Não foi possível selecionar este modelo.');
+    } finally {
+      setSelecionandoId(null);
+    }
   }
 
 
@@ -239,9 +220,10 @@ export default function TemplateEscolherModeloPage() {
   // Editar template
   // -------------------------------------------------------
 
-  function editar(templateId) {
+  // Recebe o UUID do template (vai na URL do editor).
+  function editar(templateUuid) {
     navigate(
-      `/coordenacao/templates/${templateId}`
+      comEscola(rotas.editar(templateUuid))
     );
   }
 
@@ -268,7 +250,7 @@ export default function TemplateEscolherModeloPage() {
       setErro(null);
 
       await apiPost(
-        `/api/templates-relatorio/${template.id}/ativar/`,
+        `/api/templates-relatorio/${template.uuid}/ativar/`,
         {}
       );
 
@@ -336,6 +318,23 @@ export default function TemplateEscolherModeloPage() {
       </div>
 
 
+      {/* Escola em configuração — só para quem enxerga mais de uma. */}
+      {escolas.length > 1 && (
+        <div className="mt-4 max-w-sm">
+          <label htmlFor="escola-capa" className="block text-sm font-medium text-gray-700 mb-1">
+            Escola
+          </label>
+          <select
+            id="escola-capa"
+            value={escolaUuid || ''}
+            onChange={(e) => trocarEscola(e.target.value)}
+            className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm"
+          >
+            {escolas.map((e) => <option key={e.uuid} value={e.uuid}>{e.nome}</option>)}
+          </select>
+        </div>
+      )}
+
       {/* -------------------------------------------------
           Erro
          ------------------------------------------------- */}
@@ -366,7 +365,7 @@ export default function TemplateEscolherModeloPage() {
           // Mantemos as duas verificações:
           //
           // 1. template.ativo
-          // 2. templateAtivoId vindo do fetchModeloAtivo()
+          // 2. templateAtivoId (o ativo da lista desta escola)
           //
           // Assim a UI continua funcionando mesmo se o endpoint
           // retornar o ID separado.
@@ -493,6 +492,7 @@ export default function TemplateEscolherModeloPage() {
                   {!templateExistente && (
                     <button
                       type="button"
+                      disabled={selecionandoId === modelo.id}
                       onClick={() => criar(modelo.id)}
                       className="
                         w-full
@@ -505,9 +505,10 @@ export default function TemplateEscolherModeloPage() {
                         px-4
                         py-2.5
                         transition
+                        disabled:opacity-60
                       "
                     >
-                      Selecionar
+                      {selecionandoId === modelo.id ? 'Selecionando...' : 'Selecionar'}
                     </button>
                   )}
 
@@ -525,7 +526,7 @@ export default function TemplateEscolherModeloPage() {
                       <button
                         type="button"
                         onClick={() =>
-                          editar(templateExistente.id)
+                          editar(templateExistente.uuid)
                         }
                         className="
                           flex-1

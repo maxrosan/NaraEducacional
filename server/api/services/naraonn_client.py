@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import logging
 import os
-from typing import Optional
 
 import requests
 
@@ -41,31 +40,45 @@ class NaraonnInvalidResponse(NaraonnError):
     """O NaraNN respondeu mas o payload não bate com o contrato esperado."""
 
 
+# ---------------------------------------------------------------------------
+# Helpers internos
+# ---------------------------------------------------------------------------
+
+def _request(method: str, path: str, timeout: int, **kwargs) -> requests.Response:
+    """Faz a requisição; converte qualquer falha de rede/timeout em ``NaraonnUnavailable``."""
+    try:
+        return requests.request(method, f"{_base_url()}{path}", timeout=timeout, **kwargs)
+    except requests.RequestException as exc:
+        logger.warning("[NARAONN] %s %s falhou (rede): %s", method, path, exc)
+        raise NaraonnUnavailable(str(exc)) from exc
+
+
+def _json_ou_erro(response: requests.Response) -> dict:
+    """Valida o status HTTP e devolve o corpo JSON, ou levanta a exceção adequada."""
+    if response.status_code >= 500:
+        raise NaraonnUnavailable(f"HTTP {response.status_code}: {response.text[:200]}")
+    if not response.ok:
+        raise NaraonnInvalidResponse(f"HTTP {response.status_code}: {response.text[:200]}")
+    try:
+        return response.json()
+    except ValueError as exc:
+        raise NaraonnInvalidResponse(f"resposta não-JSON: {response.text[:200]}") from exc
+
+
+# ---------------------------------------------------------------------------
+# API pública
+# ---------------------------------------------------------------------------
+
 def submit_job(ogg_bytes: bytes, name_hint: str) -> str:
     """Envia o áudio para o NaraNN e devolve o ``job_id``.
 
     Levanta ``NaraonnUnavailable`` em problemas de rede/timeout/5xx e
     ``NaraonnInvalidResponse`` se o payload não trouxer ``job_id``.
     """
-    url = f"{_base_url()}/jobs"
     files = {"file": (name_hint or "audio.ogg", ogg_bytes, "audio/ogg")}
-    try:
-        response = requests.post(url, files=files, timeout=_submit_timeout())
-    except requests.RequestException as exc:
-        logger.warning("[NARAONN] submit_job falhou (rede): %s", exc)
-        raise NaraonnUnavailable(str(exc)) from exc
+    data = _json_ou_erro(_request("POST", "/jobs", _submit_timeout(), files=files))
 
-    if response.status_code >= 500:
-        raise NaraonnUnavailable(f"HTTP {response.status_code}: {response.text[:200]}")
-    if not response.ok:
-        raise NaraonnInvalidResponse(f"HTTP {response.status_code}: {response.text[:200]}")
-
-    try:
-        data = response.json()
-    except ValueError as exc:
-        raise NaraonnInvalidResponse(f"resposta não-JSON: {response.text[:200]}") from exc
-
-    job_id = data.get("job_id")
+    job_id = data.get("job_id") if isinstance(data, dict) else None
     if not job_id:
         raise NaraonnInvalidResponse(f"job_id ausente em {data}")
     return str(job_id)
@@ -73,49 +86,19 @@ def submit_job(ogg_bytes: bytes, name_hint: str) -> str:
 
 def get_job(job_id: str) -> dict:
     """Consulta o estado de um job. Retorna o dicionário público da API do NaraNN."""
-    url = f"{_base_url()}/jobs/{job_id}"
-    try:
-        response = requests.get(url, timeout=_poll_timeout())
-    except requests.RequestException as exc:
-        logger.warning("[NARAONN] get_job falhou (rede): %s", exc)
-        raise NaraonnUnavailable(str(exc)) from exc
-
+    response = _request("GET", f"/jobs/{job_id}", _poll_timeout())
     if response.status_code == 404:
         raise NaraonnInvalidResponse("job não encontrado no NaraNN")
-    if response.status_code >= 500:
-        raise NaraonnUnavailable(f"HTTP {response.status_code}: {response.text[:200]}")
-    if not response.ok:
-        raise NaraonnInvalidResponse(f"HTTP {response.status_code}: {response.text[:200]}")
-
-    try:
-        return response.json()
-    except ValueError as exc:
-        raise NaraonnInvalidResponse(f"resposta não-JSON: {response.text[:200]}") from exc
+    return _json_ou_erro(response)
 
 
-def delete_job(job_id: str) -> bool:
-    """Remove um job do NaraNN. Best-effort — nunca levanta, retorna False em falha."""
+def delete_job(job_id: str) -> None:
+    """Remove um job do NaraNN. Best-effort — nunca levanta; falhas são apenas logadas."""
     if not job_id:
-        return False
-    url = f"{_base_url()}/jobs/{job_id}"
+        return
     try:
-        response = requests.delete(url, timeout=_poll_timeout())
-    except requests.RequestException as exc:
-        logger.warning("[NARAONN] delete_job falhou: %s", exc)
-        return False
-    return response.ok
-
-
-def health() -> Optional[dict]:
-    """Heartbeat. Retorna o JSON ou None se o serviço estiver inacessível."""
-    url = f"{_base_url()}/health"
-    try:
-        response = requests.get(url, timeout=_poll_timeout())
-    except requests.RequestException:
-        return None
+        response = _request("DELETE", f"/jobs/{job_id}", _poll_timeout())
+    except NaraonnUnavailable:
+        return  # já logado em _request
     if not response.ok:
-        return None
-    try:
-        return response.json()
-    except ValueError:
-        return None
+        logger.warning("[NARAONN] delete_job %s retornou HTTP %s", job_id, response.status_code)

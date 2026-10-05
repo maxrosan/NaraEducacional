@@ -18,11 +18,15 @@ import {
   cssVarsPaleta,
   montarPaletaPersonalizada,
   sortearCoresQueCombinam,
-  apiGet,
-  apiPost,
-  apiPut,
   fetchInstituicao,
+  useEscolaTemplate,
+  useRotasTemplate,
 } from '@/lib/templateRelatorioShared';
+import {
+  buscarRelatorioTemplate,
+  criarRelatorioTemplate,
+  atualizarRelatorioTemplate,
+} from '@/services/api';
 
 // Modelos que usam foto da criança na capa (bate com RelatorioTemplate.suporta_foto()).
 // Apenas 'memorias' — 'natureza' mantém só o círculo pontilhado decorativo,
@@ -107,10 +111,20 @@ function ToggleRow({ label, value, disabled, reason, onChange }) {
 
 export default function TemplateEditorPage() {
   const navigate = useNavigate();
-  const { templateId } = useParams();
+  const { templateId: templateIdDaRota } = useParams();
   const [searchParams] = useSearchParams();
+  // Coordenação: /coordenacao/templates/<uuid>. Painel admin: /admin/capa?template=<uuid>.
+  // É o UUID do template (vai nas URLs da API), não o id.
+  const templateId = templateIdDaRota || searchParams.get('template');
+  const rotas = useRotasTemplate();
   const modeloDaUrl = searchParams.get('modelo');
   const modoEdicao = Boolean(templateId);
+  const { escolaUuid: escolaUuidDaUrl, escolaId: escolaIdDaUrl, comEscola, pronto } = useEscolaTemplate();
+  // Editando: a escola é a do template (não muda). Criando: a da URL.
+  // escolaAlvo é o UUID (links e prévia); no body de criação vai escolaIdDaUrl.
+  const [escolaDoTemplate, setEscolaDoTemplate] = useState(null);
+  const escolaAlvo = modoEdicao ? escolaDoTemplate : escolaUuidDaUrl;
+  const rotaModelos = comEscola(rotas.modelos, escolaAlvo);
 
   const [carregando, setCarregando] = useState(modoEdicao);
   const [modeloId, setModeloId] = useState(modeloDaUrl || 'classico');
@@ -156,19 +170,23 @@ export default function TemplateEditorPage() {
   const [erro, setErro] = useState(null);
   const [sucesso, setSucesso] = useState(false);
 
+  // Prévia com os dados da escola do template (como o gerador faz).
   useEffect(() => {
-    fetchInstituicao().then(setInstituicao);
-  }, []);
+    if (modoEdicao ? !escolaDoTemplate : !pronto) return;
+    fetchInstituicao(escolaAlvo).then(setInstituicao);
+  }, [modoEdicao, escolaDoTemplate, pronto, escolaAlvo]);
 
   useEffect(() => {
     if (!modoEdicao) return;
     (async () => {
       try {
-        const t = await apiGet(`/api/templates-relatorio/${templateId}/`);
+        const t = await buscarRelatorioTemplate(templateId);
         setModeloId(t.modelo);
+        setEscolaDoTemplate(t.escola_uuid ? String(t.escola_uuid) : null);
         setItemsSumario(Array.isArray(t.items_sumario) && t.items_sumario.length ? t.items_sumario : SECOES_PADRAO);
         setTemplateAtivoId(t.ativo ? t.id : null);
-        setUsaFotoCrianca(Boolean(t.usa_foto_crianca));
+        // O campo do model é usa_foto_aluno (usa_foto_crianca era do legado).
+        setUsaFotoCrianca(Boolean(t.usa_foto_aluno ?? t.usa_foto_crianca));
         setTipoRelatorio(t.config?.tipoRelatorio || 'Relatório Individual');
         setTituloRelatorio(t.config?.tituloRelatorio || 'Relatório de Acompanhamento da Aprendizagem');
         setFraseDestaque(t.config?.fraseDestaque || '');
@@ -295,7 +313,7 @@ export default function TemplateEditorPage() {
       const payload = {
         nome: nomeTemplateGerado,
         modelo: modeloId,
-        usa_foto_crianca: suportaFoto ? usaFotoCrianca : false,
+        usa_foto_aluno: suportaFoto ? usaFotoCrianca : false,
         config: {
           paleta: paletaAtual.cores,
           tipoRelatorio,
@@ -309,15 +327,27 @@ export default function TemplateEditorPage() {
           tituloTamanho,
           alinhamento,
         },
-        items_sumario: itemsSumario.map((i) => ({ ...i, visivel: true })),
+        // Preserva o "ocultar" configurado em Admin → Relatórios (antes
+        // forçava visivel: true e desfazia essa configuração a cada salvar).
+        items_sumario: itemsSumario.map((i) => ({ ...i, visivel: i.visivel !== false })),
       };
+      if (!modoEdicao) {
+        // Criar = "Selecionar" um modelo que a escola ainda não tinha: o novo
+        // template passa a valer (o backend desativa os outros da escola).
+        // Antes nascia inativo e a capa escolhida não era usada. Na edição,
+        // `ativo` não é enviado: editar não troca a capa em uso.
+        payload.ativo = true;
+        // Escola do template (admin/superadmin precisam; para o coordenador
+        // o backend usa sempre a escola dele).
+        if (escolaIdDaUrl) payload.escola = escolaIdDaUrl;
+      }
       if (modoEdicao) {
-        await apiPut(`/api/templates-relatorio/${templateId}/atualizar/`, payload);
+        await atualizarRelatorioTemplate(templateId, payload);
       } else {
-        await apiPost('/api/templates-relatorio/criar/', payload);
+        await criarRelatorioTemplate(payload);
       }
       setSucesso(true);
-      setTimeout(() => navigate('/coordenacao/templates/escolher-modelo'), 1200);
+      setTimeout(() => navigate(rotaModelos), 1200);
     } catch (e) {
       setErro(e.message);
     } finally {
@@ -330,10 +360,12 @@ export default function TemplateEditorPage() {
   }
 
   return (
-    <div className="max-w-[1600px] mx-auto px-6 py-8 lg:h-screen lg:flex lg:flex-col lg:py-6">
+    // No painel admin a tela fica abaixo da navbar e do título do painel:
+    // altura da janela menos esse espaço (no layout do coordenador, a tela inteira).
+    <div className={`max-w-[1600px] mx-auto lg:flex lg:flex-col ${rotas.noAdmin ? 'py-2 lg:h-[calc(100vh-11rem)]' : 'px-6 py-8 lg:h-screen lg:py-6'}`}>
       <div className="flex items-center gap-3 mb-6 flex-none">
         <button
-          onClick={() => navigate('/coordenacao/templates/escolher-modelo')}
+          onClick={() => navigate(rotaModelos)}
           className="text-sm text-gray-500 hover:text-violet-400 border border-gray-500 hover:border-violet-500 rounded-xl px-4 py-2 transition-colors"
         >
           ← Voltar aos modelos

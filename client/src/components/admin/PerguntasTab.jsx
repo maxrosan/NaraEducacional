@@ -1,695 +1,581 @@
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { apiClient } from '@/lib/apiClient';
-import { useToast } from '@/components/ui/use-toast';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import {
+    PlusCircle, Edit, Power, RotateCcw, ChevronLeft, ChevronRight, Loader2, Check,
+} from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger, DialogFooter, DialogClose } from '@/components/ui/dialog';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Loader2, PlusCircle, Edit, Trash2, ExternalLink, Users, MessageCircle, Shapes, ToyBrick, Palette, BookOpen, Check, ChevronsUpDown } from 'lucide-react';
-import IconPicker, { getIconComponent, iconLibrary } from '@/components/ui/icon-picker';
+import { toast } from '@/components/ui/use-toast';
+import { Card, CardHeader, CardTitle, CardContent, CardDescription } from "@/components/ui/card";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogClose, DialogDescription } from "@/components/ui/dialog";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Badge } from "@/components/ui/badge";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import IconPicker from '@/components/ui/icon-picker';
+import { NIVEIS_BASE, iconeDoCampo, montarNiveis, mensagemDeErro } from '@/lib/perguntasUtils';
+import {
+    listarPerguntasEspecialistasPaginado, criarPerguntaEspecialista, atualizarPerguntaEspecialista,
+    listarCamposPedagogicos, criarCampoPedagogico, listarEscolas, listarTurmas,
+} from '@/services/api';
 
-// Mapa de Campos de Experiência da BNCC
-const campoExperienciaMap = {
-  'O eu, o outro e o nós': { icon: Users, name: 'O eu, o outro e o nós' },
-  'Escuta, fala, pensamento e imaginação': { icon: MessageCircle, name: 'Escuta, fala, pensamento e imaginação' },
-  'Espaços, tempos, quantidades, relações e transformações': { icon: Shapes, name: 'Espaços, tempos, quantidades...' },
-  'Corpo, gestos e movimentos': { icon: ToyBrick, name: 'Corpo, gestos e movimentos' },
-  'Traços, sons, cores e formas': { icon: Palette, name: 'Traços, sons, cores e formas' },
-};
+/*
+ * Perguntas dos especialistas (backend: /perguntas-especialistas/?page=).
+ * As perguntas BNCC oficiais têm página própria (/admin/perguntas-bncc),
+ * acessada pelo submenu Perguntas → BNCC.
+ *
+ * Toda pergunta tem uma Referência BNCC: o usuário digita o código (ex.:
+ * EI03EO01) e o backend localiza a habilidade no catálogo; código
+ * inexistente volta como erro no formulário.
+ *
+ * Carregamento leve: lista paginada (10 por página), filtrada no servidor
+ * pela aba (ativas/inativas), escola, nível, campo e busca (texto ou código
+ * BNCC). Escolas, campos e turmas (para os níveis) são buscados uma vez.
+ *
+ * Não existe exclusão: os registros de observação apontam para a pergunta,
+ * então ela é desativada e pode ser reativada na aba Inativas.
+ */
 
-const baseLevels = ['Nível 1', 'Nível 2', 'Nível 3', 'Nível 4', 'Nível 5'];
-const baseLevelOrder = new Map(baseLevels.map((level, index) => [level, index]));
-
-// Helper para obter CSRF token
-const getCsrfToken = () => {
-  const match = document.cookie.match(/csrftoken=([^;]+)/);
-  return match ? match[1] : '';
-};
-
-const ensureCsrfToken = async () => {
-  const existingToken = getCsrfToken();
-  if (existingToken) return existingToken;
-
-  try {
-    await fetch('/api/auth/csrf/', { method: 'GET', credentials: 'include' });
-  } catch (error) {
-    console.warn('Não foi possível obter CSRF token:', error);
-  }
-  return getCsrfToken();
-};
-
-const extractAnoFromLabel = (value) => {
-  if (!value) return null;
-  const match = value.match(/(\d+)\s*º?\s*ANO(?!S)/i);
-  if (!match) return null;
-  const parsed = Number(match[1]);
-  return Number.isNaN(parsed) ? null : parsed;
-};
-
-const normalizeLevelFromName = (nome) => {
-  if (!nome) return null;
-  const anoFromNome = extractAnoFromLabel(nome);
-  if (anoFromNome) {
-    return `${anoFromNome}º ANO`;
-  }
-  return null;
-};
-
-const normalizeLevelFromFaixaEtaria = (faixaEtaria) => {
-  if (!faixaEtaria) return null;
-  const nivelMatch = faixaEtaria.match(/nível\s*(\d+)/i);
-  if (nivelMatch) {
-    return `Nível ${nivelMatch[1]}`;
-  }
-  const anoFromFaixa = extractAnoFromLabel(faixaEtaria);
-  if (anoFromFaixa) {
-    return `${anoFromFaixa}º ANO`;
-  }
-  const ageMatch = faixaEtaria.match(/(\d+)\s*anos?/i);
-  if (ageMatch) {
-    const age = Number(ageMatch[1]);
-    if (!Number.isNaN(age)) {
-      if (age >= 1 && age <= 5) {
-        return `Nível ${age}`;
-      }
-      if (age >= 6 && age <= 10) {
-        return `${age - 5}º ANO`;
-      }
-    }
-  }
-  return null;
-};
-
-const normalizeLevelValue = (turma) => {
-  const nome = turma?.nome?.trim();
-  const faixaEtaria = turma?.faixa_etaria?.trim();
-
-  const levelFromName = normalizeLevelFromName(nome);
-  if (levelFromName) return levelFromName;
-
-  const levelFromFaixa = normalizeLevelFromFaixaEtaria(faixaEtaria);
-  if (levelFromFaixa) return levelFromFaixa;
-
-  return null;
-};
-
-const buildEducationLevels = (turmas = []) => {
-  const dynamicLevels = turmas.map(normalizeLevelValue).filter(Boolean);
-  const combined = Array.from(new Set([...baseLevels, ...dynamicLevels]));
-
-  combined.sort((a, b) => {
-    const aBaseIndex = baseLevelOrder.get(a);
-    const bBaseIndex = baseLevelOrder.get(b);
-    const aIsBase = aBaseIndex !== undefined;
-    const bIsBase = bBaseIndex !== undefined;
-
-    if (aIsBase && bIsBase) {
-      return aBaseIndex - bBaseIndex;
-    }
-    if (aIsBase) return -1;
-    if (bIsBase) return 1;
-
-    const aAno = extractAnoFromLabel(a);
-    const bAno = extractAnoFromLabel(b);
-    if (aAno !== null && bAno !== null) {
-      return aAno - bAno;
-    }
-    if (aAno !== null) return -1;
-    if (bAno !== null) return 1;
-
-    return a.localeCompare(b, 'pt-BR', { sensitivity: 'base' });
-  });
-
-  return combined;
-};
-
-// Componente Creatable Select para Campo de Experiência com suporte a ícones
-const CreatableCampoSelect = ({ value, onChange, existingCampos, customCampos = [], onCampoCreated }) => {
-  const [inputValue, setInputValue] = useState('');
-  const [isOpen, setIsOpen] = useState(false);
-  const [showIconPicker, setShowIconPicker] = useState(false);
-  const [newCampoName, setNewCampoName] = useState('');
-  const [selectedIcon, setSelectedIcon] = useState('BookOpen');
-  const [savingCampo, setSavingCampo] = useState(false);
-  const { toast } = useToast();
-
-  const allCampos = useMemo(() => {
-    const standardCampos = Object.keys(campoExperienciaMap);
-    const customNames = (customCampos || []).map(c => c.nome);
-    const combined = new Set([...standardCampos, ...(existingCampos || []), ...customNames]);
-    return Array.from(combined).sort();
-  }, [existingCampos, customCampos]);
-
-  const customIconMap = useMemo(() => {
-    const map = {};
-    (customCampos || []).forEach(c => {
-      map[c.nome] = c.icone || 'BookOpen';
-    });
-    return map;
-  }, [customCampos]);
-
-  const filteredCampos = useMemo(() => {
-    if (!inputValue) return allCampos;
-    return allCampos.filter(campo =>
-      campo.toLowerCase().includes(inputValue.toLowerCase())
-    );
-  }, [allCampos, inputValue]);
-
-  const handleSelect = (campo) => {
-    onChange(campo);
-    setInputValue('');
-    setIsOpen(false);
-  };
-
-  const handleStartCreateNew = () => {
-    if (inputValue.trim()) {
-      setNewCampoName(inputValue.trim());
-      setSelectedIcon('BookOpen');
-      setShowIconPicker(true);
-      setIsOpen(false);
-    }
-  };
-
-  const handleCreateNewCampo = async () => {
-    if (!newCampoName.trim()) return;
-
-    setSavingCampo(true);
-    try {
-      // Garantir que temos o CSRF token
-      const csrfToken = await ensureCsrfToken();
-
-      const response = await fetch('/api/campos-experiencia/criar/', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-CSRFToken': csrfToken,
-        },
-        credentials: 'include',
-        body: JSON.stringify({
-          nome: newCampoName.trim(),
-          icone: selectedIcon,
-        }),
-      });
-
-      if (!response.ok) {
-        const error = await response.json();
-        throw new Error(error.error || 'Erro ao criar campo');
-      }
-
-      const novoCampo = await response.json();
-
-      toast({
-        title: 'Campo criado!',
-        description: `"${newCampoName}" foi adicionado com sucesso.`,
-        className: 'bg-green-100'
-      });
-
-      if (onCampoCreated) {
-        onCampoCreated(novoCampo);
-      }
-
-      onChange(newCampoName.trim());
-      setShowIconPicker(false);
-      setNewCampoName('');
-      setInputValue('');
-    } catch (error) {
-      toast({
-        title: 'Erro ao criar campo',
-        description: error.message,
-        variant: 'destructive'
-      });
-    } finally {
-      setSavingCampo(false);
-    }
-  };
-
-  const getIconForCampo = (campo) => {
-    if (campoExperienciaMap[campo]) {
-      return campoExperienciaMap[campo].icon;
-    }
-    if (customIconMap[campo]) {
-      return getIconComponent(customIconMap[campo]);
-    }
-    return BookOpen;
-  };
-
-  return (
-    <>
-      <div className="relative col-span-3">
-        <div
-          className="flex items-center justify-between w-full h-10 px-3 py-2 text-sm bg-white border rounded-md cursor-pointer border-input hover:bg-accent"
-          onClick={() => setIsOpen(!isOpen)}
-        >
-          {value ? (
-            <span className="flex items-center gap-2 text-foreground">
-              {React.createElement(getIconForCampo(value), { className: "h-4 w-4 text-purple-600" })}
-              {value}
-            </span>
-          ) : (
-            <span className="text-muted-foreground">
-              Selecione ou digite um Campo de Experiência
-            </span>
-          )}
-          <ChevronsUpDown className="h-4 w-4 opacity-50" />
-        </div>
-
-        {isOpen && (
-          <div className="absolute z-50 w-full mt-1 bg-white border rounded-md shadow-lg max-h-60 overflow-auto">
-            <div className="p-2 border-b">
-              <Input
-                placeholder="Buscar ou criar novo campo..."
-                value={inputValue}
-                onChange={(e) => setInputValue(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter' && inputValue.trim() && !allCampos.includes(inputValue.trim())) {
-                    e.preventDefault();
-                    handleStartCreateNew();
-                  }
-                }}
-                className="h-8"
-                autoFocus
-              />
-            </div>
-            <div className="py-1">
-              {filteredCampos.map((campo) => {
-                const Icon = getIconForCampo(campo);
-                return (
-                  <div
-                    key={campo}
-                    className={`flex items-center gap-2 px-3 py-2 text-sm cursor-pointer hover:bg-purple-50 ${value === campo ? 'bg-purple-100 text-purple-800' : ''}`}
-                    onClick={() => handleSelect(campo)}
-                  >
-                    <Icon className="h-4 w-4 text-purple-600" />
-                    <span>{campo}</span>
-                  </div>
-                );
-              })}
-              {inputValue && !allCampos.includes(inputValue.trim()) && (
-                <div
-                  className="flex items-center gap-2 px-3 py-2 text-sm cursor-pointer hover:bg-green-50 border-t text-green-700"
-                  onClick={handleStartCreateNew}
-                >
-                  <PlusCircle className="h-4 w-4" />
-                  <span>Criar novo: "<strong>{inputValue}</strong>"</span>
-                </div>
-              )}
-            </div>
-          </div>
-        )}
-
-        {isOpen && (
-          <div className="fixed inset-0 z-40" onClick={() => { setIsOpen(false); setInputValue(''); }} />
-        )}
-      </div>
-
-      {/* Modal de seleção de ícone */}
-      <Dialog open={showIconPicker} onOpenChange={setShowIconPicker}>
-        <DialogContent className="max-w-md">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              <PlusCircle className="h-5 w-5 text-green-600" />
-              Criar novo Campo de Experiência
-            </DialogTitle>
-            <DialogDescription>
-              Defina o nome e escolha um ícone para o novo campo de experiência.
-            </DialogDescription>
-          </DialogHeader>
-
-          <div className="space-y-4 py-4">
-            <div>
-              <Label className="font-medium">Nome do campo</Label>
-              <Input
-                value={newCampoName}
-                onChange={(e) => setNewCampoName(e.target.value)}
-                className="mt-1"
-                placeholder="Nome do campo de experiência"
-              />
-            </div>
-
-            <div>
-              <Label className="font-medium">Escolha um ícone</Label>
-              <div className="mt-2">
-                <IconPicker
-                  selectedIcon={selectedIcon}
-                  onSelect={setSelectedIcon}
-                />
-              </div>
-            </div>
-
-            <div className="p-3 bg-gray-50 rounded-lg">
-              <p className="text-sm text-gray-600 mb-2">Prévia:</p>
-              <div className="flex items-center gap-2">
-                {React.createElement(getIconComponent(selectedIcon), { className: "h-5 w-5 text-purple-600" })}
-                <span className="font-medium">{newCampoName || 'Nome do campo'}</span>
-              </div>
-            </div>
-          </div>
-
-          <DialogFooter>
-            <DialogClose asChild>
-              <Button variant="ghost">Cancelar</Button>
-            </DialogClose>
-            <Button onClick={handleCreateNewCampo} disabled={savingCampo || !newCampoName.trim()}>
-              {savingCampo ? (
-                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-              ) : (
-                <Check className="h-4 w-4 mr-2" />
-              )}
-              <span>Criar Campo</span>
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-    </>
-  );
-};
+const TODOS = 'todos';
+const POR_PAGINA = 10;
+const BUSCA_DEBOUNCE_MS = 400;
+const ABA_ATIVAS = 'ativa';
+const ABA_INATIVAS = 'inativa';
+const LISTA_VAZIA = { results: [], count: 0, total_paginas: 1, totais: { ativas: 0, inativas: 0 } };
 
 const PerguntasTab = () => {
-  const navigate = useNavigate();
-  const { toast } = useToast();
-  const [perguntas, setPerguntas] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [isModalOpen, setIsModalOpen] = useState(false);
-  const [currentPergunta, setCurrentPergunta] = useState(null);
-  const [institutionId, setInstitutionId] = useState(null);
-  const [nivelFilterEspecialista, setNivelFilterEspecialista] = useState('');
-  const [educationLevels, setEducationLevels] = useState(baseLevels);
-  const [existingCampos, setExistingCampos] = useState([]);
-  const [customCampos, setCustomCampos] = useState([]);
+    const [aba, setAba] = useState(ABA_ATIVAS);
+    const [pagina, setPagina] = useState(1);
+    const [filtroEscola, setFiltroEscola] = useState(TODOS);
+    const [filtroNivel, setFiltroNivel] = useState(TODOS);
+    const [filtroCampo, setFiltroCampo] = useState(TODOS);
+    const [busca, setBusca] = useState('');
+    const [buscaAplicada, setBuscaAplicada] = useState('');
+    const [lista, setLista] = useState(LISTA_VAZIA);
+    const [loading, setLoading] = useState(true);
+    const [carregouUmaVez, setCarregouUmaVez] = useState(false);
+    const [escolas, setEscolas] = useState([]);
+    const [campos, setCampos] = useState([]);
+    const [niveis, setNiveis] = useState(NIVEIS_BASE);
+    const [isFormOpen, setIsFormOpen] = useState(false);
+    const [editando, setEditando] = useState(null);
+    const [desativando, setDesativando] = useState(null);
+    // Descarta respostas atrasadas quando o usuário troca de aba/página rápido.
+    const ultimaRequisicao = useRef(0);
 
-  const fetchInstitution = useCallback(async () => {
-      const { data: authData } = await apiClient.auth.getUser();
-      const userInstitutionId = authData?.user?.instituicao_id || authData?.user?.user_metadata?.instituicao_id;
-      if (userInstitutionId) {
-          setInstitutionId(userInstitutionId);
-          return userInstitutionId;
-      }
+    // Só consulta o backend quando o usuário para de digitar.
+    useEffect(() => {
+        const termo = busca.trim();
+        if (termo === buscaAplicada) return undefined;
+        const id = setTimeout(() => {
+            setBuscaAplicada(termo);
+            setPagina(1);
+        }, BUSCA_DEBOUNCE_MS);
+        return () => clearTimeout(id);
+    }, [busca, buscaAplicada]);
 
-      const { data, error } = await apiClient.from('instituicoes').select('id').limit(1).single();
-      if (error && error.code !== 'PGRST116') {
-          toast({ variant: "destructive", title: "Erro ao buscar instituição", description: error.message });
-          return null;
-      }
-      if (data) {
-          setInstitutionId(data.id);
-          return data.id;
-      }
-      return null;
-  }, [toast]);
+    const carregar = useCallback(async () => {
+        const id = ++ultimaRequisicao.current;
+        setLoading(true);
+        try {
+            const dados = await listarPerguntasEspecialistasPaginado({
+                status: aba,
+                escola: filtroEscola === TODOS ? undefined : filtroEscola,
+                nivel: filtroNivel === TODOS ? undefined : filtroNivel,
+                campo: filtroCampo === TODOS ? undefined : filtroCampo,
+                busca: buscaAplicada || undefined,
+                page: pagina,
+                pageSize: POR_PAGINA,
+            });
+            if (id !== ultimaRequisicao.current) return;
+            setLista(dados);
+            if (dados.pagina && dados.pagina !== pagina) setPagina(dados.pagina);
+        } catch (err) {
+            if (id !== ultimaRequisicao.current) return;
+            toast({ variant: "destructive", title: "Erro ao carregar perguntas", description: mensagemDeErro(err) });
+        } finally {
+            if (id === ultimaRequisicao.current) {
+                setLoading(false);
+                setCarregouUmaVez(true);
+            }
+        }
+    }, [aba, pagina, filtroEscola, filtroNivel, filtroCampo, buscaAplicada]);
 
-  const fetchPerguntas = useCallback(async (id) => {
-    if (!id) return;
-    setLoading(true);
-    const { data, error } = await apiClient
-      .from('perguntas_especialistas')
-      .select('*')
-      .eq('instituicao_id', id)
-      .order('created_at', { ascending: false });
+    useEffect(() => { carregar(); }, [carregar]);
 
-    if (error) {
-      toast({ title: 'Erro ao buscar perguntas', description: error.message, variant: 'destructive' });
-    } else {
-      setPerguntas(Array.isArray(data) ? data : []);
-    }
-    setLoading(false);
-  }, [toast]);
+    // Dados de apoio (filtros e formulário): uma vez, em paralelo.
+    useEffect(() => {
+        const erro = (titulo) => (err) => toast({ variant: "destructive", title: titulo, description: mensagemDeErro(err) });
+        listarEscolas().then(setEscolas).catch(erro("Erro ao carregar escolas"));
+        listarCamposPedagogicos().then((c) => setCampos(c || [])).catch(erro("Erro ao carregar campos de experiência"));
+        listarTurmas()
+            .then((t) => setNiveis(montarNiveis((t || []).filter((x) => x.ativa !== false))))
+            .catch(() => setNiveis(NIVEIS_BASE));
+    }, []);
 
-  const fetchEducationLevels = useCallback(async (id) => {
-    if (!id) return;
+    const variasEscolas = escolas.length > 1;
+    const escolasAtivas = useMemo(() => escolas.filter((e) => e.ativa !== false), [escolas]);
+    const camposAtivos = useMemo(
+        () => campos.filter((c) => c.ativo !== false).sort((a, b) => a.nome.localeCompare(b.nome, 'pt-BR')),
+        [campos],
+    );
 
-    const { data, error } = await apiClient
-      .from('turmas')
-      .select('id, nome, faixa_etaria, ativa')
-      .eq('instituicao_id', id)
-      .eq('ativa', true);
+    // Todo filtro novo volta para a página 1 (no mesmo render, sem requisição extra).
+    const trocar = (setter) => (valor) => { setter(valor); setPagina(1); };
 
-    if (error) {
-      toast({
-        title: 'Erro ao buscar níveis das turmas',
-        description: error.message,
-        variant: 'destructive',
-      });
-      setEducationLevels(baseLevels);
-      return;
-    }
-
-    const levels = buildEducationLevels(Array.isArray(data) ? data : []);
-    setEducationLevels(levels);
-  }, [toast]);
-
-  const fetchExistingCampos = useCallback(async () => {
-    const { data } = await apiClient
-      .from('perguntas_bncc')
-      .select('campo_experiencia');
-
-    if (data) {
-      const campos = [...new Set(data.map(p => p.campo_experiencia).filter(Boolean))];
-      setExistingCampos(campos);
-    }
-  }, []);
-
-  const fetchCamposCustomizados = useCallback(async () => {
-    try {
-      const response = await fetch('/api/campos-experiencia/?ativo=true', {
-        credentials: 'include',
-      });
-      if (response.ok) {
-        const data = await response.json();
-        setCustomCampos(data);
-      }
-    } catch (error) {
-      console.error('Erro ao carregar campos customizados:', error);
-    }
-  }, []);
-
-  const handleCampoCreated = useCallback((novoCampo) => {
-    setCustomCampos(prev => [...prev, novoCampo]);
-  }, []);
-
-  useEffect(() => {
-    fetchInstitution().then(id => {
-      if (id) {
-        fetchPerguntas(id);
-        fetchEducationLevels(id);
-        fetchExistingCampos();
-        fetchCamposCustomizados();
-      } else {
-        setLoading(false);
-      }
-    });
-  }, [fetchInstitution, fetchPerguntas, fetchEducationLevels, fetchExistingCampos, fetchCamposCustomizados]);
-
-
-  const handleSave = async () => {
-    if (!currentPergunta || !currentPergunta.campo_experiencia || !currentPergunta.nivel || !currentPergunta.pergunta_facilitadora || !currentPergunta.referencia_norma) {
-      toast({ title: 'Campos obrigatórios', description: 'Campo de Experiência, Nível, Pergunta Facilitadora e Referência da Norma são necessários.', variant: 'destructive' });
-      return;
-    }
-
-    const payload = {
-      ...currentPergunta,
-      pergunta_facilitadora: currentPergunta.pergunta_facilitadora?.trim(),
-      referencia_norma: currentPergunta.referencia_norma?.trim(),
-      pergunta: (currentPergunta.pergunta || currentPergunta.pergunta_facilitadora || '').trim(),
-      instituicao_id: institutionId,
+    const abrirFormulario = (pergunta) => {
+        if (!pergunta && !escolasAtivas.length) {
+            toast({ variant: "destructive", title: "Nenhuma escola ativa", description: "Cadastre ou reative uma escola antes de criar perguntas." });
+            return;
+        }
+        setEditando(pergunta);
+        setIsFormOpen(true);
     };
 
-    const { data, error } = await apiClient
-      .from('perguntas_especialistas')
-      .upsert(payload)
-      .select();
+    const handleSalvar = async (dados) => {
+        const editandoAgora = !!editando;
+        try {
+            if (editandoAgora) await atualizarPerguntaEspecialista(editando.id, dados);
+            else await criarPerguntaEspecialista(dados);
+        } catch (err) {
+            toast({ variant: "destructive", title: "Erro ao salvar pergunta", description: mensagemDeErro(err) });
+            return;
+        }
+        toast({ title: `Pergunta ${editandoAgora ? 'atualizada' : 'criada'} com sucesso!` });
+        setIsFormOpen(false);
+        setEditando(null);
+        if (!editandoAgora && (aba !== ABA_ATIVAS || pagina !== 1)) {
+            setAba(ABA_ATIVAS);
+            setPagina(1);
+        } else {
+            carregar();
+        }
+    };
 
-    if (error) {
-      toast({ title: 'Erro ao salvar pergunta', description: error.message, variant: 'destructive' });
-    } else {
-      toast({ title: 'Pergunta salva com sucesso!', className: 'bg-green-100' });
-      setIsModalOpen(false);
-      fetchPerguntas(institutionId);
-    }
-  };
+    const alterarStatus = async (pergunta, status) => {
+        try {
+            await atualizarPerguntaEspecialista(pergunta.id, { status });
+        } catch (err) {
+            toast({ variant: "destructive", title: `Erro ao ${status === 'ativa' ? 'reativar' : 'desativar'} pergunta`, description: mensagemDeErro(err) });
+            return;
+        }
+        toast({ title: `Pergunta ${status === 'ativa' ? 'reativada' : 'desativada'} com sucesso!` });
+        setDesativando(null);
+        carregar();
+    };
 
-  const openModal = (pergunta = null) => {
-    if (!institutionId) {
-        toast({ variant: "destructive", title: "Cadastro de Instituição Necessário", description: "Por favor, cadastre primeiro os dados da instituição." });
-        return;
-    }
-    const perguntaBase = pergunta?.pergunta_facilitadora || pergunta?.pergunta || '';
-    if (pergunta) {
-      setCurrentPergunta({
-        ...pergunta,
-        pergunta: pergunta.pergunta || perguntaBase,
-        pergunta_facilitadora: perguntaBase,
-        referencia_norma: pergunta.referencia_norma || '',
-        campo_experiencia: pergunta.campo_experiencia || pergunta.especialidade || '',
-      });
-    } else {
-      setCurrentPergunta({ campo_experiencia: '', pergunta: perguntaBase, pergunta_facilitadora: perguntaBase, referencia_norma: '', status: 'ativa', nivel: '' });
-    }
-    setIsModalOpen(true);
-  };
+    const { results: perguntas, count, total_paginas: totalPaginas, totais } = lista;
+    const primeira = count ? (pagina - 1) * POR_PAGINA + 1 : 0;
+    const ultima = Math.min(pagina * POR_PAGINA, count);
+    const colunas = variasEscolas ? 6 : 5;
+    let mensagemVazia = aba === ABA_ATIVAS ? 'Nenhuma pergunta ativa.' : 'Nenhuma pergunta inativa.';
+    if (buscaAplicada) mensagemVazia = `Nenhuma pergunta encontrada para "${buscaAplicada}".`;
 
-  const handleDelete = async (id) => {
-    const { error } = await apiClient.from('perguntas_especialistas').delete().match({ id });
-    if (error) {
-      toast({ title: 'Erro ao deletar pergunta', description: error.message, variant: 'destructive' });
-    } else {
-      toast({ title: 'Pergunta deletada com sucesso!' });
-      fetchPerguntas(institutionId);
-    }
-  };
+    const acao = (rotulo, onClick, icone) => (
+        <Tooltip>
+            <TooltipTrigger asChild>
+                <Button variant="ghost" size="icon" onClick={onClick} aria-label={rotulo}>{icone}</Button>
+            </TooltipTrigger>
+            <TooltipContent><p>{rotulo}</p></TooltipContent>
+        </Tooltip>
+    );
 
-  return (
-    <div className="p-6 bg-white rounded-lg shadow-md">
-      <div className="mb-8 p-4 border rounded-lg bg-gray-50">
-        <h3 className="text-lg font-bold mb-2 text-gray-700">Perguntas da BNCC</h3>
-        <p className="text-sm text-gray-600 mb-4">
-          Gerencie as perguntas pedagógicas baseadas na BNCC. Você pode criar novos Campos de Experiência
-          que serão exibidos automaticamente no formulário de observação dos professores.
-        </p>
-        <Button variant="outline" onClick={() => navigate('/admin/perguntas-bncc')}>
-          <ExternalLink className="mr-2 h-4 w-4" />
-          Gerenciar Perguntas BNCC
-        </Button>
-      </div>
+    return (
+        <div className="grid grid-cols-1 gap-6">
+            <Card>
+                <CardHeader className="flex-row items-center justify-between gap-4">
+                    <div>
+                        <CardTitle>Perguntas dos Especialistas</CardTitle>
+                        <CardDescription>
+                            Perguntas livres, agrupadas por Campo de Experiência no formulário de observação.
+                            Toda pergunta tem uma Referência BNCC.
+                        </CardDescription>
+                    </div>
+                    <Button onClick={() => abrirFormulario(null)}><PlusCircle className="mr-2 h-4 w-4" /> Nova Pergunta</Button>
+                </CardHeader>
+                <CardContent>
+                    <div className="mb-4 flex flex-wrap items-center justify-between gap-4">
+                        <Tabs value={aba} onValueChange={trocar(setAba)}>
+                            <TabsList>
+                                <TabsTrigger value={ABA_ATIVAS}>
+                                    Ativas <Badge variant="secondary" className="ml-2">{totais.ativas}</Badge>
+                                </TabsTrigger>
+                                <TabsTrigger value={ABA_INATIVAS}>
+                                    Inativas <Badge variant="secondary" className="ml-2">{totais.inativas}</Badge>
+                                </TabsTrigger>
+                            </TabsList>
+                        </Tabs>
+                        <Input
+                            className="w-64"
+                            placeholder="Buscar por texto ou código BNCC..."
+                            aria-label="Buscar pergunta por texto ou código BNCC"
+                            value={busca}
+                            onChange={(e) => setBusca(e.target.value)}
+                        />
+                    </div>
+                    <div className={`mb-4 grid grid-cols-1 gap-2 ${variasEscolas ? 'md:grid-cols-3' : 'md:grid-cols-2'}`}>
+                        {variasEscolas && (
+                            <Select value={filtroEscola} onValueChange={trocar(setFiltroEscola)}>
+                                <SelectTrigger aria-label="Filtrar por escola"><SelectValue /></SelectTrigger>
+                                <SelectContent>
+                                    <SelectItem value={TODOS}>Todas as escolas</SelectItem>
+                                    {escolas.map((e) => <SelectItem key={e.id} value={String(e.id)}>{e.nome}</SelectItem>)}
+                                </SelectContent>
+                            </Select>
+                        )}
+                        <Select value={filtroNivel} onValueChange={trocar(setFiltroNivel)}>
+                            <SelectTrigger aria-label="Filtrar por nível"><SelectValue /></SelectTrigger>
+                            <SelectContent>
+                                <SelectItem value={TODOS}>Todos os níveis</SelectItem>
+                                {niveis.map((n) => <SelectItem key={n} value={n}>{n}</SelectItem>)}
+                            </SelectContent>
+                        </Select>
+                        <Select value={filtroCampo} onValueChange={trocar(setFiltroCampo)}>
+                            <SelectTrigger aria-label="Filtrar por campo de experiência"><SelectValue /></SelectTrigger>
+                            <SelectContent>
+                                <SelectItem value={TODOS}>Todos os campos de experiência</SelectItem>
+                                {camposAtivos.map((c) => <SelectItem key={c.id} value={String(c.id)}>{c.nome}</SelectItem>)}
+                            </SelectContent>
+                        </Select>
+                    </div>
 
-      <div>
-        <div className="flex flex-col gap-4 mb-4">
-          <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-            <h3 className="text-lg font-bold text-gray-700">Perguntas dos Especialistas (Livres)</h3>
-            <Dialog open={isModalOpen} onOpenChange={setIsModalOpen}>
-              <DialogTrigger asChild>
-                <Button onClick={() => openModal()}>
-                  <PlusCircle className="mr-2 h-4 w-4" /> Nova Pergunta
-                </Button>
-              </DialogTrigger>
-              <DialogContent className="max-w-lg">
-                <DialogHeader>
-                  <DialogTitle>{currentPergunta?.id ? 'Editar' : 'Nova'} Pergunta de Especialista</DialogTitle>
-                </DialogHeader>
-                <div className="grid gap-4 py-4">
-                  <div className="grid grid-cols-4 items-center gap-4">
-                    <Label htmlFor="campo_experiencia" className="text-right">Campo de Experiência</Label>
-                    <CreatableCampoSelect
-                      value={currentPergunta?.campo_experiencia || ''}
-                      onChange={(value) => setCurrentPergunta(p => ({ ...p, campo_experiencia: value }))}
-                      existingCampos={existingCampos}
-                      customCampos={customCampos}
-                      onCampoCreated={handleCampoCreated}
-                    />
-                  </div>
-                  <div className="grid grid-cols-4 items-center gap-4">
-                    <Label htmlFor="nivel" className="text-right">Nível</Label>
-                    <Select value={currentPergunta?.nivel || ''} onValueChange={(value) => setCurrentPergunta(p => ({ ...p, nivel: value }))}>
-                      <SelectTrigger className="col-span-3">
-                        <SelectValue placeholder="Selecione o nível" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {educationLevels.map(n => <SelectItem key={n} value={n}>{n}</SelectItem>)}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <div className="grid grid-cols-4 items-center gap-4">
-                    <Label htmlFor="pergunta_facilitadora" className="text-right">Pergunta Facilitadora</Label>
-                    <Input id="pergunta_facilitadora" value={currentPergunta?.pergunta_facilitadora || currentPergunta?.pergunta || ''} onChange={(e) => setCurrentPergunta(p => ({ ...p, pergunta_facilitadora: e.target.value, pergunta: e.target.value }))} className="col-span-3" placeholder="Digite o texto da pergunta facilitadora" />
-                  </div>
-                  <div className="grid grid-cols-4 items-center gap-4">
-                    <Label htmlFor="referencia_norma" className="text-right">Referência (BNCC)</Label>
-                    <Input id="referencia_norma" value={currentPergunta?.referencia_norma || ''} onChange={(e) => setCurrentPergunta(p => ({ ...p, referencia_norma: e.target.value }))} className="col-span-3" placeholder="Ex: EI03EO01" />
-                  </div>
-                  <div className="grid grid-cols-4 items-center gap-4">
-                    <Label htmlFor="status" className="text-right">Status</Label>
-                    <Select value={currentPergunta?.status || 'ativa'} onValueChange={(value) => setCurrentPergunta(p => ({ ...p, status: value }))}>
-                      <SelectTrigger className="col-span-3">
-                        <SelectValue placeholder="Selecione o status" />
-                      </SelectTrigger>
-                      <SelectContent>
-                          <SelectItem value="ativa">Ativa</SelectItem>
-                          <SelectItem value="inativa">Inativa</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                </div>
-                <p className="text-xs text-gray-500 -mt-2 mb-2">
-                  O Campo de Experiência define como a pergunta será agrupada no formulário de observação.
-                  Você pode criar novos campos digitando no seletor acima.
-                </p>
-                <DialogFooter>
-                  <DialogClose asChild><Button variant="ghost">Cancelar</Button></DialogClose>
-                  <Button onClick={handleSave}>Salvar</Button>
-                </DialogFooter>
-              </DialogContent>
+                    {!carregouUmaVez ? <p>Carregando perguntas...</p> : (
+                        <TooltipProvider>
+                            {/* Mantém a tabela na tela ao trocar de página/aba, só esmaecida. */}
+                            <div className={loading ? 'pointer-events-none opacity-50 transition-opacity' : 'transition-opacity'} aria-busy={loading}>
+                                <Table>
+                                    <TableHeader>
+                                        <TableRow>
+                                            <TableHead>Pergunta Facilitadora</TableHead>
+                                            <TableHead>Campo de Experiência</TableHead>
+                                            <TableHead>Nível</TableHead>
+                                            <TableHead>Referência (BNCC)</TableHead>
+                                            {variasEscolas && <TableHead>Escola</TableHead>}
+                                            <TableHead className="text-right">Ações</TableHead>
+                                        </TableRow>
+                                    </TableHeader>
+                                    <TableBody>
+                                        {perguntas.length > 0 ? perguntas.map((p) => {
+                                            const Icone = iconeDoCampo(p.campo_experiencia_nome, p.campo_experiencia_icone);
+                                            return (
+                                                <TableRow key={p.id}>
+                                                    <TableCell className="max-w-md font-medium">{p.pergunta_facilitadora || p.pergunta}</TableCell>
+                                                    <TableCell>
+                                                        {p.campo_experiencia_nome ? (
+                                                            <span className="flex items-center gap-2">
+                                                                <Icone className="h-4 w-4 shrink-0 text-purple-600" />
+                                                                {p.campo_experiencia_nome}
+                                                            </span>
+                                                        ) : '—'}
+                                                    </TableCell>
+                                                    <TableCell>{p.nivel || '—'}</TableCell>
+                                                    <TableCell>
+                                                        {p.habilidade_bncc_codigo ? (
+                                                            <Tooltip>
+                                                                <TooltipTrigger asChild>
+                                                                    <span className="cursor-help font-mono text-sm underline decoration-dotted">{p.habilidade_bncc_codigo}</span>
+                                                                </TooltipTrigger>
+                                                                <TooltipContent className="max-w-sm"><p>{p.habilidade_bncc_descricao}</p></TooltipContent>
+                                                            </Tooltip>
+                                                        ) : <span className="text-amber-600">Sem referência</span>}
+                                                    </TableCell>
+                                                    {variasEscolas && <TableCell>{p.escola_nome}</TableCell>}
+                                                    <TableCell className="text-right space-x-2 whitespace-nowrap">
+                                                        {acao('Editar pergunta', () => abrirFormulario(p), <Edit className="h-4 w-4" />)}
+                                                        {p.status === 'ativa'
+                                                            ? acao('Desativar pergunta', () => setDesativando(p), <Power className="h-4 w-4 text-red-500" />)
+                                                            : acao('Reativar pergunta', () => alterarStatus(p, 'ativa'), <RotateCcw className="h-4 w-4 text-green-600" />)}
+                                                    </TableCell>
+                                                </TableRow>
+                                            );
+                                        }) : (
+                                            <TableRow>
+                                                <TableCell colSpan={colunas} className="text-center text-gray-500">{mensagemVazia}</TableCell>
+                                            </TableRow>
+                                        )}
+                                    </TableBody>
+                                </Table>
+                            </div>
+
+                            {totalPaginas > 1 && (
+                                <div className="mt-4 flex flex-wrap items-center justify-between gap-2 text-sm text-gray-600">
+                                    <span>Mostrando {primeira}–{ultima} de {count} perguntas</span>
+                                    <div className="flex items-center gap-2">
+                                        <Button variant="outline" size="sm" disabled={loading || pagina <= 1} onClick={() => setPagina((p) => p - 1)}>
+                                            <ChevronLeft className="mr-1 h-4 w-4" /> Anterior
+                                        </Button>
+                                        <span className="px-2">Página {pagina} de {totalPaginas}</span>
+                                        <Button variant="outline" size="sm" disabled={loading || pagina >= totalPaginas} onClick={() => setPagina((p) => p + 1)}>
+                                            Próxima <ChevronRight className="ml-1 h-4 w-4" />
+                                        </Button>
+                                    </div>
+                                </div>
+                            )}
+                        </TooltipProvider>
+                    )}
+                </CardContent>
+            </Card>
+
+            <PerguntaFormDialog
+                isOpen={isFormOpen}
+                setIsOpen={setIsFormOpen}
+                pergunta={editando}
+                escolas={escolasAtivas}
+                campos={camposAtivos}
+                niveis={niveis}
+                onCampoCriado={(c) => setCampos((prev) => [...prev, c])}
+                onSubmit={handleSalvar}
+            />
+
+            <Dialog open={!!desativando} onOpenChange={() => setDesativando(null)}>
+                <DialogContent>
+                    <DialogHeader>
+                        <DialogTitle>Desativar pergunta</DialogTitle>
+                        <DialogDescription>
+                            A pergunta deixa de aparecer na aba Ativas. As observações já registradas com ela
+                            são mantidas, e você pode reativá-la depois pela aba Inativas.
+                        </DialogDescription>
+                    </DialogHeader>
+                    <DialogFooter>
+                        <DialogClose asChild><Button variant="outline">Cancelar</Button></DialogClose>
+                        <Button variant="destructive" onClick={() => alterarStatus(desativando, 'inativa')}>Desativar</Button>
+                    </DialogFooter>
+                </DialogContent>
             </Dialog>
-          </div>
-          <div className="max-w-xs">
-            <Select value={nivelFilterEspecialista} onValueChange={(value) => setNivelFilterEspecialista(value === 'all-levels' ? '' : value)}>
-              <SelectTrigger>
-                <SelectValue placeholder="Filtrar por Nível" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all-levels">Todos os Níveis</SelectItem>
-                {educationLevels.map(n => <SelectItem key={n} value={n}>{n}</SelectItem>)}
-              </SelectContent>
-            </Select>
-          </div>
         </div>
-        {loading ? (
-          <div className="flex justify-center items-center h-32"><Loader2 className="h-8 w-8 animate-spin text-purple-500" /></div>
-        ) : (
-          <div className="border rounded-lg overflow-hidden">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Campo de Experiência</TableHead>
-                  <TableHead>Nível</TableHead>
-                  <TableHead>Pergunta Facilitadora</TableHead>
-                  <TableHead>Referência (BNCC)</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead className="text-right">Ações</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {perguntas.filter(p => !nivelFilterEspecialista || p.nivel === nivelFilterEspecialista).map((p) => (
-                  <TableRow key={p.id}>
-                    <TableCell className="font-medium">{p.campo_experiencia || p.especialidade}</TableCell>
-                    <TableCell>{p.nivel}</TableCell>
-                    <TableCell>{p.pergunta_facilitadora || p.pergunta}</TableCell>
-                    <TableCell>{p.referencia_norma}</TableCell>
-                    <TableCell>
-                      <span className={`px-2 py-1 rounded-full text-xs font-semibold ${p.status === 'ativa' ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}`}>
-                        {p.status === 'ativa' ? 'Ativa' : 'Inativa'}
-                      </span>
-                    </TableCell>
-                    <TableCell className="text-right">
-                      <Button variant="ghost" size="icon" onClick={() => openModal(p)}><Edit className="h-4 w-4" /></Button>
-                      <Dialog>
-                        <DialogTrigger asChild>
-                          <Button variant="ghost" size="icon"><Trash2 className="h-4 w-4 text-red-500" /></Button>
-                        </DialogTrigger>
-                        <DialogContent>
-                          <DialogHeader>
-                            <DialogTitle>Confirmar Exclusão</DialogTitle>
-                            <DialogClose/>
-                          </DialogHeader>
-                          <p>Tem certeza que deseja excluir esta pergunta?</p>
-                          <DialogFooter>
-                            <DialogClose asChild><Button variant="outline">Cancelar</Button></DialogClose>
-                            <Button variant="destructive" onClick={() => handleDelete(p.id)}>Excluir</Button>
-                          </DialogFooter>
-                        </DialogContent>
-                      </Dialog>
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          </div>
-        )}
-      </div>
-    </div>
-  );
+    );
+};
+
+const FORM_VAZIO = { escola: '', campo_experiencia: '', nivel: '', pergunta: '', referencia_bncc: '' };
+
+const PerguntaFormDialog = ({ isOpen, setIsOpen, pergunta, escolas, campos, niveis, onCampoCriado, onSubmit }) => {
+    const [formData, setFormData] = useState(FORM_VAZIO);
+    const [salvando, setSalvando] = useState(false);
+    const [novoCampo, setNovoCampo] = useState(null); // { nome, icone } enquanto o diálogo de criação está aberto
+    const [criandoCampo, setCriandoCampo] = useState(false);
+
+    useEffect(() => {
+        if (!isOpen) return;
+        setFormData(pergunta ? {
+            escola: String(pergunta.escola ?? ''),
+            campo_experiencia: pergunta.campo_experiencia ? String(pergunta.campo_experiencia) : '',
+            nivel: pergunta.nivel || '',
+            pergunta: pergunta.pergunta_facilitadora || pergunta.pergunta || '',
+            referencia_bncc: pergunta.habilidade_bncc_codigo || '',
+        } : {
+            ...FORM_VAZIO,
+            escola: escolas.length === 1 ? String(escolas[0].id) : '',
+        });
+    // escolas pode chegar depois; só reinicia ao abrir ou trocar a pergunta.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [pergunta, isOpen]);
+
+    const set = (campo, valor) => setFormData((prev) => ({ ...prev, [campo]: valor }));
+
+    // Campos oficiais (sem escola) + os da escola da pergunta.
+    const camposDaEscola = useMemo(
+        () => campos.filter((c) => !c.escola || String(c.escola) === formData.escola),
+        [campos, formData.escola],
+    );
+    // Campo da escola anterior deixa de valer ao trocar de escola.
+    const trocarEscola = (escola) => setFormData((prev) => {
+        const campo = campos.find((c) => String(c.id) === prev.campo_experiencia);
+        const aindaVale = !campo || !campo.escola || String(campo.escola) === escola;
+        return { ...prev, escola, campo_experiencia: aindaVale ? prev.campo_experiencia : '' };
+    });
+
+    const handleCriarCampo = async () => {
+        if (!novoCampo?.nome.trim()) return;
+        setCriandoCampo(true);
+        try {
+            const criado = await criarCampoPedagogico({
+                nome: novoCampo.nome.trim(), icone: novoCampo.icone, escola: formData.escola,
+            });
+            onCampoCriado(criado);
+            set('campo_experiencia', String(criado.id));
+            setNovoCampo(null);
+            toast({ title: 'Campo de experiência criado!' });
+        } catch (err) {
+            toast({ variant: "destructive", title: "Erro ao criar campo", description: mensagemDeErro(err) });
+        } finally {
+            setCriandoCampo(false);
+        }
+    };
+
+    const handleSubmit = async (e) => {
+        e.preventDefault();
+        // Os Selects do Radix não participam da validação nativa do form.
+        const faltando = [
+            !pergunta && !formData.escola && 'escola',
+            !formData.campo_experiencia && 'campo de experiência',
+            !formData.nivel && 'nível',
+        ].filter(Boolean);
+        if (faltando.length) {
+            toast({ variant: "destructive", title: "Campos obrigatórios", description: `Selecione: ${faltando.join(', ')}.` });
+            return;
+        }
+        const texto = formData.pergunta.trim();
+        const dados = {
+            campo_experiencia: formData.campo_experiencia,
+            nivel: formData.nivel,
+            pergunta: texto,
+            pergunta_facilitadora: texto,
+            referencia_bncc: formData.referencia_bncc.trim().toUpperCase(),
+        };
+        if (!pergunta) dados.escola = formData.escola; // na edição a escola não muda
+
+        setSalvando(true);
+        try {
+            await onSubmit(dados);
+        } finally {
+            setSalvando(false);
+        }
+    };
+
+    const escolaDaPergunta = pergunta
+        ? (escolas.find((e) => String(e.id) === formData.escola)?.nome || pergunta.escola_nome)
+        : null;
+
+    return (
+        <>
+            {/* Não fecha no meio do salvamento (Esc/clique fora). */}
+            <Dialog open={isOpen} onOpenChange={(aberto) => { if (!salvando) setIsOpen(aberto); }}>
+                <DialogContent className="max-h-[90vh] max-w-lg overflow-y-auto">
+                    <DialogHeader>
+                        <DialogTitle>{pergunta ? 'Editar' : 'Nova'} Pergunta de Especialista</DialogTitle>
+                        <DialogDescription>
+                            O Campo de Experiência define como a pergunta é agrupada no formulário de observação.
+                        </DialogDescription>
+                    </DialogHeader>
+                    <form onSubmit={handleSubmit} className="space-y-4 pt-2">
+                        {pergunta ? (
+                            escolas.length > 1 && (
+                                <div>
+                                    <Label>Escola</Label>
+                                    <p className="mt-1 text-sm text-gray-600">{escolaDaPergunta}</p>
+                                </div>
+                            )
+                        ) : escolas.length > 1 && (
+                            <div>
+                                <Label htmlFor="escola">Escola</Label>
+                                <Select value={formData.escola} onValueChange={trocarEscola}>
+                                    <SelectTrigger id="escola"><SelectValue placeholder="Selecione a escola" /></SelectTrigger>
+                                    <SelectContent>
+                                        {escolas.map((e) => <SelectItem key={e.id} value={String(e.id)}>{e.nome}</SelectItem>)}
+                                    </SelectContent>
+                                </Select>
+                            </div>
+                        )}
+
+                        <div>
+                            <Label htmlFor="campo_experiencia">Campo de Experiência</Label>
+                            <div className="flex items-center gap-2">
+                                <Select value={formData.campo_experiencia} onValueChange={(v) => set('campo_experiencia', v)}>
+                                    <SelectTrigger id="campo_experiencia"><SelectValue placeholder="Selecione o campo" /></SelectTrigger>
+                                    <SelectContent>
+                                        {camposDaEscola.map((c) => {
+                                            const Icone = iconeDoCampo(c.nome, c.icone);
+                                            return (
+                                                <SelectItem key={c.id} value={String(c.id)}>
+                                                    <span className="flex items-center gap-2"><Icone className="h-4 w-4 text-purple-600" />{c.nome}</span>
+                                                </SelectItem>
+                                            );
+                                        })}
+                                    </SelectContent>
+                                </Select>
+                                <Button
+                                    type="button" variant="outline" size="icon" title="Criar novo campo de experiência"
+                                    disabled={!formData.escola}
+                                    onClick={() => setNovoCampo({ nome: '', icone: 'BookOpen' })}
+                                >
+                                    <PlusCircle className="h-4 w-4" />
+                                </Button>
+                            </div>
+                        </div>
+
+                        <div>
+                            <Label htmlFor="nivel">Nível</Label>
+                            <Select value={formData.nivel} onValueChange={(v) => set('nivel', v)}>
+                                <SelectTrigger id="nivel"><SelectValue placeholder="Selecione o nível" /></SelectTrigger>
+                                <SelectContent>
+                                    {/* Nível antigo que não bate com as turmas atuais continua visível. */}
+                                    {[...new Set([...niveis, formData.nivel].filter(Boolean))].map((n) => (
+                                        <SelectItem key={n} value={n}>{n}</SelectItem>
+                                    ))}
+                                </SelectContent>
+                            </Select>
+                        </div>
+
+                        <div>
+                            <Label htmlFor="pergunta">Pergunta Facilitadora</Label>
+                            <textarea
+                                id="pergunta" rows={3} required
+                                className="flex w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+                                value={formData.pergunta}
+                                onChange={(e) => set('pergunta', e.target.value)}
+                                placeholder="Digite o texto da pergunta facilitadora"
+                            />
+                        </div>
+
+                        <div>
+                            <Label htmlFor="referencia_bncc">Referência (BNCC)</Label>
+                            <Input
+                                id="referencia_bncc" required maxLength={20}
+                                className="font-mono uppercase"
+                                value={formData.referencia_bncc}
+                                onChange={(e) => set('referencia_bncc', e.target.value)}
+                                placeholder="Ex: EI03EO01"
+                            />
+                            {pergunta?.habilidade_bncc_descricao && formData.referencia_bncc.trim().toUpperCase() === pergunta.habilidade_bncc_codigo && (
+                                <p className="mt-1 text-xs text-gray-500">{pergunta.habilidade_bncc_descricao}</p>
+                            )}
+                        </div>
+
+                        <DialogFooter>
+                            <DialogClose asChild><Button type="button" variant="outline" disabled={salvando}>Cancelar</Button></DialogClose>
+                            <Button type="submit" disabled={salvando}>{salvando ? 'Salvando...' : 'Salvar'}</Button>
+                        </DialogFooter>
+                    </form>
+                </DialogContent>
+            </Dialog>
+
+            <Dialog open={!!novoCampo} onOpenChange={(aberto) => { if (!aberto && !criandoCampo) setNovoCampo(null); }}>
+                <DialogContent className="max-w-md">
+                    <DialogHeader>
+                        <DialogTitle>Novo Campo de Experiência</DialogTitle>
+                        <DialogDescription>O campo fica disponível para as perguntas desta escola.</DialogDescription>
+                    </DialogHeader>
+                    <div className="space-y-4 py-2">
+                        <div>
+                            <Label htmlFor="novo-campo-nome">Nome do campo</Label>
+                            <Input
+                                id="novo-campo-nome" maxLength={200}
+                                value={novoCampo?.nome || ''}
+                                onChange={(e) => setNovoCampo((c) => ({ ...c, nome: e.target.value }))}
+                            />
+                        </div>
+                        <div>
+                            <Label>Ícone</Label>
+                            <div className="mt-2">
+                                <IconPicker
+                                    selectedIcon={novoCampo?.icone || 'BookOpen'}
+                                    onSelect={(icone) => setNovoCampo((c) => ({ ...c, icone }))}
+                                />
+                            </div>
+                        </div>
+                    </div>
+                    <DialogFooter>
+                        <DialogClose asChild><Button variant="ghost" disabled={criandoCampo}>Cancelar</Button></DialogClose>
+                        <Button onClick={handleCriarCampo} disabled={criandoCampo || !novoCampo?.nome.trim()}>
+                            {criandoCampo ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Check className="mr-2 h-4 w-4" />}
+                            Criar Campo
+                        </Button>
+                    </DialogFooter>
+                </DialogContent>
+            </Dialog>
+        </>
+    );
 };
 
 export default PerguntasTab;

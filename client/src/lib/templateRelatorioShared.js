@@ -1,3 +1,6 @@
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useLocation, useSearchParams } from 'react-router-dom';
+import { API_BASE_URL, authFetch, listarEscolas } from '@/services/api';
 // Compartilhado entre TemplateEscolherModeloPage, TemplateEditorPage e
 // TemplatesListPage. Mantém a MESMA estrutura HTML/classes que o backend usa
 // para gerar o PDF (api/services/relatorio_capa.py) — a prévia na tela do
@@ -688,93 +691,247 @@ export function cssVarsPaleta(paleta) {
 }
 
 // ---------------- API ----------------
+// Camada de compatibilidade: as páginas de template (lista, escolher modelo,
+// editor) ainda chamam as rotas do sistema antigo. Aqui elas viram as rotas
+// do backend multi-tenant, autenticadas por JWT (authFetch), sem sessão,
+// cookie nem CSRF:
+//   /api/templates-relatorio/...            → /relatorio-templates/...
+//   POST /api/templates-relatorio/<id>/ativar/ → PATCH .../<id>/atualizar/ {ativo: true}
+//     (o backend desativa os outros templates da escola)
+//   /api/auth/me/                           → /me/
+//   PUT de atualização                      → PATCH (só os campos enviados)
 
-export async function getCsrfToken() {
-  await fetch('/api/auth/csrf/', { credentials: 'include' });
-  const match = document.cookie.match(/csrftoken=([^;]+)/);
-  return match ? match[1] : '';
+function traduzirRota(url, method, body) {
+  let caminho = url.replace(/^\/api(?=\/)/, '');
+  caminho = caminho.replace(/^\/templates-relatorio(?=\/)/, '/relatorio-templates');
+  caminho = caminho.replace(/^\/auth\/me\/$/, '/me/');
+
+  const ativar = caminho.match(/^\/relatorio-templates\/([^/]+)\/ativar\/$/);
+  if (ativar) {
+    return { caminho: `/relatorio-templates/${ativar[1]}/atualizar/`, method: 'PATCH', body: { ativo: true } };
+  }
+  if (method === 'PUT' && /\/atualizar\/$/.test(caminho)) method = 'PATCH';
+  return { caminho, method, body };
 }
 
 async function handleJson(res) {
+  if (res.status === 204) return {};
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data.error || `Erro ${res.status}`);
+  if (!res.ok) {
+    // DRF devolve {campo: ["msg"]} na validação; o resto vem em error/detail.
+    const campos = data && typeof data === 'object' && !Array.isArray(data)
+      ? Object.values(data).flat(Infinity).filter((m) => typeof m === 'string').join(' ')
+      : '';
+    throw new Error(data.error || data.detail || campos || `Erro ${res.status}`);
+  }
   return data;
 }
 
-export async function apiGet(url) {
-  const res = await fetch(url, { credentials: 'include' });
-  return handleJson(res);
+async function requisitar(url, method = 'GET', body) {
+  const rota = traduzirRota(url, method, body);
+  const options = { method: rota.method };
+  if (rota.body !== undefined && rota.method !== 'GET' && rota.method !== 'DELETE') {
+    options.headers = { 'Content-Type': 'application/json' };
+    options.body = JSON.stringify(rota.body);
+  }
+  return handleJson(await authFetch(`${API_BASE_URL}${rota.caminho}`, options));
 }
 
-export async function apiPost(url, body) {
-  const csrf = await getCsrfToken();
-  const res = await fetch(url, {
-    method: 'POST',
-    credentials: 'include',
-    headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrf },
-    body: JSON.stringify(body),
-  });
-  return handleJson(res);
+/** Mantida só por compatibilidade: o backend novo não usa CSRF (JWT). */
+export async function getCsrfToken() {
+  return '';
 }
 
-export async function apiPut(url, body) {
-  const csrf = await getCsrfToken();
-  const res = await fetch(url, {
-    method: 'PUT',
-    credentials: 'include',
-    headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrf },
-    body: JSON.stringify(body),
-  });
-  return handleJson(res);
-}
+export const apiGet = (url) => requisitar(url, 'GET');
+export const apiPost = (url, body) => requisitar(url, 'POST', body);
+export const apiPut = (url, body) => requisitar(url, 'PUT', body);
+export const apiDelete = (url) => requisitar(url, 'DELETE');
 
-export async function apiDelete(url) {
-  const csrf = await getCsrfToken();
-  const res = await fetch(url, {
-    method: 'DELETE',
-    credentials: 'include',
-    headers: { 'X-CSRFToken': csrf },
-  });
-  return handleJson(res);
-}
-
-// Monta cnpj/contato já formatados, no mesmo padrão usado em
-// gerar_relatorio_com_ia (server/api/services/relatorio.py) — mantém as
-// duas fontes de verdade consistentes.
-export async function fetchInstituicao() {
+// Cabeçalho da prévia no mesmo critério de _dados_cabecalho
+// (server/api/services/relatorio.py): dados da ESCOLA, com fallback campo a
+// campo para a INSTITUIÇÃO; o logo vem da instituição.
+// `escolaUuid` = UUID da escola que está sendo configurada; sem ela, a do
+// usuário. URLs da API sempre levam o UUID (o id inteiro vai só no body).
+export async function fetchInstituicao(escolaUuid) {
   const vazio = { nome: 'Sua Escola', cnpj: '', contato: '', logoUrl: null };
   try {
-    const me = await apiGet('/api/auth/me/');
-    if (!me.instituicao_id) return vazio;
-    const inst = await apiGet(`/api/instituicoes/${me.instituicao_id}/`);
+    let instituicaoUuid = null;
+    if (!escolaUuid) {
+      const me = await apiGet('/me/');
+      escolaUuid = me.escola_uuid;
+      instituicaoUuid = me.instituicao_uuid;
+    }
+    const escola = escolaUuid ? await apiGet(`/escolas/${escolaUuid}/`).catch(() => null) : null;
+    instituicaoUuid = escola?.instituicao_uuid ?? instituicaoUuid;
+    const inst = instituicaoUuid ? await apiGet(`/instituicoes/${instituicaoUuid}/`).catch(() => null) : null;
+    if (!escola && !inst) return vazio;
 
-    const cnpj = inst.cnpj ? `CNPJ: ${inst.cnpj}` : '';
+    const campo = (nome) => (escola && escola[nome]) || (inst && inst[nome]) || '';
+    const cidade = campo('cidade');
+    const estado = campo('estado');
 
     const partesContato = [];
-    if (inst.endereco) partesContato.push(inst.endereco);
-    if (inst.cidade) partesContato.push(inst.estado ? `${inst.cidade} — ${inst.estado}` : inst.cidade);
-    if (inst.telefone) partesContato.push(`Tel: ${inst.telefone}`);
+    if (campo('endereco')) partesContato.push(campo('endereco'));
+    if (cidade) partesContato.push(estado ? `${cidade} — ${estado}` : cidade);
+    if (campo('telefone')) partesContato.push(`Tel: ${campo('telefone')}`);
 
     return {
-      nome: inst.nome || 'Sua Escola',
-      cnpj,
+      nome: campo('nome') || 'Sua Escola',
+      cnpj: campo('cnpj') ? `CNPJ: ${campo('cnpj')}` : '',
       contato: partesContato.join(' | '),
-      logoUrl: inst.logo_url || null,
+      logoUrl: (inst && inst.logo_url) || null,
     };
   } catch {
     return vazio;
   }
 }
 
-export async function fetchModeloAtivo() {
+/** Modelo (ex.: "classico") do template ativo da escola (`escolaUuid`, ou a
+ * do usuário), ou null. Mesmo retorno de antes — só passou a ser por escola. */
+export async function fetchModeloAtivo(escolaUuid) {
   try {
-    const templates = await apiGet('/api/templates-relatorio/?leve=1');
-
-    const ativo = (templates || []).find((t) => t.ativo);
-
+    if (!escolaUuid) {
+      const me = await apiGet('/me/');
+      escolaUuid = me.escola_uuid;
+    }
+    const url = escolaUuid ? `/relatorio-templates/?escola=${escolaUuid}&ativo=1` : '/relatorio-templates/?ativo=1';
+    const ativo = ((await apiGet(url)) || []).find((t) => t.ativo);
     return ativo ? ativo.modelo : null;
   } catch (error) {
     console.error('Erro ao buscar modelo ativo:', error);
     return null;
   }
+}
+
+// ---------------- Escola em configuração ----------------
+// Template é POR ESCOLA. A escola vai na URL (?escola=<uuid>) para acompanhar a
+// navegação lista → escolher modelo → editor (e vir de Admin → Relatórios).
+// Sem ?escola, usa a escola do usuário ou, na falta, a primeira ativa do
+// escopo — e grava na URL. Coordenador só enxerga a própria (o backend recorta).
+//
+// Regra do sistema: na URL (rota ou query string) vai o UUID; no body vai o
+// id inteiro. Por isso o hook devolve os dois:
+//   * escolaUuid — o que está na URL; use em links e em chamadas GET;
+//   * escolaId   — o id (int) da mesma escola; use no body de POST/PATCH.
+
+const PARECE_ID = /^\d+$/;
+
+export function useEscolaTemplate() {
+  const [searchParams, setSearchParams] = useSearchParams();
+  const escolaUuid = searchParams.get('escola') || null;
+  const [escolas, setEscolas] = useState([]);
+  const [pronto, setPronto] = useState(false);
+
+  /** Troca a escola em configuração. Recebe o UUID da escola. */
+  const trocarEscola = useCallback((uuid) => {
+    setSearchParams((atual) => {
+      const novo = new URLSearchParams(atual);
+      if (uuid) novo.set('escola', String(uuid)); else novo.delete('escola');
+      return novo;
+    }, { replace: true });
+  }, [setSearchParams]);
+
+  useEffect(() => {
+    let cancelado = false;
+    (async () => {
+      try {
+        const [lista, me] = await Promise.all([listarEscolas(), apiGet('/me/').catch(() => ({}))]);
+        if (cancelado) return;
+        const ativas = (lista || []).filter((e) => e.ativa !== false);
+        setEscolas(ativas);
+        let atual = escolaUuid;
+        if (atual && PARECE_ID.test(atual)) {
+          // Link/favorito antigo com ?escola=<id>: troca pelo uuid da mesma escola.
+          atual = ativas.find((e) => String(e.id) === atual)?.uuid || null;
+          if (atual) trocarEscola(atual);
+        }
+        if (!atual) {
+          const propria = me.escola_uuid ? String(me.escola_uuid) : '';
+          const padrao = ativas.find((e) => String(e.uuid) === propria) || ativas[0];
+          trocarEscola(padrao ? padrao.uuid : null);
+        }
+      } catch {
+        // Sem a lista de escolas a tela segue com o que vier na URL.
+      } finally {
+        if (!cancelado) setPronto(true);
+      }
+    })();
+    return () => { cancelado = true; };
+    // Só na montagem: a troca de escola depois é feita pelo seletor.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  /** Acrescenta ?escola=<uuid> a uma rota (de tela ou de GET na API). */
+  const comEscola = useCallback((rota, uuid = escolaUuid) => {
+    if (!uuid) return rota;
+    return `${rota}${rota.includes('?') ? '&' : '?'}escola=${uuid}`;
+  }, [escolaUuid]);
+
+  const escolaAtual = escolas.find((e) => String(e.uuid) === String(escolaUuid)) || null;
+  const escolaId = escolaAtual ? escolaAtual.id : null;
+  // `pronto` só quando a escola já está decidida (ou não há nenhuma) e não é
+  // um ?escola=<id> antigo esperando a troca pelo uuid.
+  const decidida = Boolean(escolaUuid) && !PARECE_ID.test(escolaUuid);
+  return {
+    escolaUuid, escolaId, escolas, escolaAtual, trocarEscola, comEscola,
+    pronto: pronto && (decidida || escolas.length === 0),
+  };
+}
+
+// ---------------- Rotas das telas de template ----------------
+// As mesmas telas abrem em dois lugares, cada um com a SUA navbar:
+//   * coordenação: /coordenacao/templates/...  (layout do coordenador)
+//   * painel admin: /admin/capa?...            (aba do AdminPage)
+// Os links internos seguem o lugar onde a tela está aberta, para o usuário
+// não ser jogado para o layout do outro perfil.
+// `editar(uuid)` recebe o UUID do template (t.uuid), nunca o id.
+
+export function useRotasTemplate() {
+  const { pathname } = useLocation();
+  const noAdmin = pathname.startsWith('/admin');
+  return useMemo(() => (noAdmin
+    ? {
+      noAdmin: true,
+      modelos: '/admin/capa',
+      nova: (modelo) => `/admin/capa?tela=nova&modelo=${modelo}`,
+      editar: (uuid) => `/admin/capa?template=${uuid}`,
+    }
+    : {
+      noAdmin: false,
+      modelos: '/coordenacao/templates/escolher-modelo',
+      nova: (modelo) => `/coordenacao/templates/nova?modelo=${modelo}`,
+      editar: (uuid) => `/coordenacao/templates/${uuid}`,
+    }), [noAdmin]);
+}
+
+// ---------------- Template novo com a configuração padrão ----------------
+// Usado pelo "Selecionar" de um modelo que a escola ainda não tinha: cria o
+// template já pronto para uso, sem passar pelo editor. Mesmos valores
+// iniciais do TemplateEditorPage para um template novo — se mudar um, mude
+// o outro.
+// `itemsSumario`: a ordem/visibilidade em uso na escola (trocar a capa não
+// deve desfazer o que foi configurado em "Ordem das seções").
+export function templatePadraoDoModelo(modeloId, nomeEscola, itemsSumario) {
+  const modelo = MODELOS.find((m) => m.id === modeloId);
+  const comMascote = MODELOS_COM_IMAGEM_PRINCIPAL.includes(modeloId);
+  return {
+    nome: `${modelo?.nome || 'Template'} — ${nomeEscola || 'Sua Escola'}`,
+    modelo: modeloId,
+    usa_foto_aluno: false,
+    config: {
+      paleta: PALETAS.padrao.cores,
+      tipoRelatorio: 'Relatório Individual',
+      tituloRelatorio: 'Relatório de Acompanhamento da Aprendizagem',
+      fraseDestaque: '',
+      elementos: { ...ELEMENTOS_VISIVEIS_PADRAO, mascot: comMascote },
+      imagemPrincipal: comMascote ? 'mascote' : 'nenhuma',
+      fonteCombo: TIPOGRAFIA_PADRAO.fonteCombo,
+      corTexto: TIPOGRAFIA_PADRAO.corTexto,
+      nomeTamanho: TIPOGRAFIA_PADRAO.nomeTamanho,
+      tituloTamanho: TIPOGRAFIA_PADRAO.tituloTamanho,
+      alinhamento: null,
+    },
+    items_sumario: (Array.isArray(itemsSumario) && itemsSumario.length ? itemsSumario : SECOES_PADRAO)
+      .map((item) => ({ ...item })),
+  };
 }

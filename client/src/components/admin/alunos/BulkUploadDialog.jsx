@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useMemo, useEffect } from 'react';
 import * as XLSX from 'xlsx';
 import {
   Dialog,
@@ -9,7 +9,9 @@ import {
   DialogTrigger,
 } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
-import { Upload, Download, ArrowRight, ArrowLeft } from 'lucide-react';
+import { Label } from '@/components/ui/label';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Download } from 'lucide-react';
 import { useToast } from '@/components/ui/use-toast';
 import { criarCriancasLote } from '@/services/api';
 import { formatDateForApi } from '@/lib/dateUtils';
@@ -19,7 +21,17 @@ import ProcessingStep from './ProcessingStep';
 import SuccessStep from './SuccessStep';
 import ErrorsStep from './ErrorsStep';
 
-const BulkUploadDialog = ({ turmas, institutionId, onUploadComplete }) => {
+const MAX_ERROS_NO_AVISO = 5;
+
+/**
+ * Importação de alunos por planilha (.xlsx). A turma de cada linha é achada
+ * pelo NOME, só entre as turmas ativas da escola escolhida: nomes como
+ * "Nível 3A" se repetem entre escolas da rede, e procurar na rede inteira
+ * mandaria alunos para a escola errada sem aviso.
+ *
+ * Props: turmas (ativas do escopo), escolas (ativas do escopo), onUploadComplete.
+ */
+const BulkUploadDialog = ({ turmas, escolas = [], onUploadComplete }) => {
     const [isOpen, setIsOpen] = useState(false);
     const [step, setStep] = useState('upload'); // upload, confirmation, processing, success, errors
     const [studentsToConfirm, setStudentsToConfirm] = useState([]);
@@ -27,12 +39,23 @@ const BulkUploadDialog = ({ turmas, institutionId, onUploadComplete }) => {
     const [progress, setProgress] = useState({ current: 0, total: 0, currentName: '' });
     const [uploadResult, setUploadResult] = useState({ successCount: 0, errors: [] });
     const { toast } = useToast();
+    const [escolaId, setEscolaId] = useState('');
 
-    const turmasMap = turmas.reduce((acc, turma) => {
+    // Com uma escola só (ex.: coordenador), ela já vem escolhida.
+    useEffect(() => {
+        if (escolas.length === 1) setEscolaId(String(escolas[0].id));
+    }, [escolas]);
+
+    const turmasDaEscola = useMemo(
+        () => turmas.filter((t) => String(t.escola) === escolaId),
+        [turmas, escolaId],
+    );
+    const turmasMap = useMemo(() => turmasDaEscola.reduce((acc, turma) => {
         acc[turma.nome.toLowerCase().trim()] = turma.id;
         return acc;
-    }, {});
-    
+    }, {}), [turmasDaEscola]);
+    const nomeEscola = escolas.find((e) => String(e.id) === escolaId)?.nome;
+
     const handleDownloadTemplate = () => {
         const link = document.createElement('a');
         link.href = `${import.meta.env.BASE_URL}modelo_alunos.xlsx`;
@@ -43,6 +66,10 @@ const BulkUploadDialog = ({ turmas, institutionId, onUploadComplete }) => {
     const processFile = useCallback((file) => {
         if (!file) {
             toast({ variant: 'destructive', title: 'Nenhum arquivo selecionado' });
+            return;
+        }
+        if (!escolaId) {
+            toast({ variant: 'destructive', title: 'Selecione a escola', description: 'Escolha a escola dos alunos antes de enviar a planilha.' });
             return;
         }
         setProcessing(true);
@@ -96,7 +123,9 @@ const BulkUploadDialog = ({ turmas, institutionId, onUploadComplete }) => {
                     
                     const turma_raw = String(col('turma', row) ?? '').trim();
                     const turma_id = turmasMap[turma_nome];
-                    if (!turma_id) errors.push(`Turma "${turma_raw}" não encontrada.`);
+                    if (turma_nome && !turma_id) {
+                        errors.push(`Turma "${turma_raw}" não encontrada${nomeEscola ? ` em ${nomeEscola}` : ''} (ou está desativada).`);
+                    }
 
                     return {
                         id: index,
@@ -106,18 +135,26 @@ const BulkUploadDialog = ({ turmas, institutionId, onUploadComplete }) => {
                         telefone_responsavel: telefone,
                         turma_id,
                         turma_nome: turma_raw,
+                        linha: index + 2, // +1 do cabeçalho, +1 porque a planilha começa em 1
                         errors,
                     };
                 });
                 
                 const studentsWithErrors = processedStudents.filter(s => s.errors.length > 0);
                 if (studentsWithErrors.length > 0) {
-                    studentsWithErrors.forEach(student => {
-                        toast({
-                            variant: 'destructive',
-                            title: `Erro na linha de ${student.nome_completo || 'aluno desconhecido'}`,
-                            description: student.errors.join(' '),
-                        });
+                    // Um aviso só (uma planilha com 200 linhas erradas abriria 200 avisos).
+                    const exemplos = studentsWithErrors
+                        .slice(0, MAX_ERROS_NO_AVISO)
+                        .map((s) => `Linha ${s.linha} (${s.nome_completo || 'sem nome'}): ${s.errors.join(' ')}`);
+                    const resto = studentsWithErrors.length - exemplos.length;
+                    toast({
+                        variant: 'destructive',
+                        title: `${studentsWithErrors.length} linha(s) com erro. Corrija a planilha e envie de novo.`,
+                        description: (
+                            <div className="whitespace-pre-line">
+                                {exemplos.join('\n') + (resto > 0 ? `\n...e mais ${resto} linha(s).` : '')}
+                            </div>
+                        ),
                     });
                     setProcessing(false);
                     return;
@@ -133,7 +170,7 @@ const BulkUploadDialog = ({ turmas, institutionId, onUploadComplete }) => {
             }
         };
         reader.readAsArrayBuffer(file);
-    }, [toast, turmasMap]);
+    }, [toast, turmasMap, escolaId, nomeEscola]);
 
     const handleFinalUpload = async () => {
         setProcessing(true);
@@ -141,7 +178,6 @@ const BulkUploadDialog = ({ turmas, institutionId, onUploadComplete }) => {
         setProgress({ current: 0, total: studentsToConfirm.length, currentName: '' });
 
         const studentsToInsert = studentsToConfirm.map(s => ({
-            instituicao_id: institutionId,
             nome_completo: s.nome_completo,
             data_nascimento: s.data_nascimento,
             nome_responsavel: s.nome_responsavel,
@@ -201,6 +237,21 @@ const BulkUploadDialog = ({ turmas, institutionId, onUploadComplete }) => {
                     </DialogDescription>
                 </DialogHeader>
 
+                {step === 'upload' && escolas.length > 1 && (
+                    <div className="space-y-2">
+                        <Label htmlFor="escola-importacao">Escola dos alunos</Label>
+                        <Select value={escolaId} onValueChange={setEscolaId}>
+                            <SelectTrigger id="escola-importacao"><SelectValue placeholder="Selecione a escola" /></SelectTrigger>
+                            <SelectContent>
+                                {escolas.map((e) => <SelectItem key={e.id} value={String(e.id)}>{e.nome}</SelectItem>)}
+                            </SelectContent>
+                        </Select>
+                        <p className="text-xs text-gray-500">
+                            As turmas da planilha são procuradas pelo nome, entre as turmas ativas desta escola.
+                        </p>
+                    </div>
+                )}
+
                 {step === 'upload' && (
                     <UploadStep onProcessFile={processFile} onDownloadTemplate={handleDownloadTemplate} processing={processing} />
                 )}
@@ -211,7 +262,7 @@ const BulkUploadDialog = ({ turmas, institutionId, onUploadComplete }) => {
                         onConfirm={handleFinalUpload}
                         onBack={() => setStep('upload')}
                         processing={processing}
-                        turmas={turmas}
+                        turmas={turmasDaEscola}
                     />
                 )}
 

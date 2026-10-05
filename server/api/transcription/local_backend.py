@@ -11,7 +11,7 @@ from typing import Optional
 
 import httpx
 
-from api.views_legacy import IA_AUDIO_TIMEOUT_SECONDS
+from api.ia_utils import IA_AUDIO_TIMEOUT_SECONDS
 
 from .base import TranscriptionBackend, TranscriptionError
 

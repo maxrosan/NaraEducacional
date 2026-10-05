@@ -1,366 +1,314 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
-import { Switch } from '@/components/ui/switch';
-import { Label } from '@/components/ui/label';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { apiClient } from '@/lib/apiClient';
-import { useToast } from '@/components/ui/use-toast';
-import { GripVertical, ChevronDown } from 'lucide-react';
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
+import { useNavigate } from 'react-router-dom';
 import {
-  DndContext,
-  closestCenter,
-  PointerSensor,
-  useSensor,
-  useSensors,
+  DndContext, closestCenter, KeyboardSensor, PointerSensor, useSensor, useSensors,
 } from '@dnd-kit/core';
 import {
-  arrayMove,
-  SortableContext,
-  useSortable,
-  verticalListSortingStrategy,
+  arrayMove, SortableContext, sortableKeyboardCoordinates, useSortable, verticalListSortingStrategy,
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
-import {
-  DropdownMenu,
-  DropdownMenuCheckboxItem,
-  DropdownMenuContent,
-  DropdownMenuLabel,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu';
+import { GripVertical, RotateCcw, Save, Palette } from 'lucide-react';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Switch } from '@/components/ui/switch';
+import { Label } from '@/components/ui/label';
+import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
+import { useToast } from '@/components/ui/use-toast';
+import { useAuth } from '@/contexts/AuthContext';
+import {
+  listarEscolas, listarRelatorioTemplates, criarRelatorioTemplate, atualizarRelatorioTemplate,
+} from '@/services/api';
 
-const allReportSections = {
-    introducao_coletiva: 'Introdução coletiva (baseada no planejamento)',
-    texto_descritivo_individual: 'Texto descritivo individual',
-    analise_escrita: 'Análise de escrita (IA)',
-    analise_leitura: 'Análise de leitura (IA)',
-    analise_desenho: 'Análise de desenho (IA)',
-    tabela_bncc_percent: 'Tabela de campos da BNCC por porcentagem',
-    quadro_habilidades: 'Quadro de habilidades marcadas por nível',
-    portfolio: 'Portfólio (fotos e vídeos)',
-    texto_especialistas: 'Texto dos especialistas',
+/*
+ * Ordem, título e visibilidade das seções do relatório — POR ESCOLA.
+ *
+ * Grava em `relatorio_templates.items_sumario` do template ATIVO da escola
+ * (o mesmo que o gerador usa). Sem template ativo:
+ *   - se a escola tem algum template, o mais recente é ativado ao salvar;
+ *   - se não tem nenhum, cria um "Clássico" ativo.
+ * A capa (cores, textos, modelo) continua no editor da coordenação.
+ *
+ * As chaves espelham _SECOES_PADRAO de api/services/relatorio.py — o backend
+ * recusa qualquer outra.
+ */
+const SECOES_PADRAO = [
+  { chave: 'atividades', titulo: 'O que vivemos juntos neste período', visivel: true },
+  { chave: 'relato', titulo: 'Relato Individual', visivel: true },
+  { chave: 'producoes', titulo: 'Análise das Produções', visivel: true },
+  { chave: 'portfolio', titulo: 'Portfólio da Criança', visivel: true },
+  { chave: 'bncc', titulo: 'Acompanhamento por Habilidades da BNCC', visivel: true },
+  { chave: 'conclusao', titulo: 'Conclusão da Professora', visivel: true },
+];
+const TITULO_PADRAO = Object.fromEntries(SECOES_PADRAO.map((s) => [s.chave, s.titulo]));
+const DESCRICAO = {
+  atividades: 'Narrativa da turma a partir dos planejamentos (IA).',
+  relato: 'Texto individual a partir das observações da professora (IA).',
+  producoes: 'Análises de escrita e desenho, com a imagem da produção (IA).',
+  portfolio: 'Fotos das produções da criança no período.',
+  bncc: 'Quadro das habilidades observadas, com a frequência.',
+  conclusao: 'Carta à família, com a assinatura da professora (IA).',
 };
 
-const defaultOrder = Object.keys(allReportSections);
+/** Mesma regra do backend (_normalizar_items_sumario): ignora chave
+ * desconhecida/repetida e acrescenta no fim a seção que faltar. */
+function normalizar(itens) {
+  const lista = Array.isArray(itens) ? itens : [];
+  const vistas = new Set();
+  const resultado = [];
+  lista.forEach((item) => {
+    if (!item || !TITULO_PADRAO[item.chave] || vistas.has(item.chave)) return;
+    vistas.add(item.chave);
+    resultado.push({
+      chave: item.chave,
+      titulo: (item.titulo || '').trim() || TITULO_PADRAO[item.chave],
+      visivel: item.visivel !== false,
+    });
+  });
+  SECOES_PADRAO.forEach((s) => { if (!vistas.has(s.chave)) resultado.push({ ...s }); });
+  return resultado;
+}
 
-const MultiSelectDropdown = ({ turmas, selectedTurmaIds, onSelectionChange }) => {
-    const handleSelect = (turmaId) => {
-        const newSelection = selectedTurmaIds.includes(turmaId)
-            ? selectedTurmaIds.filter(id => id !== turmaId)
-            : [...selectedTurmaIds, turmaId];
-        onSelectionChange(newSelection);
-    };
+function LinhaSecao({ item, posicao, onToggle, onTitulo }) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: item.chave });
+  const estilo = { transform: CSS.Transform.toString(transform), transition, zIndex: isDragging ? 10 : undefined };
 
-    const selectedTurmasCount = selectedTurmaIds.length;
-    const buttonText = selectedTurmasCount > 0 ? `${selectedTurmasCount} turma(s)` : 'Selecionar turmas';
-
-    return (
-        <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-                <Button variant="outline" className="w-[180px] justify-between text-sm">
-                    {buttonText}
-                    <ChevronDown className="h-4 w-4 ml-2" />
-                </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent className="w-56">
-                <DropdownMenuLabel>Atribuir às turmas</DropdownMenuLabel>
-                <DropdownMenuSeparator />
-                {turmas.map(turma => (
-                    <DropdownMenuCheckboxItem
-                        key={turma.id}
-                        checked={selectedTurmaIds.includes(turma.id)}
-                        onSelect={(e) => {
-                            e.preventDefault();
-                            handleSelect(turma.id);
-                        }}
-                    >
-                        {turma.nome}
-                    </DropdownMenuCheckboxItem>
-                ))}
-            </DropdownMenuContent>
-        </DropdownMenu>
-    );
-};
-
-const SortableItem = ({ id, label, isChecked, onSwitchChange, turmas, selectedTurmas, onTurmasChange }) => {
-    const {
-        attributes,
-        listeners,
-        setNodeRef,
-        transform,
-        transition,
-    } = useSortable({ id });
-
-    const style = {
-        transform: CSS.Transform.toString(transform),
-        transition,
-    };
-
-    const isIaSection = id === 'analise_escrita' || id === 'analise_leitura';
-
-    return (
-        <div
-            ref={setNodeRef}
-            style={style}
-            className="flex items-center justify-between p-4 rounded-lg border bg-white shadow-sm hover:bg-gray-50 transition-colors"
-        >
-            <div className="flex items-center gap-4">
-                <button {...attributes} {...listeners} className="cursor-grab p-1">
-                    <GripVertical className="h-5 w-5 text-gray-400" />
-                </button>
-                <div className="flex flex-col gap-1">
-                    <Label htmlFor={id} className="text-base font-medium text-gray-700 cursor-pointer">
-                        {label}
-                    </Label>
-                    {isIaSection && isChecked && selectedTurmas.length > 0 && (
-                        <div className="flex flex-wrap gap-1 mt-1">
-                            {turmas
-                                .filter(t => selectedTurmas.includes(t.id))
-                                .map(t => <Badge key={t.id} variant="secondary">{t.nome}</Badge>)
-                            }
-                        </div>
-                    )}
-                </div>
-            </div>
-            <div className="flex items-center gap-4">
-                {isIaSection && isChecked && (
-                    <MultiSelectDropdown
-                        turmas={turmas}
-                        selectedTurmaIds={selectedTurmas}
-                        onSelectionChange={(newSelectedIds) => onTurmasChange(id, newSelectedIds)}
-                    />
-                )}
-                <Switch
-                    id={id}
-                    checked={isChecked}
-                    onCheckedChange={(checked) => onSwitchChange(id, checked)}
-                />
-            </div>
-        </div>
-    );
-};
+  return (
+    <div
+      ref={setNodeRef}
+      style={estilo}
+      className={`flex items-center gap-3 rounded-lg border bg-white p-3 shadow-sm ${isDragging ? 'ring-2 ring-purple-300' : ''} ${item.visivel ? '' : 'opacity-60'}`}
+    >
+      <button
+        type="button"
+        {...attributes}
+        {...listeners}
+        className="cursor-grab touch-none p-1 text-gray-400 hover:text-gray-600"
+        aria-label={`Arrastar ${item.titulo}`}
+      >
+        <GripVertical className="h-5 w-5" />
+      </button>
+      <span className="w-6 text-center text-sm font-semibold text-gray-400">{posicao}</span>
+      <div className="min-w-0 flex-1">
+        <Input
+          value={item.titulo}
+          maxLength={120}
+          onChange={(e) => onTitulo(item.chave, e.target.value)}
+          onBlur={(e) => { if (!e.target.value.trim()) onTitulo(item.chave, TITULO_PADRAO[item.chave]); }}
+          aria-label="Título da seção"
+          className="h-9 font-medium"
+        />
+        <p className="mt-1 truncate text-xs text-gray-500">{DESCRICAO[item.chave]}</p>
+      </div>
+      <div className="flex items-center gap-2">
+        <Label htmlFor={`vis-${item.chave}`} className="hidden text-xs text-gray-500 sm:inline">
+          {item.visivel ? 'Visível' : 'Oculta'}
+        </Label>
+        <Switch id={`vis-${item.chave}`} checked={item.visivel} onCheckedChange={(v) => onToggle(item.chave, v)} />
+      </div>
+    </div>
+  );
+}
 
 const RelatoriosConfigTab = () => {
-    const { toast } = useToast();
-    const [settings, setSettings] = useState({});
-    const [orderedKeys, setOrderedKeys] = useState(defaultOrder);
-    const [institution, setInstitution] = useState(null);
-    const [turmas, setTurmas] = useState([]);
-    const [loading, setLoading] = useState(true);
+  const { toast } = useToast();
+  const { user } = useAuth();
+  const navigate = useNavigate();
 
-    const sensors = useSensors(
-        useSensor(PointerSensor, {
-          activationConstraint: {
-            distance: 8,
-          },
-        })
-    );
+  const [escolas, setEscolas] = useState([]);
+  // UUID da escola selecionada: vai na URL (link da capa) e no GET de templates.
+  // No body de criação vai o id (escolaAtual.id).
+  const [escolaUuid, setEscolaUuid] = useState('');
+  const [templates, setTemplates] = useState([]);
+  const [itens, setItens] = useState(SECOES_PADRAO);
+  const [salvos, setSalvos] = useState(SECOES_PADRAO);
+  const [carregando, setCarregando] = useState(true);
+  const [salvando, setSalvando] = useState(false);
+  const ultimaCarga = useRef(0);
 
-    const fetchInstitutionData = useCallback(async () => {
-        setLoading(true);
-        try {
-            const { data, error } = await apiClient.from('instituicoes').select('id, report_settings, ordem_relatorio').limit(1).single();
-            if (error && error.code !== 'PGRST116') throw error;
-            
-            if (data) {
-                setInstitution(data);
-                const fetchedSettings = data.report_settings || {};
-                const initialSettings = {};
-                defaultOrder.forEach(key => {
-                    initialSettings[key] = fetchedSettings[key] !== false;
-                    if (key === 'analise_escrita' || key === 'analise_leitura') {
-                        initialSettings[`${key}_turmas`] = fetchedSettings[`${key}_turmas`] || [];
-                    }
-                });
-                setSettings(initialSettings);
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
+  );
 
-                const serverOrder = data.ordem_relatorio;
-                const newOrder = serverOrder && serverOrder.length > 0 
-                    ? [...new Set([...serverOrder, ...defaultOrder])]
-                    : defaultOrder;
-                setOrderedKeys(newOrder);
+  // Escolas do escopo (o backend já recorta). Padrão: a escola do usuário.
+  useEffect(() => {
+    listarEscolas()
+      .then((dados) => {
+        const ativas = (dados || []).filter((e) => e.ativa !== false);
+        setEscolas(ativas);
+        const propria = String(user?.escola_id ?? user?.escola ?? '');
+        const inicial = ativas.find((e) => String(e.id) === propria) || ativas[0];
+        if (inicial) setEscolaUuid(String(inicial.uuid));
+        else setCarregando(false);
+      })
+      .catch((err) => {
+        toast({ variant: 'destructive', title: 'Erro ao carregar escolas', description: err.message });
+        setCarregando(false);
+      });
+  }, [toast, user]);
 
-                const { data: turmasData, error: turmasError } = await apiClient
-                    .from('turmas')
-                    .select('id, nome')
-                    .eq('instituicao_id', data.id);
-                if (turmasError) throw turmasError;
-                setTurmas(turmasData || []);
-
-            } else {
-                toast({
-                    variant: "destructive",
-                    title: "Nenhuma instituição encontrada",
-                    description: "Por favor, cadastre primeiro os dados da instituição.",
-                });
-            }
-        } catch (error) {
-            toast({
-                variant: "destructive",
-                title: "Erro ao carregar configurações",
-                description: error.message,
-            });
-        } finally {
-            setLoading(false);
-        }
-    }, [toast]);
-
-    useEffect(() => {
-        fetchInstitutionData();
-    }, [fetchInstitutionData]);
-    
-    const saveSettingsToDb = async (settingsToSave) => {
-        if (!institution) return false;
-        try {
-            const { error } = await apiClient
-                .from('instituicoes')
-                .update({ report_settings: settingsToSave })
-                .eq('id', institution.id);
-            if (error) throw error;
-            setInstitution(prev => ({ ...prev, report_settings: settingsToSave }));
-            return true;
-        } catch (error) {
-            toast({
-                variant: "destructive",
-                title: "Erro ao salvar",
-                description: `Não foi possível salvar a configuração. ${error.message}`,
-            });
-            return false;
-        }
-    };
-
-    const handleSwitchChange = async (sectionKey, isChecked) => {
-        const oldSettings = { ...settings };
-        const newSettings = { ...settings, [sectionKey]: isChecked };
-        setSettings(newSettings);
-
-        const success = await saveSettingsToDb(newSettings);
-        if (success) {
-            toast({
-                title: "Configuração atualizada!",
-                description: `A seção "${allReportSections[sectionKey]}" foi ${isChecked ? 'ativada' : 'desativada'}.`,
-            });
-        } else {
-            setSettings(oldSettings);
-        }
-    };
-
-    const handleTurmasChange = async (sectionKey, selectedIds) => {
-        const oldSettings = { ...settings };
-        const newSettings = { ...settings, [`${sectionKey}_turmas`]: selectedIds };
-        setSettings(newSettings);
-
-        const success = await saveSettingsToDb(newSettings);
-        if (success) {
-            toast({
-                title: "Turmas atualizadas!",
-                description: `A seleção de turmas para "${allReportSections[sectionKey]}" foi salva.`,
-            });
-        } else {
-            setSettings(oldSettings);
-        }
-    };
-
-    const handleDragEnd = async (event) => {
-        const { active, over } = event;
-        if (active.id !== over.id) {
-            const oldIndex = orderedKeys.indexOf(active.id);
-            const newIndex = orderedKeys.indexOf(over.id);
-            const newOrder = arrayMove(orderedKeys, oldIndex, newIndex);
-            setOrderedKeys(newOrder);
-
-            try {
-                const { error } = await apiClient
-                    .from('instituicoes')
-                    .update({ ordem_relatorio: newOrder })
-                    .eq('id', institution.id);
-
-                if (error) throw error;
-
-                toast({
-                    title: "Ordem atualizada!",
-                    description: "A nova ordem dos blocos do relatório foi salva.",
-                });
-            } catch (error) {
-                toast({
-                    variant: "destructive",
-                    title: "Erro ao salvar a ordem",
-                    description: error.message,
-                });
-                setOrderedKeys(orderedKeys);
-            }
-        }
-    };
-    
-    const sortedSections = useMemo(() => {
-        return orderedKeys.map(key => ({
-            key,
-            label: allReportSections[key]
-        })).filter(section => section.label);
-    }, [orderedKeys]);
-
-
-    if (loading) {
-        return (
-            <Card>
-                <CardHeader>
-                    <CardTitle>Configuração da Geração de Relatórios</CardTitle>
-                    <CardDescription>Arraste para reordenar. Ative ou desative os blocos que aparecerão no relatório final.</CardDescription>
-                </CardHeader>
-                <CardContent className="text-center p-8">Carregando configurações...</CardContent>
-            </Card>
-        );
+  const carregarTemplates = useCallback(async (uuid) => {
+    const carga = ++ultimaCarga.current;
+    setCarregando(true);
+    try {
+      const lista = await listarRelatorioTemplates({ escola: uuid });
+      if (carga !== ultimaCarga.current) return; // troca rápida de escola
+      setTemplates(lista || []);
+      const ativo = (lista || []).find((t) => t.ativo);
+      const normalizados = normalizar(ativo?.items_sumario);
+      setItens(normalizados);
+      setSalvos(normalizados);
+    } catch (err) {
+      if (carga === ultimaCarga.current) {
+        toast({ variant: 'destructive', title: 'Erro ao carregar a configuração', description: err.message });
+      }
+    } finally {
+      if (carga === ultimaCarga.current) setCarregando(false);
     }
-    
-    if (!institution && !loading) {
-         return (
-            <Card>
-                <CardHeader>
-                    <CardTitle>Configuração da Geração de Relatórios</CardTitle>
-                </CardHeader>
-                <CardContent className="text-center p-8 text-red-500">
-                    Nenhuma instituição encontrada. Por favor, cadastre uma instituição na aba 'Instituição' para continuar.
-                </CardContent>
-            </Card>
-        );
-    }
+  }, [toast]);
 
-    return (
-        <Card>
-            <CardHeader>
-                <CardTitle>Configuração da Geração de Relatórios</CardTitle>
-                <CardDescription>Arraste para reordenar. Ative ou desative os blocos que aparecerão no relatório final.</CardDescription>
-            </CardHeader>
-            <CardContent>
-                <DndContext
-                    sensors={sensors}
-                    collisionDetection={closestCenter}
-                    onDragEnd={handleDragEnd}
-                >
-                    <SortableContext
-                        items={orderedKeys}
-                        strategy={verticalListSortingStrategy}
-                    >
-                        <div className="space-y-4">
-                            {sortedSections.map(({ key, label }) => (
-                                <SortableItem
-                                    key={key}
-                                    id={key}
-                                    label={label}
-                                    isChecked={settings[key] ?? false}
-                                    onSwitchChange={handleSwitchChange}
-                                    turmas={turmas}
-                                    selectedTurmas={settings[`${key}_turmas`] || []}
-                                    onTurmasChange={handleTurmasChange}
-                                />
-                            ))}
-                        </div>
-                    </SortableContext>
-                </DndContext>
-            </CardContent>
-        </Card>
-    );
+  useEffect(() => { if (escolaUuid) carregarTemplates(escolaUuid); }, [escolaUuid, carregarTemplates]);
+
+  const templateAtivo = templates.find((t) => t.ativo) || null;
+  // Lista vem com o ativo primeiro e depois o mais recente.
+  const templateParaAtivar = templateAtivo ? null : templates[0] || null;
+  const escolaAtual = escolas.find((e) => String(e.uuid) === escolaUuid);
+  const alterado = useMemo(() => JSON.stringify(itens) !== JSON.stringify(salvos), [itens, salvos]);
+  const ehPadrao = useMemo(() => JSON.stringify(itens) === JSON.stringify(SECOES_PADRAO), [itens]);
+  const nenhumaVisivel = itens.every((i) => !i.visivel);
+
+  function trocarEscola(uuid) {
+    if (alterado && !window.confirm('Há alterações não salvas nesta escola. Descartar?')) return;
+    setEscolaUuid(uuid);
+  }
+
+  function aoSoltar({ active, over }) {
+    if (!over || active.id === over.id) return;
+    setItens((atual) => {
+      const de = atual.findIndex((i) => i.chave === active.id);
+      const para = atual.findIndex((i) => i.chave === over.id);
+      return arrayMove(atual, de, para);
+    });
+  }
+
+  const alternar = (chave, visivel) => setItens((atual) => atual.map((i) => (i.chave === chave ? { ...i, visivel } : i)));
+  const renomear = (chave, titulo) => setItens((atual) => atual.map((i) => (i.chave === chave ? { ...i, titulo } : i)));
+
+  async function salvar() {
+    const items_sumario = itens.map((i) => ({ ...i, titulo: i.titulo.trim() || TITULO_PADRAO[i.chave] }));
+    setSalvando(true);
+    try {
+      if (templateAtivo) {
+        await atualizarRelatorioTemplate(templateAtivo.uuid, { items_sumario });
+      } else if (templateParaAtivar) {
+        await atualizarRelatorioTemplate(templateParaAtivar.uuid, { items_sumario, ativo: true });
+      } else {
+        await criarRelatorioTemplate({
+          escola: escolaAtual?.id,
+          nome: `Clássico — ${escolaAtual?.nome || 'Escola'}`,
+          modelo: 'classico',
+          ativo: true,
+          items_sumario,
+        });
+      }
+      toast({ title: 'Configuração salva!', description: `Vale para os próximos relatórios de ${escolaAtual?.nome || 'a escola'}.` });
+      await carregarTemplates(escolaUuid);
+    } catch (err) {
+      toast({ variant: 'destructive', title: 'Erro ao salvar', description: err.message });
+    } finally {
+      setSalvando(false);
+    }
+  }
+
+  let aviso = null;
+  if (!carregando && escolaUuid && !templateAtivo) {
+    aviso = templateParaAtivar
+      ? `Esta escola não tem template ativo. Ao salvar, o template "${templateParaAtivar.nome}" será ativado.`
+      : 'Esta escola ainda não tem template de relatório. Ao salvar, será criado um template com a capa Clássica.';
+  }
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Configuração da Geração de Relatórios</CardTitle>
+        <CardDescription>
+          Arraste para reordenar, renomeie os títulos e escolha quais seções aparecem no relatório.
+          A configuração é por escola e vale para os próximos relatórios gerados.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-5">
+        {escolas.length > 1 && (
+          <div className="max-w-sm">
+            <Label htmlFor="escola-relatorio">Escola</Label>
+            <Select value={escolaUuid} onValueChange={trocarEscola}>
+              <SelectTrigger id="escola-relatorio"><SelectValue placeholder="Selecione a escola" /></SelectTrigger>
+              <SelectContent>
+                {escolas.map((e) => <SelectItem key={e.uuid} value={String(e.uuid)}>{e.nome}</SelectItem>)}
+              </SelectContent>
+            </Select>
+          </div>
+        )}
+
+        {!escolaUuid && !carregando && (
+          <p className="py-8 text-center text-sm text-gray-500">Nenhuma escola ativa disponível para configurar.</p>
+        )}
+
+        {escolaUuid && (carregando ? (
+          <p className="py-8 text-center text-sm text-gray-500">Carregando configuração...</p>
+        ) : (
+          <>
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <p className="text-sm text-gray-500">
+                {templateAtivo
+                  ? <>Template ativo: <span className="font-medium text-gray-700">{templateAtivo.nome}</span></>
+                  : 'Sem template ativo.'}
+              </p>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  if (alterado && !window.confirm('Há alterações não salvas. Sair mesmo assim?')) return;
+                  navigate(`/admin/capa?escola=${escolaUuid}`);
+                }}
+              >
+                <Palette className="mr-2 h-4 w-4" /> Editar capa desta escola
+              </Button>
+            </div>
+            {aviso && (
+              <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">{aviso}</div>
+            )}
+
+            <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={aoSoltar}>
+              <SortableContext items={itens.map((i) => i.chave)} strategy={verticalListSortingStrategy}>
+                <div className="space-y-3">
+                  {itens.map((item, i) => (
+                    <LinhaSecao key={item.chave} item={item} posicao={i + 1} onToggle={alternar} onTitulo={renomear} />
+                  ))}
+                </div>
+              </SortableContext>
+            </DndContext>
+
+            {nenhumaVisivel && (
+              <p className="text-sm text-red-600">Deixe pelo menos uma seção visível.</p>
+            )}
+
+            <div className="flex flex-wrap items-center justify-end gap-2 border-t pt-4">
+              <Button variant="ghost" onClick={() => setItens(SECOES_PADRAO.map((s) => ({ ...s })))} disabled={salvando || ehPadrao}>
+                <RotateCcw className="mr-2 h-4 w-4" /> Restaurar padrão
+              </Button>
+              <Button variant="outline" onClick={() => setItens(salvos)} disabled={salvando || !alterado}>
+                Descartar alterações
+              </Button>
+              <Button onClick={salvar} disabled={salvando || nenhumaVisivel || (!alterado && !!templateAtivo)}>
+                <Save className="mr-2 h-4 w-4" /> {salvando ? 'Salvando...' : 'Salvar'}
+              </Button>
+            </div>
+          </>
+        ))}
+      </CardContent>
+    </Card>
+  );
 };
 
 export default RelatoriosConfigTab;

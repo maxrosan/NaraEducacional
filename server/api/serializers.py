@@ -1,717 +1,1393 @@
 """
-Serializers para a API REST NARA.
+Serializers para a API REST do multi-nara.
 Provê conversão entre models Django e JSON para endpoints RESTful.
 """
 
+from django.utils import timezone
 from rest_framework import serializers
+from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
+
+from .escopo import validar_professores_disciplina, validar_professores_turma
+
 from .models import (
-    Crianca,
-    Relatorio,
-    PerguntaBNCC,
-    PerguntaEspecialista,
-    CampoExperienciaCustomizado,
-    RegistroObservacao,
-    ProducaoCrianca,
-    Projeto,
-    CalendarioBimestre,
-    PeriodoAvaliativo,
-    Turma,
-    ConfiguracaoRegistro,
-    Instituicao,
-    Usuario,
-    UsuarioTurma,
-    MensagemCoordenacao,
-    MensagemLida,
-    AlertaLido,
+    Usuario, Instituicao, Escola, Especialista, Turma, UsuarioTurma,
+    Disciplina, UsuarioDisciplina, Aluno, Projeto, Producao, ProducaoAluno,
+    RegistroEscrita, RegistroDesenho, RegistroLeitura,
+    CampoPedagogico, HabilidadeBNCC, Pergunta, PerguntaEspecialista,
+    RegistroObservacao, ObservacaoTranscricao,
     PlanejamentoSemanal,
-    PlanejamentoDiario,
-    SerieConfig,
-    PromptTemplate,
-    PromptCategoria,
-    RelatorioTemplate,
-    Disciplina,
-    UsuarioDisciplina,
+    PeriodoAvaliativo, RelatorioTemplate, Relatorio,
+    Notificacao, MetaPAEE, SessaoEspecialista, SessaoPAEEMeta, TarefaPAEE,
+    Ticket, RespostaTicket, AnexoTicket, LogAuditoria, PermissaoUsuario,
+    TemplateDocumento, Contrato, PromptCategoria, PromptTemplate,
 )
 
 
-class SerieConfigSerializer(serializers.ModelSerializer):
-    """Serializer para o model SerieConfig."""
+def _mesmo_nome(a, b):
+    """Compara nomes sem diferenciar maiúsculas, inclusive acentuadas.
 
-    class Meta:
-        model = SerieConfig
-        fields = [
-            'id',
-            'nome',
-            'etapa',
-            'ordem',
-            'idade_min',
-            'idade_max',
-            'ativa',
-            'created_at',
-        ]
-        read_only_fields = ['id', 'created_at']
+    Feito no Python (casefold) e não com `__iexact`: no Postgres o iexact vira
+    UPPER(), que depende do locale do banco; no locale "C" o UPPER não converte
+    letras acentuadas ('Á' ≠ UPPER('á')). As queries que chamam isto já filtram
+    por escola (e ano/nascimento), então sobram poucos registros.
+    """
+    return (a or '').strip().casefold() == (b or '').strip().casefold()
 
 
-class CriancaSerializer(serializers.ModelSerializer):
-    """Serializer para o model Crianca."""
-
-    foto_url = serializers.SerializerMethodField()
-
-    class Meta:
-        model = Crianca
-        fields = [
-            'id',
-            'nome_completo',
-            'data_nascimento',
-            'genero',
-            'turma_id',
-            'instituicao_id',
-            'nome_responsavel',
-            'telefone_responsavel',
-            'status_vinculo',
-            'observacoes',
-            'foto_url',
-            'created_at',
-        ]
-        read_only_fields = ['id', 'created_at']
-
-    def get_foto_url(self, obj):
-        from api.storage import get_foto_url
-        return get_foto_url(obj)
+def _primeiro_com_nome(queryset, campo, nome):
+    return next((obj for obj in queryset if _mesmo_nome(getattr(obj, campo), nome)), None)
 
 
-class CriancaListSerializer(serializers.ModelSerializer):
-    """Serializer resumido para listagens de crianças."""
-    turma_nome = serializers.SerializerMethodField()
-    foto_url = serializers.SerializerMethodField()
-
-    class Meta:
-        model = Crianca
-        fields = [
-            'id', 'nome_completo', 'data_nascimento', 'turma_id',
-            'instituicao_id', 'nome_responsavel', 'telefone_responsavel',
-            'status_vinculo', 'turma_nome', 'foto_url',
-        ]
-
-    def get_turma_nome(self, obj):
-        cache = self.context.get('turma_names')
-        if cache is not None:
-            return cache.get(obj.turma_id)
-        try:
-            return Turma.objects.only('nome').get(id=obj.turma_id).nome
-        except Turma.DoesNotExist:
-            return None
-
-    def get_foto_url(self, obj):
-        from api.storage import get_foto_url
-        return get_foto_url(obj)
-
-
-class RelatorioSerializer(serializers.ModelSerializer):
-    """Serializer completo (inclui conteudo)."""
-
-    template_nome = serializers.CharField(
-        source='template.nome',
-        read_only=True,
-        default=None
+def _sincronizar_professores(turma, usuarios):
+    """Deixa a turma vinculada exatamente a `usuarios` (remove e cria o que mudou)."""
+    desejados = {u.id for u in usuarios}
+    vinculos = UsuarioTurma.objects.filter(turma=turma)
+    atuais = set(vinculos.values_list('usuario_id', flat=True))
+    vinculos.exclude(usuario_id__in=desejados).delete()
+    UsuarioTurma.objects.bulk_create(
+        [UsuarioTurma(turma=turma, usuario=u) for u in usuarios if u.id not in atuais]
     )
-    template_config = serializers.SerializerMethodField()
-
-    class Meta:
-        model = Relatorio
-        fields = [
-            'id',
-            'id_crianca',
-            'periodo',
-            'conteudo',
-            'revisado_por',
-            'pdf_url',
-            'template',
-            'template_nome',
-            'template_config',
-            'instituicao_id',
-            'data_criacao',
-        ]
-        read_only_fields = ['id', 'data_criacao']
-
-    def get_template_config(self, obj):
-        if not obj.template_id or not obj.template:
-            return None
-        return obj.template.config
-
-
-class RelatorioListSerializer(serializers.ModelSerializer):
-    """Serializer para listagens."""
-
-    finalizado = serializers.SerializerMethodField()
-
-    template_nome = serializers.CharField(
-        source='template.nome',
-        read_only=True,
-        default=None
-    )
-
-    class Meta:
-        model = Relatorio
-        fields = [
-            'id',
-            'id_crianca',
-            'periodo',
-            'revisado_por',
-            'pdf_url',
-            'template',
-            'template_nome',
-            'instituicao_id',
-            'data_criacao',
-            'finalizado',
-        ]
-        read_only_fields = ['id', 'data_criacao']
-
-    def get_finalizado(self, obj):
-        length = getattr(obj, 'conteudo_length', None)
-
-        if length is None:
-            length = len(obj.conteudo or '')
-
-        return bool(length and length > 50)
-
-
-class RelatorioCreateSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = Relatorio
-        fields = ['id_crianca', 'periodo', 'conteudo', 'instituicao_id', 'template']
-        extra_kwargs = {'template': {'required': False, 'allow_null': True}}
-
-    def validate(self, data):
-        template = data.get('template')
-        instituicao_id = self.context.get('instituicao_id')
-        if template and str(template.instituicao_id) != str(instituicao_id):
-            raise serializers.ValidationError(
-                {'template': 'Template não pertence à instituição do usuário.'}
-            )
-        return data
-
-
-class RelatorioTemplateSerializer(serializers.ModelSerializer):
-    modelo_display = serializers.CharField(
-        source='get_modelo_display',
-        read_only=True
-    )
-
-    class Meta:
-        model = RelatorioTemplate
-        fields = [
-            'id',
-            'instituicao_id',
-            'nome',
-            'modelo',
-            'modelo_display',
-            'usa_foto_crianca',
-            'config',
-            'items_sumario',
-            'ativo',
-            'created_at',
-            'updated_at',
-        ]
-        read_only_fields = [
-            'id',
-            'instituicao_id',
-            'created_at',
-            'updated_at',
-        ]
-
-
-class RelatorioTemplateListSerializer(serializers.ModelSerializer):
-    modelo_display = serializers.CharField(
-        source='get_modelo_display',
-        read_only=True
-    )
-
-    class Meta:
-        model = RelatorioTemplate
-        fields = [
-            'id',
-            'nome',
-            'modelo',
-            'modelo_display',
-            'usa_foto_crianca',
-            'ativo',
-            'updated_at',
-        ]
-        
-class PerguntaBNCCSerializer(serializers.ModelSerializer):
-    """Serializer para o model PerguntaBNCC."""
-
-    class Meta:
-        model = PerguntaBNCC
-        fields = [
-            'id',
-            'faixa_etaria',
-            'campo_experiencia',
-            'pergunta',
-            'pergunta_norma',
-            'habilidade_bncc',
-            'area_conhecimento',
-            'created_at',
-        ]
-        read_only_fields = ['id', 'created_at']
-
-
-class PerguntaEspecialistaSerializer(serializers.ModelSerializer):
-    """Serializer para o model PerguntaEspecialista."""
-
-    class Meta:
-        model = PerguntaEspecialista
-        fields = [
-            'id',
-            'instituicao_id',
-            'especialidade',
-            'campo_experiencia',
-            'nivel',
-            'pergunta',
-            'pergunta_facilitadora',
-            'referencia_norma',
-            'status',
-            'created_at',
-        ]
-        read_only_fields = ['id', 'created_at']
-
-    def validate(self, attrs):
-        pergunta_facilitadora = attrs.get('pergunta_facilitadora')
-        referencia_norma = attrs.get('referencia_norma')
-
-        if self.instance:
-            if not pergunta_facilitadora:
-                pergunta_facilitadora = self.instance.pergunta_facilitadora
-            if not referencia_norma:
-                referencia_norma = self.instance.referencia_norma
-
-        if not pergunta_facilitadora:
-            raise serializers.ValidationError({'pergunta_facilitadora': 'Campo obrigatório.'})
-        if not referencia_norma:
-            raise serializers.ValidationError({'referencia_norma': 'Campo obrigatório.'})
-
-        if not attrs.get('pergunta'):
-            attrs['pergunta'] = pergunta_facilitadora
-
-        return attrs
-
-
-class CampoExperienciaCustomizadoSerializer(serializers.ModelSerializer):
-    """Serializer para o model CampoExperienciaCustomizado."""
-
-    class Meta:
-        model = CampoExperienciaCustomizado
-        fields = [
-            'id',
-            'instituicao_id',
-            'nome',
-            'icone',
-            'cor',
-            'ativo',
-            'created_at',
-        ]
-        read_only_fields = ['id', 'created_at']
-
-
-class RegistroObservacaoSerializer(serializers.ModelSerializer):
-    """Serializer para o model RegistroObservacao."""
-
-    class Meta:
-        model = RegistroObservacao
-        fields = [
-            'id',
-            'crianca_id',
-            'pergunta_id',
-            'resposta',
-            'observacao',
-            'professor_id',
-            'data_observacao',
-            'created_at',
-        ]
-        read_only_fields = ['id', 'created_at']
-
-
-class ProducaoCriancaSerializer(serializers.ModelSerializer):
-    """Serializer para o model ProducaoCrianca."""
-
-    class Meta:
-        model = ProducaoCrianca
-        fields = [
-            'id',
-            'crianca_id',
-            'turma_id',
-            'professor_id',
-            'tipo',
-            'titulo',
-            'descricao',
-            'arquivo_url',
-            'projeto',
-            'data_registro',
-            'instituicao_id',
-            'created_at',
-        ]
-        read_only_fields = ['id', 'created_at']
-
-
-class ProjetoSerializer(serializers.ModelSerializer):
-    """Serializer para o model Projeto."""
-
-    class Meta:
-        model = Projeto
-        fields = [
-            'id',
-            'nome_projeto',
-            'descricao',
-            'data_inicio',
-            'data_fim',
-            'status',
-            'instituicao_id',
-            'created_at',
-        ]
-        read_only_fields = ['id', 'created_at']
-
-
-class CalendarioBimestreSerializer(serializers.ModelSerializer):
-    """Serializer para o model CalendarioBimestre."""
-
-    class Meta:
-        model = CalendarioBimestre
-        fields = [
-            'id',
-            'ano',
-            'bimestre',
-            'data_inicio',
-            'data_fim',
-            'instituicao_id',
-            'created_at',
-        ]
-        read_only_fields = ['id', 'created_at']
-
-
-class PeriodoAvaliativoSerializer(serializers.ModelSerializer):
-    """Serializer para o model PeriodoAvaliativo."""
-
-    class Meta:
-        model = PeriodoAvaliativo
-        fields = [
-            'id',
-            'descricao',
-            'tipo_periodo',
-            'data_inicio',
-            'data_fim',
-            'instituicao_id',
-            'created_at',
-        ]
-        read_only_fields = ['id', 'created_at']
 
 
 class TurmaSerializer(serializers.ModelSerializer):
-    """Serializer para o model Turma."""
+    """
+    Cadastro de turma.
+
+    Criação: a view passa `context={'escola_id': ...}` (vinda do
+    resolver_escopo_criacao), porque `escola` é read_only aqui e as checagens
+    de nome duplicado e de professores dependem dela.
+
+    `professores` (opcional, só escrita): lista de ids de usuários. Quando
+    enviada, os vínculos da turma passam a ser exatamente essa lista. A view
+    salva dentro de transaction.atomic(): turma e vínculos gravam juntos.
+    """
+    escola_nome = serializers.CharField(source='escola.nome', read_only=True)
+    professores = serializers.ListField(
+        child=serializers.IntegerField(min_value=1), write_only=True, required=False,
+    )
 
     class Meta:
         model = Turma
         fields = [
-            'id',
-            'nome',
-            'faixa_etaria',
-            'turno',
-            'ano_letivo',
-            'instituicao_id',
-            'ativa',
-            'created_at',
+            'id', 'uuid', 'nome', 'faixa_etaria', 'turno', 'ano_letivo', 'ativa',
+            'etapa', 'ordem', 'idade_min', 'idade_max', 'frequencia_registro',
+            'escola', 'escola_nome', 'instituicao', 'professores',
+            'criado_em', 'atualizado_em',
         ]
-        read_only_fields = ['id', 'created_at']
-
-
-class ConfiguracaoRegistroSerializer(serializers.ModelSerializer):
-    """Serializer para o model ConfiguracaoRegistro."""
-
-    class Meta:
-        model = ConfiguracaoRegistro
-        fields = [
-            'id',
-            'turma_id',
-            'frequencia_registro',
-            'created_at',
-            'updated_at',
-        ]
-        read_only_fields = ['id', 'created_at', 'updated_at']
+        read_only_fields = ['id', 'escola', 'instituicao', 'criado_em', 'atualizado_em']
         extra_kwargs = {
-            # Permitir comportamento de upsert no endpoint de criação.
-            'turma_id': {'validators': []},
+            'idade_min': {'min_value': 0, 'max_value': 18},
+            'idade_max': {'min_value': 0, 'max_value': 18},
+            'ordem': {'min_value': 0},
         }
 
-class InstituicaoSerializer(serializers.ModelSerializer):
-    """Serializer para o model Instituicao."""
+    def _escola_id(self):
+        if self.instance is not None:
+            return self.instance.escola_id
+        return self.context.get('escola_id')
 
-    logo_url = serializers.SerializerMethodField()
+    def _valor(self, attrs, campo):
+        """Valor final do campo: o enviado ou, no PATCH, o que já está salvo."""
+        if campo in attrs:
+            return attrs[campo]
+        if self.instance is not None:
+            return getattr(self.instance, campo)
+        return Turma._meta.get_field(campo).get_default()
 
-    class Meta:
-        model = Instituicao
-        fields = [
-            'id',
-            'nome',
-            'cnpj',
-            'email_institucional',
-            'endereco',
-            'cidade',
-            'estado',
-            'telefone',
-            'logo_url',
-            'tipo_relatorio',
-            'report_settings',
-            'ordem_relatorio',
-            'ativa',
-            'created_at',
-        ]
-        read_only_fields = ['id', 'created_at']
+    def validate_ano_letivo(self, valor):
+        valor = str(valor).strip()
+        if not (valor.isdigit() and len(valor) == 4 and 2000 <= int(valor) <= 2100):
+            raise serializers.ValidationError('Informe um ano letivo entre 2000 e 2100.')
+        return valor
 
-    def get_logo_url(self, obj):
-        from api.storage import get_logo_url
-        return get_logo_url(obj)
-    
-class UsuarioSerializer(serializers.ModelSerializer):
-    """Serializer para o model Usuario."""
-    instituicao_id = serializers.PrimaryKeyRelatedField(
-        source='instituicao',
-        queryset=Instituicao.objects.all(),
-        required=False,
-        allow_null=True,
-    )
-    usuario_turmas = serializers.SerializerMethodField()
+    def validate(self, attrs):
+        idade_min = self._valor(attrs, 'idade_min')
+        idade_max = self._valor(attrs, 'idade_max')
+        if idade_min is not None and idade_max is not None and idade_min > idade_max:
+            raise serializers.ValidationError(
+                {'idade_max': ['A idade máxima não pode ser menor que a mínima.']}
+            )
 
-    def get_usuario_turmas(self, obj):
-        return [
-            {'turma_id': str(vinculo.turma_id)}
-            for vinculo in obj.turmas.all()
-        ]
+        escola_id = self._escola_id()
+        if escola_id and self._mudou_nome_ou_ano(attrs):
+            self._checar_nome_duplicado(escola_id, attrs)
 
-    class Meta:
-        model = Usuario
-        fields = [
-            'id',
-            'email',
-            'nome',
-            'perfil',
-            'tipo_especialista',
-            'instituicao_id',
-            'ativo',
-            'usuario_turmas',
-            'created_at',
-            'last_login',
-        ]
-        read_only_fields = ['id', 'created_at', 'last_login']
+        if 'professores' in attrs:
+            attrs['professores'] = self._validar_professores(escola_id, attrs['professores'])
+        return attrs
+
+    def _mudou_nome_ou_ano(self, attrs):
+        """Na edição, só checa duplicidade se nome ou ano mudaram de fato.
+
+        O formulário sempre reenvia o nome; sem isso, uma turma que já estava
+        duplicada antes desta regra não poderia mais ser editada (nem para
+        trocar o turno) até alguém renomeá-la.
+        """
+        if self.instance is None:
+            return True
+        return (
+            not _mesmo_nome(self._valor(attrs, 'nome'), self.instance.nome)
+            or self._valor(attrs, 'ano_letivo') != self.instance.ano_letivo
+        )
+
+    def _checar_nome_duplicado(self, escola_id, attrs):
+        nome = self._valor(attrs, 'nome')
+        ano = self._valor(attrs, 'ano_letivo')
+        # Sem constraint no banco: esta checagem é a regra. A view trava a linha
+        # da escola durante validação + save para não haver corrida.
+        # _base_manager: sem recorte de tenant; o filtro por escola já delimita.
+        existentes = Turma._base_manager.filter(escola_id=escola_id, ano_letivo=ano)
+        if self.instance is not None:
+            existentes = existentes.exclude(pk=self.instance.pk)
+        existente = _primeiro_com_nome(existentes, 'nome', nome)
+        if existente is None:
+            return
+        mensagem = f'Já existe a turma "{existente.nome}" nesta escola em {ano}.'
+        if not existente.ativa:
+            mensagem += ' Ela está desativada: reative-a na aba Inativas.'
+        raise serializers.ValidationError({'nome': [mensagem]})
+
+    def _validar_professores(self, escola_id, ids):
+        if escola_id is None:
+            raise serializers.ValidationError({'professores': ['Escola da turma não definida.']})
+        ja_vinculados = []
+        if self.instance is not None:
+            ja_vinculados = UsuarioTurma.objects.filter(turma=self.instance).values_list('usuario_id', flat=True)
+        usuarios, erro = validar_professores_turma(escola_id, ids, ja_vinculados)
+        if erro:
+            raise serializers.ValidationError({'professores': [erro]})
+        return usuarios
+
+    def create(self, validated_data):
+        professores = validated_data.pop('professores', None)
+        turma = super().create(validated_data)
+        if professores is not None:
+            _sincronizar_professores(turma, professores)
+        return turma
+
+    def update(self, instance, validated_data):
+        professores = validated_data.pop('professores', None)
+        turma = super().update(instance, validated_data)
+        if professores is not None:
+            _sincronizar_professores(turma, professores)
+        return turma
 
 
 class UsuarioTurmaSerializer(serializers.ModelSerializer):
-    """Serializer para o model UsuarioTurma."""
-    usuario_id = serializers.UUIDField(source='usuario.id')
-    turma_id = serializers.UUIDField(source='turma.id')
-    turma = TurmaSerializer(read_only=True)
+    usuario_nome = serializers.CharField(source='usuario.nome', read_only=True)
+    usuario_email = serializers.CharField(source='usuario.email', read_only=True)
+    usuario_nivel = serializers.CharField(source='usuario.nivel', read_only=True)
 
     class Meta:
         model = UsuarioTurma
-        fields = ['usuario_id', 'turma_id', 'turma', 'data_vinculo']
-        read_only_fields = ['data_vinculo']
-        extra_kwargs = {'password': {'write_only': True}}
-
-
-class MensagemCoordenacaoSerializer(serializers.ModelSerializer):
-    """Serializer para o model MensagemCoordenacao."""
-
-    class Meta:
-        model = MensagemCoordenacao
         fields = [
-            'id',
-            'titulo',
-            'conteudo',
-            'remetente',
-            'instituicao_id',
-            'created_at',
+            'id', 'uuid', 'usuario', 'usuario_nome', 'usuario_email', 'usuario_nivel',
+            'turma', 'data_vinculo', 'criado_em',
         ]
-        read_only_fields = ['id', 'created_at']
+        read_only_fields = ['id', 'turma', 'criado_em']
 
 
-class MensagemLidaSerializer(serializers.ModelSerializer):
-    """Serializer para o model MensagemLida."""
-    mensagem_id = serializers.UUIDField(source='mensagem.id', read_only=True)
+class ProfessorDaTurmaSerializer(serializers.ModelSerializer):
+    """Vínculo resumido para a listagem (mesmas chaves do UsuarioTurmaSerializer)."""
+    usuario_nome = serializers.CharField(source='usuario.nome', read_only=True)
+    usuario_nivel = serializers.CharField(source='usuario.nivel', read_only=True)
 
     class Meta:
-        model = MensagemLida
+        model = UsuarioTurma
+        fields = ['usuario', 'usuario_nome', 'usuario_nivel']
+
+
+class TurmaListaSerializer(serializers.ModelSerializer):
+    """
+    Linha da listagem paginada de turmas (só leitura).
+
+    Traz os professores junto para a tela não fazer uma chamada a
+    /turmas/<id>/professores/ por turma. Depende da view fazer
+    select_related('escola') e o Prefetch em `professores_listagem`
+    (ver views/turma.py::listar_turmas); sem isso volta o N+1.
+    """
+    escola_nome = serializers.CharField(source='escola.nome', read_only=True)
+    professores = ProfessorDaTurmaSerializer(source='professores_listagem', many=True, read_only=True)
+
+    class Meta:
+        model = Turma
         fields = [
-            'id',
-            'mensagem_id',
-            'usuario_id',
-            'created_at',
+            'id', 'uuid', 'nome', 'faixa_etaria', 'turno', 'ano_letivo', 'ativa',
+            'etapa', 'ordem', 'idade_min', 'idade_max', 'frequencia_registro',
+            'escola', 'escola_nome', 'professores',
         ]
-        read_only_fields = ['id', 'created_at']
+        read_only_fields = fields
 
 
-class MensagemLidaCreateSerializer(serializers.Serializer):
-    """Serializer para criar registro de mensagem lida."""
-    mensagem_id = serializers.UUIDField()
-    usuario_id = serializers.UUIDField()
-
-
-class AlertaLidoSerializer(serializers.ModelSerializer):
-    """Serializer para o model AlertaLido."""
+class TurmaFrequenciaSerializer(serializers.ModelSerializer):
+    """Linha da tela Registros (só leitura). Enxuto de propósito: sem
+    professores nem campos de cadastro. Depende da view fazer
+    select_related('escola') e .only() nestes campos
+    (ver views/turma.py::listar_frequencias_registro)."""
+    escola_nome = serializers.CharField(source='escola.nome', read_only=True)
 
     class Meta:
-        model = AlertaLido
+        model = Turma
         fields = [
-            'id',
-            'usuario_id',
-            'alerta_tipo',
-            'alerta_chave',
-            'created_at',
+            'id', 'uuid', 'nome', 'turno', 'ano_letivo', 'etapa', 'ativa',
+            'escola', 'escola_nome', 'frequencia_registro',
         ]
-        read_only_fields = ['id', 'created_at']
-        # Idempotência de (usuario_id, alerta_tipo, alerta_chave) é tratada na
-        # view criar_alerta_lido — repetir o POST devolve 200 com o registro
-        # existente. O UniqueTogetherValidator auto-gerado pelo ModelSerializer
-        # transformaria isso em 400, então removemos os validators de Meta.
-        validators = []
+        read_only_fields = fields
 
 
-class PlanejamentoDiarioSerializer(serializers.ModelSerializer):
-    """Serializer para o model PlanejamentoDiario (formato simplificado)."""
-    # Campo 'atividades' para compatibilidade com frontend (mapeia atividades_propostas)
-    atividades = serializers.CharField(source='atividades_propostas', read_only=True)
-    arquivo_url = serializers.SerializerMethodField()
+class AtualizarFrequenciaSerializer(serializers.Serializer):
+    """Body do PATCH /turmas/frequencia-registro/atualizar/.
 
-    class Meta:
-        model = PlanejamentoDiario
-        fields = [
-            'id',
-            'dia_semana',
-            'data',
-            'atividades_propostas',
-            'atividades',  # Alias para compatibilidade
-            'prompt_ia',
-            'arquivo_storage_key',
-            'arquivo_url',
-            'arquivo_nome_original',
-            'arquivo_content_type',
-            'data_criacao',
-            'data_modificacao',
-        ]
-        read_only_fields = ['id', 'data_criacao', 'data_modificacao', 'arquivo_url']
+    Informe UM dos alvos:
+      turmas: [id, ...]  — ids (int) das turmas indicadas (máx. 200)
+      escola: id         — id (int) da escola: todas as turmas ATIVAS dela
+    """
+    LIMITE_TURMAS = 200
 
-    def get_arquivo_url(self, obj):
-        # Importação local para evitar circularidade ao importar settings antes
-        # do app estar pronto.
-        from .services.planejamento_ia import regenerar_url_arquivo
+    frequencia_registro = serializers.ChoiceField(choices=Turma.FREQUENCIAS_REGISTRO)
+    turmas = serializers.ListField(
+        child=serializers.IntegerField(min_value=1), required=False, allow_empty=False,
+        max_length=LIMITE_TURMAS,
+    )
+    escola = serializers.IntegerField(min_value=1, required=False)
 
-        return regenerar_url_arquivo(obj.arquivo_storage_key)
+    def validate(self, attrs):
+        if bool(attrs.get('turmas')) == bool(attrs.get('escola')):
+            raise serializers.ValidationError('Informe `turmas` ou `escola` (apenas um dos dois).')
+        return attrs
 
 
-class PlanejamentoSemanalSerializer(serializers.ModelSerializer):
-    """Serializer para o model PlanejamentoSemanal."""
-    dias = PlanejamentoDiarioSerializer(many=True, read_only=True)
-    # Campos para compatibilidade com frontend
-    semana_referencia = serializers.DateField(source='semana_inicio', read_only=True)
-    id_professor = serializers.CharField(source='professora_id', read_only=True)
-    turmas = serializers.SerializerMethodField()
-    usuarios = serializers.SerializerMethodField()
+def _sincronizar_professores_disciplina(disciplina, usuarios):
+    """Deixa a disciplina vinculada exatamente a `usuarios`."""
+    desejados = {u.id for u in usuarios}
+    vinculos = UsuarioDisciplina.objects.filter(disciplina=disciplina)
+    atuais = set(vinculos.values_list('usuario_id', flat=True))
+    vinculos.exclude(usuario_id__in=desejados).delete()
+    UsuarioDisciplina.objects.bulk_create([
+        UsuarioDisciplina(
+            disciplina=disciplina, usuario=u,
+            escola_id=disciplina.escola_id, instituicao_id=disciplina.instituicao_id,
+        )
+        for u in usuarios if u.id not in atuais
+    ])
 
-    class Meta:
-        model = PlanejamentoSemanal
-        fields = [
-            'id',
-            'turma_id',
-            'semana_inicio',
-            'semana_fim',
-            'semana_referencia',  # Alias para compatibilidade
-            'professora_id',
-            'id_professor',  # Alias para compatibilidade
-            'professora_nome',
-            'ano_letivo',
-            'dias',
-            'turmas',  # Nome da turma nested
-            'usuarios',  # Nome do professor nested
-            'data_criacao',
-            'data_modificacao',
-        ]
-        read_only_fields = ['id', 'data_criacao', 'data_modificacao']
-
-    def get_turmas(self, obj):
-        """Retorna dados da turma no formato esperado pelo frontend."""
-        try:
-            turma = Turma.objects.filter(id=obj.turma_id).first()
-            if turma:
-                return {'nome': turma.nome}
-        except Exception:
-            pass
-        return {'nome': f'Turma {obj.turma_id}'}
-
-    def get_usuarios(self, obj):
-        """Retorna dados do professor no formato esperado pelo frontend."""
-        return {'nome': obj.professora_nome}
-
-class PromptTemplateSerializer(serializers.ModelSerializer):
-    class Meta:
-        model  = PromptTemplate
-        fields = ['id', 'prompt_global', 'personalizado', 'categoria', 'cliente_id']
-
-
-class PromptCategoriaSerializer(serializers.ModelSerializer):
-    template = serializers.SerializerMethodField()
-
-    class Meta:
-        model  = PromptCategoria
-        fields = ['id', 'titulo', 'ativo', 'template']
-
-    def get_template(self, obj):
-        cliente_id = self.context.get('cliente_id')
-
-        # Busca o registro do cliente (sem excluir por personalizado vazio —
-        # cada categoria tem uma única linha contendo tanto prompt_global
-        # quanto personalizado, então o registro do cliente é sempre o que
-        # deve ser retornado quando existir, mesmo que personalizado
-        # esteja vazio).
-        template = None
-        if cliente_id:
-            template = (
-                obj.templates
-                .filter(cliente_id=cliente_id)
-                .order_by('-id')
-                .first()
-            )
-        if template is None:
-            template = (
-                obj.templates
-                .filter(cliente_id__isnull=True)
-                .order_by('-id')
-                .first()
-            )
-
-        return PromptTemplateSerializer(template).data if template else None
 
 class DisciplinaSerializer(serializers.ModelSerializer):
+    """
+    Cadastro de disciplina (mesmo padrão do TurmaSerializer).
+
+    Criação: a view passa `context={'escola_id': ...}`, porque `escola` é
+    read_only e as checagens de nome e de professores dependem dela.
+
+    Nome único por escola sem diferenciar maiúsculas ("Matemática" =
+    "matemática"). O banco tem UniqueConstraint(escola, nome), mas ela
+    diferencia maiúsculas; a regra completa é esta checagem, e a view trava a
+    linha da escola durante validação + save.
+
+    `professores` (opcional, só escrita): ids de usuários. Quando enviada, os
+    vínculos passam a ser exatamente essa lista, na mesma transação.
+    """
+    escola_nome = serializers.CharField(source='escola.nome', read_only=True)
+    professores = serializers.ListField(
+        child=serializers.IntegerField(min_value=1), write_only=True, required=False,
+    )
+
     class Meta:
         model = Disciplina
-        fields = ['id', 'instituicao', 'nome', 'ativo', 'created_at']
-        read_only_fields = ['id', 'created_at']
+        fields = ['id', 'uuid', 'nome', 'ativo', 'escola', 'escola_nome', 'instituicao', 'professores', 'criado_em']
+        read_only_fields = ['id', 'escola', 'instituicao', 'criado_em']
+
+    def _escola_id(self):
+        if self.instance is not None:
+            return self.instance.escola_id
+        return self.context.get('escola_id')
+
+    def validate(self, attrs):
+        escola_id = self._escola_id()
+        if escola_id and self._mudou_nome(attrs):
+            self._checar_nome_duplicado(escola_id, attrs['nome'])
+        if 'professores' in attrs:
+            attrs['professores'] = self._validar_professores(escola_id, attrs['professores'])
+        return attrs
+
+    def _mudou_nome(self, attrs):
+        """Na edição, só checa se o nome mudou (fora maiúsculas): uma disciplina
+        que já estava duplicada antes da regra continua editável."""
+        if 'nome' not in attrs:
+            return False
+        if self.instance is None:
+            return True
+        return not _mesmo_nome(attrs['nome'], self.instance.nome)
+
+    def _checar_nome_duplicado(self, escola_id, nome):
+        existentes = Disciplina._base_manager.filter(escola_id=escola_id)
+        if self.instance is not None:
+            existentes = existentes.exclude(pk=self.instance.pk)
+        existente = _primeiro_com_nome(existentes, 'nome', nome)
+        if existente is None:
+            return
+        mensagem = f'Já existe a disciplina "{existente.nome}" nesta escola.'
+        if not existente.ativo:
+            mensagem += ' Ela está desativada: reative-a na aba Inativas.'
+        raise serializers.ValidationError({'nome': [mensagem]})
+
+    def _validar_professores(self, escola_id, ids):
+        if escola_id is None:
+            raise serializers.ValidationError({'professores': ['Escola da disciplina não definida.']})
+        ja_vinculados = []
+        if self.instance is not None:
+            ja_vinculados = UsuarioDisciplina.objects.filter(
+                disciplina=self.instance,
+            ).values_list('usuario_id', flat=True)
+        usuarios, erro = validar_professores_disciplina(escola_id, ids, ja_vinculados)
+        if erro:
+            raise serializers.ValidationError({'professores': [erro]})
+        return usuarios
+
+    def create(self, validated_data):
+        professores = validated_data.pop('professores', None)
+        disciplina = super().create(validated_data)
+        if professores is not None:
+            _sincronizar_professores_disciplina(disciplina, professores)
+        return disciplina
+
+    def update(self, instance, validated_data):
+        professores = validated_data.pop('professores', None)
+        disciplina = super().update(instance, validated_data)
+        if professores is not None:
+            _sincronizar_professores_disciplina(disciplina, professores)
+        return disciplina
+
+
+class ProfessorDaDisciplinaSerializer(serializers.ModelSerializer):
+    """Vínculo resumido para a listagem de disciplinas."""
+    usuario_nome = serializers.CharField(source='usuario.nome', read_only=True)
+    usuario_nivel = serializers.CharField(source='usuario.nivel', read_only=True)
+
+    class Meta:
+        model = UsuarioDisciplina
+        fields = ['usuario', 'usuario_nome', 'usuario_nivel']
+
+
+class DisciplinaListaSerializer(serializers.ModelSerializer):
+    """
+    Linha da listagem paginada de disciplinas (só leitura), com os professores
+    embutidos. Depende da view fazer select_related('escola') e o Prefetch em
+    `professores_listagem` (ver views/disciplina.py::listar_disciplinas).
+    """
+    escola_nome = serializers.CharField(source='escola.nome', read_only=True)
+    professores = ProfessorDaDisciplinaSerializer(source='professores_listagem', many=True, read_only=True)
+
+    class Meta:
+        model = Disciplina
+        fields = ['id', 'uuid', 'nome', 'ativo', 'escola', 'escola_nome', 'professores']
+        read_only_fields = fields
 
 
 class UsuarioDisciplinaSerializer(serializers.ModelSerializer):
+    usuario_nome = serializers.CharField(source='usuario.nome', read_only=True)
     disciplina_nome = serializers.CharField(source='disciplina.nome', read_only=True)
 
     class Meta:
         model = UsuarioDisciplina
-        fields = ['id', 'usuario', 'disciplina', 'disciplina_nome', 'instituicao', 'created_at']
-        read_only_fields = ['id', 'created_at']
+        fields = [
+            'id', 'uuid', 'usuario', 'usuario_nome', 'disciplina', 'disciplina_nome',
+            'escola', 'instituicao', 'criado_em', 'atualizado_em',
+        ]
+        read_only_fields = ['id', 'escola', 'instituicao', 'criado_em', 'atualizado_em']
 
-    def validate(self, data):
-        usuario = data.get('usuario') or getattr(self.instance, 'usuario', None)
-        disciplina = data.get('disciplina') or getattr(self.instance, 'disciplina', None)
-        if usuario and usuario.perfil != 'professor_fundamental':
+
+class InstituicaoSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Instituicao
+        fields = [
+            'id', 'uuid', 'nome', 'cnpj', 'email_institucional', 'endereco',
+            'cidade', 'estado', 'telefone', 'logo_url', 'ativa',
+            'criado_em', 'atualizado_em',
+        ]
+        read_only_fields = ['id', 'criado_em', 'atualizado_em']
+
+
+class EscolaSerializer(serializers.ModelSerializer):
+    instituicao_nome = serializers.CharField(source='instituicao.nome', read_only=True)
+    # uuid da instituição: para montar a URL /instituicoes/<uuid>/ a partir da escola.
+    instituicao_uuid = serializers.UUIDField(source='instituicao.uuid', read_only=True)
+
+    class Meta:
+        model = Escola
+        fields = [
+            'id', 'uuid', 'instituicao', 'instituicao_uuid', 'instituicao_nome', 'nome', 'tipo_unidade',
+            'cnpj', 'endereco', 'cidade', 'estado', 'telefone', 'ativa',
+            'tipo_relatorio', 'report_settings', 'ordem_relatorio',
+            'criado_em', 'atualizado_em',
+        ]
+        read_only_fields = ['id', 'instituicao', 'criado_em', 'atualizado_em']
+
+
+class EspecialistaSerializer(serializers.ModelSerializer):
+    escola_nome = serializers.CharField(source='escola.nome', read_only=True, default=None)
+    instituicao_nome = serializers.CharField(source='instituicao.nome', read_only=True)
+
+    class Meta:
+        model = Especialista
+        fields = [
+            'id', 'uuid', 'tipo_especialista', 'escola', 'escola_nome',
+            'instituicao', 'instituicao_nome', 'criado_em', 'atualizado_em',
+        ]
+        read_only_fields = ['id', 'instituicao', 'criado_em', 'atualizado_em']
+
+    def validate_escola(self, escola):
+        instituicao_id = self.context.get('instituicao_id')
+        if escola is not None and instituicao_id and str(escola.instituicao_id) != str(instituicao_id):
+            raise serializers.ValidationError('A escola informada não pertence à instituição do usuário.')
+        return escola
+
+
+NIVEIS_COM_TIPO_ESPECIALISTA = ('especialista', 'professor_especialista')
+
+
+class UsuarioSerializer(serializers.ModelSerializer):
+    """Serializer para o model Usuario (leitura — usado no payload de login, em
+    /me/ e na lista completa de /usuarios/).
+
+    Em listas, a view faz select_related('escola', 'instituicao', 'especialista');
+    sem isso, cada usuário custa até 3 queries extras.
+    """
+
+    escola_nome = serializers.CharField(source='escola.nome', read_only=True, default=None)
+    instituicao_nome = serializers.CharField(source='instituicao.nome', read_only=True, default=None)
+    tipo_especialista = serializers.CharField(source='especialista.tipo_especialista', read_only=True, default=None)
+    # uuids da escola/instituição do usuário: o front usa em URLs (o id vai só no body).
+    escola_uuid = serializers.UUIDField(source='escola.uuid', read_only=True, allow_null=True)
+    instituicao_uuid = serializers.UUIDField(source='instituicao.uuid', read_only=True, allow_null=True)
+
+    class Meta:
+        model = Usuario
+        fields = [
+            'id', 'uuid', 'nome', 'email', 'numero', 'nivel',
+            'escola', 'escola_uuid', 'escola_nome', 'instituicao', 'instituicao_uuid', 'instituicao_nome',
+            'especialista', 'tipo_especialista', 'is_active',
+        ]
+        read_only_fields = fields
+
+
+class _TurmaDoUsuarioSerializer(serializers.ModelSerializer):
+    turma_nome = serializers.CharField(source='turma.nome', read_only=True)
+
+    class Meta:
+        model = UsuarioTurma
+        fields = ['turma', 'turma_nome']
+
+
+class _DisciplinaDoUsuarioSerializer(serializers.ModelSerializer):
+    disciplina_nome = serializers.CharField(source='disciplina.nome', read_only=True)
+
+    class Meta:
+        model = UsuarioDisciplina
+        fields = ['disciplina', 'disciplina_nome']
+
+
+class UsuarioListaSerializer(UsuarioSerializer):
+    """
+    Linha da listagem paginada de usuários, com turmas e disciplinas embutidas
+    (a tela de edição já abre preenchida, sem requisição extra). Depende dos
+    Prefetch em `turmas_listagem` e `disciplinas_listagem` da view.
+    """
+    turmas = _TurmaDoUsuarioSerializer(source='turmas_listagem', many=True, read_only=True)
+    disciplinas = _DisciplinaDoUsuarioSerializer(source='disciplinas_listagem', many=True, read_only=True)
+
+    class Meta(UsuarioSerializer.Meta):
+        fields = UsuarioSerializer.Meta.fields + ['turmas', 'disciplinas']
+        read_only_fields = fields
+
+
+class UsuarioWriteSerializer(serializers.ModelSerializer):
+    """Serializer de escrita para Usuario — lida com hash de senha via set_password.
+
+    Campos opcionais, só escrita, gravados na mesma transação (a view usa
+    transaction.atomic):
+
+    * `turmas`: ids de turmas. Os vínculos passam a ser exatamente essa lista.
+      Só para níveis vinculáveis a turma, e só turmas da escola do usuário.
+    * `disciplinas`: ids de disciplinas. Idem; só para professor_fundamental.
+    * `tipo_especialista`: para especialista/professor_especialista. Liga o
+      usuário ao registro de Especialista (catálogo por rede+escola) desse tipo,
+      criando-o se ainda não existir.
+
+    Se a escola do usuário mudar e `turmas`/`disciplinas` não vierem, os
+    vínculos antigos (da escola anterior) são removidos.
+    """
+
+    password = serializers.CharField(write_only=True, required=False, min_length=8)
+    turmas = serializers.ListField(child=serializers.IntegerField(min_value=1), write_only=True, required=False)
+    disciplinas = serializers.ListField(child=serializers.IntegerField(min_value=1), write_only=True, required=False)
+    tipo_especialista = serializers.ChoiceField(
+        choices=Especialista._meta.get_field('tipo_especialista').choices,
+        write_only=True, required=False, allow_null=True, allow_blank=True,
+    )
+
+    class Meta:
+        model = Usuario
+        fields = [
+            'id', 'uuid', 'nome', 'email', 'numero', 'nivel',
+            'escola', 'instituicao', 'especialista', 'is_active', 'password',
+            'turmas', 'disciplinas', 'tipo_especialista',
+        ]
+        read_only_fields = ['id']
+
+    def _valor(self, attrs, campo):
+        if campo in attrs:
+            return attrs[campo]
+        return getattr(self.instance, campo, None)
+
+    def _id(self, valor):
+        return getattr(valor, 'pk', valor)
+
+    def validate(self, attrs):
+        nivel = self._valor(attrs, 'nivel')
+        escola_id = self._id(self._valor(attrs, 'escola'))
+        instituicao_id = self._id(self._valor(attrs, 'instituicao'))
+
+        if 'turmas' in attrs:
+            attrs['turmas'] = self._validar_turmas(attrs['turmas'], nivel, escola_id)
+        if 'disciplinas' in attrs:
+            attrs['disciplinas'] = self._validar_disciplinas(attrs['disciplinas'], nivel, escola_id)
+
+        if nivel not in NIVEIS_COM_TIPO_ESPECIALISTA:
+            attrs.pop('tipo_especialista', None)
+            if 'nivel' in attrs:  # deixou de ser especialista: desfaz a ligação
+                attrs['especialista'] = None
+        elif attrs.get('tipo_especialista'):
+            if instituicao_id is None:
+                raise serializers.ValidationError(
+                    {'tipo_especialista': ['O usuário precisa estar vinculado a uma instituição.']}
+                )
+            attrs['_especialista_chave'] = (instituicao_id, escola_id, attrs.pop('tipo_especialista'))
+        else:
+            attrs.pop('tipo_especialista', None)
+        return attrs
+
+    def _validar_turmas(self, ids, nivel, escola_id):
+        if not ids:
+            return []
+        from .escopo import NIVEIS_VINCULAVEIS_TURMA
+        if nivel not in NIVEIS_VINCULAVEIS_TURMA:
+            raise serializers.ValidationError({'turmas': ['Este perfil não pode ser vinculado a turmas.']})
+        turmas = list(Turma._base_manager.filter(id__in=ids))
+        if len(turmas) != len(set(ids)) or any(t.escola_id != escola_id for t in turmas):
+            raise serializers.ValidationError({'turmas': ['Todas as turmas precisam ser da escola do usuário.']})
+        return turmas
+
+    def _validar_disciplinas(self, ids, nivel, escola_id):
+        if not ids:
+            return []
+        from .escopo import NIVEIS_VINCULAVEIS_DISCIPLINA
+        if nivel not in NIVEIS_VINCULAVEIS_DISCIPLINA:
             raise serializers.ValidationError(
-                'Apenas usuários com perfil professor_fundamental podem ser vinculados a disciplinas.'
+                {'disciplinas': ['Só professores do Ensino Fundamental podem ter disciplinas.']}
             )
-        if usuario and disciplina and usuario.instituicao_id != disciplina.instituicao_id:
+        disciplinas = list(Disciplina._base_manager.filter(id__in=ids))
+        if len(disciplinas) != len(set(ids)) or any(d.escola_id != escola_id for d in disciplinas):
             raise serializers.ValidationError(
-                'Usuário e disciplina devem pertencer à mesma instituição.'
+                {'disciplinas': ['Todas as disciplinas precisam ser da escola do usuário.']}
             )
+        return disciplinas
+
+    def _aplicar_especialista(self, validated_data):
+        chave = validated_data.pop('_especialista_chave', None)
+        if chave is None:
+            return
+        instituicao_id, escola_id, tipo = chave
+        especialista = Especialista._base_manager.filter(
+            instituicao_id=instituicao_id, escola_id=escola_id, tipo_especialista=tipo,
+        ).order_by('criado_em').first()
+        if especialista is None:
+            especialista = Especialista._base_manager.create(
+                instituicao_id=instituicao_id, escola_id=escola_id, tipo_especialista=tipo,
+            )
+        validated_data['especialista'] = especialista
+
+    def _sincronizar_vinculos(self, usuario, turmas, disciplinas, escola_mudou):
+        if turmas is None and escola_mudou:
+            turmas = []
+        if disciplinas is None and escola_mudou:
+            disciplinas = []
+        if turmas is not None:
+            desejadas = {t.pk for t in turmas}
+            vinculos = UsuarioTurma.objects.filter(usuario=usuario)
+            atuais = set(vinculos.values_list('turma_id', flat=True))
+            vinculos.exclude(turma_id__in=desejadas).delete()
+            UsuarioTurma.objects.bulk_create(
+                [UsuarioTurma(usuario=usuario, turma=t) for t in turmas if t.pk not in atuais]
+            )
+        if disciplinas is not None:
+            desejadas = {d.pk for d in disciplinas}
+            vinculos = UsuarioDisciplina.objects.filter(usuario=usuario)
+            atuais = set(vinculos.values_list('disciplina_id', flat=True))
+            vinculos.exclude(disciplina_id__in=desejadas).delete()
+            UsuarioDisciplina.objects.bulk_create([
+                UsuarioDisciplina(
+                    usuario=usuario, disciplina=d, escola_id=d.escola_id, instituicao_id=d.instituicao_id,
+                )
+                for d in disciplinas if d.pk not in atuais
+            ])
+
+    def create(self, validated_data):
+        turmas = validated_data.pop('turmas', None)
+        disciplinas = validated_data.pop('disciplinas', None)
+        self._aplicar_especialista(validated_data)
+        password = validated_data.pop('password', None)
+        if not password:
+            raise serializers.ValidationError({'password': 'Senha é obrigatória na criação.'})
+        usuario = Usuario(**validated_data)
+        usuario.set_password(password)
+        usuario.save()
+        self._sincronizar_vinculos(usuario, turmas, disciplinas, escola_mudou=False)
+        return usuario
+
+    def update(self, instance, validated_data):
+        turmas = validated_data.pop('turmas', None)
+        disciplinas = validated_data.pop('disciplinas', None)
+        self._aplicar_especialista(validated_data)
+        escola_anterior = instance.escola_id
+        password = validated_data.pop('password', None)
+        for attr, value in validated_data.items():
+            setattr(instance, attr, value)
+        if password:
+            instance.set_password(password)
+        instance.save()
+        self._sincronizar_vinculos(
+            instance, turmas, disciplinas, escola_mudou=instance.escola_id != escola_anterior,
+        )
+        return instance
+
+
+class AlunoSerializer(serializers.ModelSerializer):
+    """
+    Cadastro de aluno.
+
+    Criação: a view passa `context={'escola_id': ...}` (a escola vem da turma),
+    porque `escola` é read_only aqui e a checagem de duplicidade depende dela.
+    A view também trava a linha da escola durante validação + save (ver
+    views/aluno.py::_validar_e_salvar), como em turmas.
+
+    Listagem: a view faz select_related('turma', 'escola'); sem isso,
+    `turma_nome` e `escola_nome` custam 2 queries por aluno.
+    """
+    turma_nome = serializers.CharField(source='turma.nome', read_only=True)
+    escola_nome = serializers.CharField(source='escola.nome', read_only=True)
+    # Só leitura: a foto muda pelo endpoint /alunos/<id>/foto/.
+    foto_url = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Aluno
+        fields = [
+            'id', 'uuid', 'nome_completo', 'data_nascimento', 'genero',
+            'nome_responsavel', 'telefone_responsavel', 'status_vinculo',
+            'observacoes', 'foto_url', 'turma', 'turma_nome',
+            'escola', 'escola_nome', 'instituicao',
+            'criado_em', 'atualizado_em',
+        ]
+        read_only_fields = ['id', 'escola', 'instituicao', 'criado_em', 'atualizado_em']
+
+    def _valor(self, attrs, campo):
+        """Valor final do campo: o enviado ou, no PATCH, o que já está salvo."""
+        if campo in attrs:
+            return attrs[campo]
+        return getattr(self.instance, campo, None)
+
+    def get_foto_url(self, aluno):
+        """URL pré-assinada nova a cada leitura (a salva expira em ~1h). Assinar
+        é um cálculo local, sem rede e sem gravar nada (ao contrário de
+        storage.get_foto_url, que salva o aluno) — barato até em listagens."""
+        from .storage import generate_presigned_url, is_s3_configured
+        if aluno.foto_storage_key and is_s3_configured():
+            return generate_presigned_url(aluno.foto_storage_key) or aluno.foto_url
+        return aluno.foto_url or None
+
+    def validate_data_nascimento(self, valor):
+        if valor and valor > timezone.localdate():
+            raise serializers.ValidationError('A data de nascimento não pode ser no futuro.')
+        return valor
+
+    def validate_telefone_responsavel(self, valor):
+        if not valor:
+            return valor
+        valor = valor.strip()
+        digitos = ''.join(c for c in valor if c.isdigit())
+        # 10–11 dígitos (DDD + número); até 13 com o código do país (55).
+        if not 10 <= len(digitos) <= 13:
+            raise serializers.ValidationError('Informe o telefone com DDD, ex.: (84) 99999-9999.')
+        return valor
+
+    def validate(self, attrs):
+        turma = attrs.get('turma')
+        mudou_turma = turma is not None and (self.instance is None or turma.pk != self.instance.turma_id)
+        if mudou_turma:
+            self._checar_turma(turma)
+
+        escola_id = self.instance.escola_id if self.instance is not None else self.context.get('escola_id')
+        if escola_id and self._mudou_nome_ou_nascimento(attrs):
+            self._checar_duplicado(escola_id, attrs)
+        return attrs
+
+    def _checar_turma(self, turma):
+        if self.instance is not None and turma.escola_id != self.instance.escola_id:
+            raise serializers.ValidationError(
+                {'turma': ['Não é possível mover o aluno para uma turma de outra escola.']}
+            )
+        if not turma.ativa:
+            raise serializers.ValidationError({'turma': ['A turma escolhida está desativada.']})
+
+    def _mudou_nome_ou_nascimento(self, attrs):
+        """Na edição, só checa duplicidade se nome ou nascimento mudaram de fato:
+        um par que já estava duplicado antes da regra continua editável."""
+        if self.instance is None:
+            return True
+        return (
+            not _mesmo_nome(self._valor(attrs, 'nome_completo'), self.instance.nome_completo)
+            or self._valor(attrs, 'data_nascimento') != self.instance.data_nascimento
+        )
+
+    def _checar_duplicado(self, escola_id, attrs):
+        """Mesmo nome (sem diferenciar maiúsculas) + mesma data de nascimento na
+        mesma escola é quase certamente o mesmo aluno cadastrado duas vezes
+        (ex.: planilha de importação enviada de novo). Sem data de nascimento
+        não dá para distinguir homônimos, então não bloqueia."""
+        nascimento = self._valor(attrs, 'data_nascimento')
+        if not nascimento:
+            return
+        existentes = Aluno._base_manager.filter(
+            escola_id=escola_id, data_nascimento=nascimento,
+        ).select_related('turma')
+        if self.instance is not None:
+            existentes = existentes.exclude(pk=self.instance.pk)
+        existente = _primeiro_com_nome(existentes, 'nome_completo', self._valor(attrs, 'nome_completo'))
+        if existente is None:
+            return
+        mensagem = (
+            f'{existente.nome_completo}, nascido(a) em {nascimento:%d/%m/%Y}, '
+            f'já está cadastrado(a) nesta escola (turma {existente.turma.nome}).'
+        )
+        if existente.status_vinculo != 'ativo':
+            mensagem += f' O cadastro está como "{existente.get_status_vinculo_display()}": reative-o em vez de criar outro.'
+        raise serializers.ValidationError({'nome_completo': [mensagem]})
+
+
+class ProjetoSerializer(serializers.ModelSerializer):
+    escola_nome = serializers.CharField(source='escola.nome', read_only=True)
+
+    class Meta:
+        model = Projeto
+        fields = [
+            'id', 'uuid', 'nome', 'descricao', 'status', 'data_inicio', 'data_fim',
+            'escola', 'escola_nome', 'instituicao', 'criado_em', 'atualizado_em',
+        ]
+        read_only_fields = ['id', 'escola', 'instituicao', 'criado_em', 'atualizado_em']
+
+
+class ProducaoSerializer(serializers.ModelSerializer):
+    professor_nome = serializers.CharField(source='professor.nome', read_only=True)
+    turma_nome = serializers.CharField(source='turma.nome', read_only=True)
+
+    class Meta:
+        model = Producao
+        fields = [
+            'id', 'uuid', 'tipo', 'titulo', 'descricao', 'arquivo_url', 'arquivo_nome',
+            'arquivo_hash', 'mime_type', 'tamanho_bytes', 'tags', 'data_registro',
+            'turma', 'turma_nome', 'professor', 'professor_nome', 'projeto',
+            'escola', 'instituicao', 'criado_em', 'atualizado_em',
+        ]
+        read_only_fields = [
+            'id', 'professor', 'turma', 'escola', 'instituicao', 'criado_em', 'atualizado_em',
+        ]
+
+
+class ProducaoAlunoSerializer(serializers.ModelSerializer):
+    aluno_nome = serializers.CharField(source='aluno.nome_completo', read_only=True)
+
+    class Meta:
+        model = ProducaoAluno
+        fields = [
+            'id', 'uuid', 'legenda', 'legenda_ia', 'destaque', 'incluir_relatorio',
+            'producao', 'aluno', 'aluno_nome', 'criado_em', 'atualizado_em',
+        ]
+        read_only_fields = ['id', 'producao', 'aluno', 'criado_em', 'atualizado_em']
+
+
+class RegistroEscritaSerializer(serializers.ModelSerializer):
+    aluno_nome = serializers.CharField(source='aluno.nome_completo', read_only=True)
+    professor_nome = serializers.CharField(source='professor.nome', read_only=True)
+
+    class Meta:
+        model = RegistroEscrita
+        fields = [
+            'id', 'uuid', 'etapa', 'arquivo_nome', 'arquivo_hash', 'arquivo_path',
+            'arquivo_original', 'tamanho_arquivo', 'tipo_arquivo', 'etapa_ia',
+            'analise_detalhada', 'anotacoes_professora',
+            'aluno', 'aluno_nome', 'turma', 'professor', 'professor_nome',
+            'escola', 'instituicao', 'criado_em', 'atualizado_em',
+        ]
+        read_only_fields = [
+            'id', 'aluno', 'turma', 'professor', 'escola', 'instituicao', 'criado_em', 'atualizado_em',
+            'arquivo_nome', 'arquivo_hash', 'arquivo_path', 'arquivo_original', 'tamanho_arquivo', 'tipo_arquivo',
+        ]
+
+
+class RegistroDesenhoSerializer(serializers.ModelSerializer):
+    aluno_nome = serializers.CharField(source='aluno.nome_completo', read_only=True)
+    professor_nome = serializers.CharField(source='professor.nome', read_only=True)
+
+    class Meta:
+        model = RegistroDesenho
+        fields = [
+            'id', 'uuid', 'etapa', 'atividade', 'contexto', 'fase_desenho',
+            'elementos_detectados', 'analise_detalhada', 'anotacoes_professora',
+            'arquivo_nome', 'arquivo_hash', 'arquivo_path', 'arquivo_original',
+            'tamanho_arquivo', 'tipo_arquivo',
+            'aluno', 'aluno_nome', 'turma', 'professor', 'professor_nome',
+            'escola', 'instituicao', 'criado_em', 'atualizado_em',
+        ]
+        read_only_fields = [
+            'id', 'aluno', 'turma', 'professor', 'escola', 'instituicao', 'criado_em', 'atualizado_em',
+            'arquivo_nome', 'arquivo_hash', 'arquivo_path', 'arquivo_original', 'tamanho_arquivo', 'tipo_arquivo',
+        ]
+
+
+class RegistroLeituraSerializer(serializers.ModelSerializer):
+    aluno_nome = serializers.CharField(source='aluno.nome_completo', read_only=True)
+    professor_nome = serializers.CharField(source='professor.nome', read_only=True)
+
+    class Meta:
+        model = RegistroLeitura
+        fields = [
+            'id', 'uuid', 'nara_job_id', 'status', 'arquivo_path', 'arquivo_nome',
+            'arquivo_hash', 'tamanho_arquivo', 'tipo_arquivo', 'duracao_seg',
+            'pieces', 'feat_dim', 'classe_predita', 'classe_escolhida',
+            'probabilidades', 'anotacoes_professora',
+            'aluno', 'aluno_nome', 'turma', 'professor', 'professor_nome',
+            'escola', 'instituicao', 'criado_em', 'atualizado_em',
+        ]
+        read_only_fields = [
+            'id', 'turma', 'professor', 'escola', 'instituicao', 'criado_em', 'atualizado_em',
+        ]
+
+
+class CampoPedagogicoSerializer(serializers.ModelSerializer):
+    escola_nome = serializers.CharField(source='escola.nome', read_only=True, default=None)
+
+    class Meta:
+        model = CampoPedagogico
+        fields = [
+            'id', 'uuid', 'nome', 'etapa', 'icone', 'cor', 'ativo',
+            'escola', 'escola_nome', 'instituicao', 'criado_em', 'atualizado_em',
+        ]
+        read_only_fields = ['id', 'criado_em', 'atualizado_em', 'escola', 'instituicao']
+
+
+class HabilidadeBNCCSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = HabilidadeBNCC
+        fields = [
+            'id', 'uuid', 'codigo', 'descricao', 'componente_curricular', 'ano_serie',
+            'campo_atuacao', 'ativa', 'criado_em', 'atualizado_em',
+        ]
+        read_only_fields = ['id', 'criado_em', 'atualizado_em']
+
+
+class _ReferenciaBNCCMixin:
+    """Referência BNCC obrigatória, comum às duas perguntas (Pergunta e
+    PerguntaEspecialista).
+
+    A tela informa o CÓDIGO em `referencia_bncc` (ex.: "EI03EO01"); a
+    habilidade é localizada no catálogo sem diferenciar maiúsculas. O id em
+    `habilidade_bncc` também é aceito.
+    - Criação: referência obrigatória.
+    - Edição: não pode ser removida; registros antigos sem referência
+      continuam editáveis (ex.: desativar) até alguém informá-la.
+    - Habilidade desativada no catálogo não pode ser escolhida de novo; quem
+      já a usa continua como está.
+    """
+
+    def _validar_referencia(self, attrs):
+        if 'referencia_bncc' in attrs:
+            codigo = (attrs.pop('referencia_bncc') or '').strip()
+            if not codigo:
+                raise serializers.ValidationError({'referencia_bncc': ['Informe a referência BNCC.']})
+            habilidade = HabilidadeBNCC._base_manager.filter(codigo__iexact=codigo).first()
+            if habilidade is None:
+                raise serializers.ValidationError(
+                    {'referencia_bncc': [f'O código "{codigo}" não foi encontrado no catálogo da BNCC.']}
+                )
+            attrs['habilidade_bncc'] = habilidade
+
+        habilidade = attrs.get('habilidade_bncc')
+        if self.instance is None:
+            if habilidade is None:
+                raise serializers.ValidationError({'referencia_bncc': ['Informe a referência BNCC.']})
+        elif 'habilidade_bncc' in attrs and habilidade is None:
+            raise serializers.ValidationError({'referencia_bncc': ['A referência BNCC não pode ser removida.']})
+
+        mudou = habilidade is not None and (
+            self.instance is None or habilidade.pk != self.instance.habilidade_bncc_id
+        )
+        if mudou and not habilidade.ativa:
+            raise serializers.ValidationError(
+                {'referencia_bncc': [f'A habilidade {habilidade.codigo} está desativada no catálogo da BNCC.']}
+            )
+        return attrs
+
+
+class PerguntaSerializer(_ReferenciaBNCCMixin, serializers.ModelSerializer):
+    """
+    Pergunta BNCC: oficial (escola nula, vale para todas) ou da escola.
+    Referência BNCC obrigatória (ver _ReferenciaBNCCMixin).
+
+    Em listas, a view faz select_related('campo_experiencia', 'habilidade_bncc', 'escola').
+    """
+    escola_nome = serializers.CharField(source='escola.nome', read_only=True, default=None)
+    campo_experiencia_nome = serializers.CharField(source='campo_experiencia.nome', read_only=True, default=None)
+    campo_experiencia_icone = serializers.CharField(source='campo_experiencia.icone', read_only=True, default=None)
+    habilidade_bncc_codigo = serializers.CharField(source='habilidade_bncc.codigo', read_only=True, default=None)
+    habilidade_bncc_descricao = serializers.CharField(source='habilidade_bncc.descricao', read_only=True, default=None)
+    referencia_bncc = serializers.CharField(write_only=True, required=False, allow_blank=True, max_length=20)
+    # `todos`: o TenantManager esconderia os campos oficiais (escola nula).
+    # O recorte oficial + escola da pergunta é feito na view (_campo_invalido).
+    campo_experiencia = serializers.PrimaryKeyRelatedField(
+        queryset=CampoPedagogico.todos.all(), required=False, allow_null=True,
+    )
+
+    class Meta:
+        model = Pergunta
+        fields = [
+            'id', 'uuid', 'pergunta', 'pergunta_norma', 'area_conhecimento', 'origem', 'ativa', 'faixa_etaria',
+            'campo_experiencia', 'campo_experiencia_nome', 'campo_experiencia_icone',
+            'habilidade_bncc', 'habilidade_bncc_codigo', 'habilidade_bncc_descricao', 'referencia_bncc',
+            'escola', 'escola_nome', 'instituicao', 'criado_em', 'atualizado_em',
+        ]
+        read_only_fields = ['id', 'criado_em', 'atualizado_em', 'escola', 'instituicao']
+
+    def validate(self, attrs):
+        return self._validar_referencia(attrs)
+
+
+class PerguntaEspecialistaSerializer(_ReferenciaBNCCMixin, serializers.ModelSerializer):
+    """
+    Pergunta livre de especialista (tela "Perguntas" do admin).
+
+    Referência BNCC obrigatória (ver _ReferenciaBNCCMixin).
+
+    Em listas, a view faz select_related('campo_experiencia', 'habilidade_bncc',
+    'escola', 'usuario_especialista') por causa dos campos *_nome/_codigo.
+    """
+    usuario_especialista_nome = serializers.CharField(source='usuario_especialista.nome', read_only=True)
+    escola_nome = serializers.CharField(source='escola.nome', read_only=True)
+    campo_experiencia_nome = serializers.CharField(source='campo_experiencia.nome', read_only=True, default=None)
+    campo_experiencia_icone = serializers.CharField(source='campo_experiencia.icone', read_only=True, default=None)
+    habilidade_bncc_codigo = serializers.CharField(source='habilidade_bncc.codigo', read_only=True, default=None)
+    habilidade_bncc_descricao = serializers.CharField(source='habilidade_bncc.descricao', read_only=True, default=None)
+    referencia_bncc = serializers.CharField(write_only=True, required=False, allow_blank=True, max_length=20)
+    # `todos`: o TenantManager esconderia os campos oficiais (escola nula).
+    # O recorte oficial + escola da pergunta é feito na view (_campo_invalido).
+    campo_experiencia = serializers.PrimaryKeyRelatedField(
+        queryset=CampoPedagogico.todos.all(), required=False, allow_null=True,
+    )
+
+    class Meta:
+        model = PerguntaEspecialista
+        fields = [
+            'id', 'uuid', 'pergunta', 'pergunta_facilitadora', 'nivel', 'status',
+            'campo_experiencia', 'campo_experiencia_nome', 'campo_experiencia_icone',
+            'habilidade_bncc', 'habilidade_bncc_codigo', 'habilidade_bncc_descricao', 'referencia_bncc',
+            'usuario_especialista', 'usuario_especialista_nome',
+            'escola', 'escola_nome', 'instituicao', 'criado_em', 'atualizado_em',
+        ]
+        read_only_fields = [
+            'id', 'usuario_especialista', 'escola', 'instituicao', 'criado_em', 'atualizado_em',
+        ]
+
+    def validate(self, attrs):
+        return self._validar_referencia(attrs)
+
+
+class RegistroObservacaoSerializer(serializers.ModelSerializer):
+    aluno_nome = serializers.CharField(source='aluno.nome_completo', read_only=True)
+    # `todos`: o TenantManager esconderia as perguntas oficiais (escola nula).
+    # O recorte oficial + escola do aluno é feito na view (_pergunta_invalida).
+    pergunta = serializers.PrimaryKeyRelatedField(
+        queryset=Pergunta.todos.all(), required=False, allow_null=True,
+    )
+
+    class Meta:
+        model = RegistroObservacao
+        fields = [
+            'id', 'uuid', 'resposta', 'observacao', 'data_observacao',
+            'pergunta', 'pergunta_especialista',
+            'aluno', 'aluno_nome', 'professor', 'escola', 'instituicao',
+            'criado_em', 'atualizado_em',
+        ]
+        read_only_fields = ['id', 'aluno', 'professor', 'escola', 'instituicao', 'criado_em', 'atualizado_em']
+
+    def validate(self, attrs):
+        pergunta = attrs.get('pergunta', getattr(self.instance, 'pergunta', None))
+        pergunta_especialista = attrs.get('pergunta_especialista', getattr(self.instance, 'pergunta_especialista', None))
+        if bool(pergunta) == bool(pergunta_especialista):
+            raise serializers.ValidationError(
+                'Preencha exatamente um dos dois: pergunta OU pergunta_especialista (não os dois, não nenhum).'
+            )
+        return attrs
+
+
+class ObservacaoTranscricaoSerializer(serializers.ModelSerializer):
+    aluno_nome_vinculado = serializers.CharField(source='aluno.nome_completo', read_only=True, default=None)
+
+    class Meta:
+        model = ObservacaoTranscricao
+        fields = [
+            'id', 'uuid', 'aluno_nome', 'observacao_texto', 'tipo_observacao', 'data_observacao',
+            'transcricao_completa', 'metadados_ia',
+            'aluno', 'aluno_nome_vinculado', 'turma', 'professor',
+            'escola', 'instituicao', 'criado_em', 'atualizado_em',
+        ]
+        read_only_fields = ['id', 'turma', 'professor', 'escola', 'instituicao', 'criado_em', 'atualizado_em']
+
+
+class PlanejamentoSemanalSerializer(serializers.ModelSerializer):
+    turma_nome = serializers.CharField(source='turma.nome', read_only=True)
+    professor_nome = serializers.CharField(source='professor.nome', read_only=True)
+
+    class Meta:
+        model = PlanejamentoSemanal
+        fields = [
+            'id', 'uuid', 'semana_inicio', 'semana_fim', 'ano_letivo',
+            'turma', 'turma_nome', 'professor', 'professor_nome',
+            'escola', 'instituicao', 'criado_em', 'atualizado_em',
+        ]
+        read_only_fields = [
+            'id', 'turma', 'professor', 'escola', 'instituicao', 'criado_em', 'atualizado_em',
+        ]
+
+
+class PeriodoAvaliativoSerializer(serializers.ModelSerializer):
+    """
+    Cadastro de período avaliativo.
+
+    Criação: a view passa `context={'escola_id': ...}` (vinda do
+    resolver_escopo_criacao), porque `escola` é read_only e a checagem de
+    sobreposição depende dela. A view trava a linha da escola durante
+    validação + save (ver views/avaliacao.py::_validar_e_salvar_periodo).
+
+    Listagem: a view faz select_related('escola') por causa de `escola_nome`.
+    """
+    escola_nome = serializers.CharField(source='escola.nome', read_only=True)
+
+    class Meta:
+        model = PeriodoAvaliativo
+        fields = [
+            'id', 'uuid', 'descricao', 'tipo_periodo', 'ano', 'numero',
+            'data_inicio', 'data_fim', 'escola', 'escola_nome', 'instituicao',
+            'criado_em', 'atualizado_em',
+        ]
+        read_only_fields = ['id', 'escola', 'instituicao', 'criado_em', 'atualizado_em']
+        extra_kwargs = {
+            'ano': {'min_value': 2000, 'max_value': 2100},
+            'numero': {'min_value': 1, 'max_value': 12},
+        }
+
+    def _valor(self, attrs, campo):
+        """Valor final do campo: o enviado ou, no PATCH, o que já está salvo."""
+        if campo in attrs:
+            return attrs[campo]
+        return getattr(self.instance, campo, None)
+
+    def validate(self, attrs):
+        inicio = self._valor(attrs, 'data_inicio')
+        fim = self._valor(attrs, 'data_fim')
+        if inicio and fim and fim < inicio:
+            raise serializers.ValidationError(
+                {'data_fim': ['A data de fim não pode ser anterior à data de início.']}
+            )
+
+        # Sem ano informado, usa o do início (é o que as telas filtram/mostram).
+        if inicio and self._valor(attrs, 'ano') is None:
+            attrs['ano'] = inicio.year
+
+        escola_id = self.instance.escola_id if self.instance is not None else self.context.get('escola_id')
+        campos_da_regra = ('data_inicio', 'data_fim', 'tipo_periodo')
+        if escola_id and inicio and fim and (self.instance is None or any(c in attrs for c in campos_da_regra)):
+            self._checar_sobreposicao(escola_id, attrs, inicio, fim)
+        return attrs
+
+    def _checar_sobreposicao(self, escola_id, attrs, inicio, fim):
+        """Dois períodos do MESMO tipo na mesma escola não podem ter datas em
+        comum (ex.: 1º e 2º bimestre se cruzando). Tipos diferentes podem: um
+        período anual convive com os bimestres dentro dele."""
+        tipo = self._valor(attrs, 'tipo_periodo')
+        conflitos = PeriodoAvaliativo._base_manager.filter(
+            escola_id=escola_id, tipo_periodo=tipo,
+            data_inicio__lte=fim, data_fim__gte=inicio,
+        )
+        if self.instance is not None:
+            conflitos = conflitos.exclude(pk=self.instance.pk)
+        conflito = conflitos.order_by('data_inicio').first()
+        if conflito is None:
+            return
+        raise serializers.ValidationError({'data_inicio': [
+            f'As datas se sobrepõem ao período "{conflito.descricao}" '
+            f'({conflito.data_inicio:%d/%m/%Y} a {conflito.data_fim:%d/%m/%Y}), do mesmo tipo, nesta escola.'
+        ]})
+
+
+class RelatorioTemplateSerializer(serializers.ModelSerializer):
+    # uuid da escola: o front leva a escola na URL (?escola=<uuid>) ao abrir o editor.
+    escola_uuid = serializers.UUIDField(source='escola.uuid', read_only=True, allow_null=True)
+
+    class Meta:
+        model = RelatorioTemplate
+        fields = [
+            'id', 'uuid', 'nome', 'modelo', 'usa_foto_aluno', 'config', 'items_sumario',
+            'ativo', 'escola', 'escola_uuid', 'instituicao', 'criado_em', 'atualizado_em',
+        ]
+        read_only_fields = ['id', 'escola', 'instituicao', 'criado_em', 'atualizado_em']
+
+
+class RelatorioSerializer(serializers.ModelSerializer):
+    aluno_nome = serializers.CharField(source='aluno.nome_completo', read_only=True)
+    revisado_por_nome = serializers.CharField(source='revisado_por.nome', read_only=True, default=None)
+
+    class Meta:
+        model = Relatorio
+        fields = [
+            'id', 'uuid', 'conteudo', 'pdf_url', 'periodo',
+            'aluno', 'aluno_nome', 'template',
+            'revisado_por', 'revisado_por_nome',
+            'escola', 'instituicao', 'criado_em', 'atualizado_em',
+        ]
+        read_only_fields = [
+            'id', 'aluno', 'pdf_url', 'revisado_por', 'escola', 'instituicao', 'criado_em', 'atualizado_em',
+        ]
+
+
+class NotificacaoSerializer(serializers.ModelSerializer):
+    remetente_nome = serializers.CharField(source='remetente.nome', read_only=True, default=None)
+
+    class Meta:
+        model = Notificacao
+        fields = [
+            'id', 'uuid', 'tipo', 'titulo', 'conteudo', 'lido_em',
+            'remetente', 'remetente_nome', 'usuario', 'escola', 'instituicao',
+            'criado_em', 'atualizado_em',
+        ]
+        read_only_fields = [
+            'id', 'remetente', 'usuario', 'escola', 'instituicao', 'criado_em', 'atualizado_em',
+        ]
+
+
+class MetaPAEESerializer(serializers.ModelSerializer):
+    aluno_nome = serializers.CharField(source='aluno.nome_completo', read_only=True)
+    usuario_especialista_nome = serializers.CharField(source='usuario_especialista.nome', read_only=True)
+
+    class Meta:
+        model = MetaPAEE
+        fields = [
+            'id', 'uuid', 'categoria', 'inicio', 'fim', 'objetivo', 'criterio', 'estrategia', 'status',
+            'aluno', 'aluno_nome', 'usuario_especialista', 'usuario_especialista_nome', 'turma',
+            'escola', 'instituicao', 'criado_em', 'atualizado_em',
+        ]
+        read_only_fields = [
+            'id', 'aluno', 'usuario_especialista', 'turma', 'escola', 'instituicao', 'criado_em', 'atualizado_em',
+        ]
+
+
+class SessaoEspecialistaSerializer(serializers.ModelSerializer):
+    aluno_nome = serializers.CharField(source='aluno.nome_completo', read_only=True)
+    usuario_especialista_nome = serializers.CharField(source='usuario_especialista.nome', read_only=True)
+
+    class Meta:
+        model = SessaoEspecialista
+        fields = [
+            'id', 'uuid', 'data_atendimento', 'duracao', 'resumo', 'status',
+            'aluno', 'aluno_nome', 'usuario_especialista', 'usuario_especialista_nome', 'turma',
+            'escola', 'instituicao', 'criado_em', 'atualizado_em',
+        ]
+        read_only_fields = [
+            'id', 'aluno', 'usuario_especialista', 'turma', 'escola', 'instituicao', 'criado_em', 'atualizado_em',
+        ]
+
+
+class SessaoPAEEMetaSerializer(serializers.ModelSerializer):
+    meta_paee_objetivo = serializers.CharField(source='meta_paee.objetivo', read_only=True)
+
+    class Meta:
+        model = SessaoPAEEMeta
+        fields = ['id', 'uuid', 'sessao_especialista', 'meta_paee', 'meta_paee_objetivo', 'criado_em']
+        read_only_fields = ['id', 'sessao_especialista', 'criado_em']
+
+
+class TarefaPAEESerializer(serializers.ModelSerializer):
+    professor_conclusao_nome = serializers.CharField(source='professor_conclusao.nome', read_only=True, default=None)
+
+    class Meta:
+        model = TarefaPAEE
+        fields = [
+            'id', 'uuid', 'descricao', 'concluida', 'observacao_professor', 'data_conclusao',
+            'meta_paee', 'professor_conclusao', 'professor_conclusao_nome',
+            'escola', 'instituicao', 'criado_em', 'atualizado_em',
+        ]
+        read_only_fields = [
+            'id', 'meta_paee', 'professor_conclusao', 'escola', 'instituicao', 'criado_em', 'atualizado_em',
+        ]
+
+
+class AnexoTicketSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = AnexoTicket
+        fields = ['id', 'uuid', 'arquivo_url', 'arquivo_nome', 'mime_type', 'tamanho_bytes',
+                  'ticket', 'ticket_reply', 'criado_em']
+        read_only_fields = ['id', 'ticket', 'ticket_reply', 'criado_em']
+
+
+class RespostaTicketSerializer(serializers.ModelSerializer):
+    usuario_nome = serializers.CharField(source='usuario.nome', read_only=True)
+    anexos = AnexoTicketSerializer(many=True, read_only=True)
+
+    class Meta:
+        model = RespostaTicket
+        fields = ['id', 'uuid', 'descricao', 'usuario', 'usuario_nome', 'ticket', 'anexos', 'criado_em', 'atualizado_em']
+        read_only_fields = ['id', 'usuario', 'ticket', 'criado_em', 'atualizado_em']
+
+
+class TicketSerializer(serializers.ModelSerializer):
+    usuario_solicitante_nome = serializers.CharField(source='usuario_solicitante.nome', read_only=True)
+    responsavel_nome = serializers.CharField(source='responsavel.nome', read_only=True, default=None)
+
+    class Meta:
+        model = Ticket
+        fields = [
+            'id', 'uuid', 'protocolo', 'titulo', 'descricao', 'status', 'categoria', 'prioridade',
+            'usuario_solicitante', 'usuario_solicitante_nome', 'escola', 'instituicao',
+            'responsavel', 'responsavel_nome', 'criado_em', 'atualizado_em',
+        ]
+        read_only_fields = [
+            'id', 'protocolo', 'usuario_solicitante', 'escola', 'instituicao', 'criado_em', 'atualizado_em',
+        ]
+
+
+class LogAuditoriaSerializer(serializers.ModelSerializer):
+    usuario_nome = serializers.CharField(source='usuario.nome', read_only=True, default=None)
+
+    class Meta:
+        model = LogAuditoria
+        fields = [
+            'id', 'uuid', 'acao', 'tabela_afetada', 'registro_id', 'alteracoes', 'ip',
+            'usuario', 'usuario_nome', 'escola', 'instituicao', 'criado_em',
+        ]
+        read_only_fields = fields
+
+
+class PermissaoUsuarioSerializer(serializers.ModelSerializer):
+    usuario_nome = serializers.CharField(source='usuario.nome', read_only=True)
+    concedido_por_nome = serializers.CharField(source='concedido_por.nome', read_only=True, default=None)
+
+    class Meta:
+        model = PermissaoUsuario
+        fields = [
+            'id', 'uuid', 'modulo', 'acao', 'concedido', 'usuario', 'usuario_nome',
+            'escola', 'instituicao', 'concedido_por', 'concedido_por_nome',
+            'criado_em', 'atualizado_em',
+        ]
+        read_only_fields = [
+            'id', 'escola', 'instituicao', 'concedido_por', 'criado_em', 'atualizado_em',
+        ]
+
+
+class TemplateDocumentoSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = TemplateDocumento
+        fields = [
+            'id', 'uuid', 'titulo', 'documento', 'tipo', 'ativo',
+            'responsavel', 'criado_por', 'atualizado_por',
+            'escola', 'instituicao', 'criado_em', 'atualizado_em',
+        ]
+        read_only_fields = ['id', 'criado_por', 'atualizado_por', 'criado_em', 'atualizado_em', 'escola', 'instituicao']
+
+
+class ContratoSerializer(serializers.ModelSerializer):
+    escola_nome = serializers.CharField(source='escola.nome', read_only=True)
+
+    class Meta:
+        model = Contrato
+        fields = [
+            'id', 'uuid', 'documento', 'status', 'arquivo_url', 'template',
+            'escola', 'escola_nome', 'instituicao',
+            'responsavel', 'gerado_por', 'atualizado_por',
+            'criado_em', 'atualizado_em',
+        ]
+        read_only_fields = [
+            'id', 'gerado_por', 'atualizado_por', 'escola', 'instituicao', 'criado_em', 'atualizado_em',
+        ]
+
+
+class PromptTemplateSerializer(serializers.ModelSerializer):
+    instituicao_nome = serializers.CharField(source='instituicao.nome', read_only=True, default=None)
+
+    class Meta:
+        model = PromptTemplate
+        fields = [
+            'id', 'uuid', 'categoria', 'prompt_global', 'personalizado',
+            'escola', 'instituicao', 'instituicao_nome', 'criado_em', 'atualizado_em',
+        ]
+        read_only_fields = ['id', 'categoria', 'criado_em', 'atualizado_em', 'escola', 'instituicao']
+
+
+class PromptCategoriaSerializer(serializers.ModelSerializer):
+    """
+    `template_resolvido` usa o `escola_id` do contexto (a escola escolhida
+    na tela) pra mostrar qual texto está valendo de fato para ela agora — o
+    mesmo critério de `resolver_prompt` (personalizado da escola > global >
+    vazio), sem o fallback pra arquivo .txt, que não faz sentido nessa tela.
+    """
+    template_resolvido = serializers.SerializerMethodField()
+
+    class Meta:
+        model = PromptCategoria
+        fields = ['id', 'uuid', 'titulo', 'ativo', 'template_resolvido', 'criado_em', 'atualizado_em']
+        read_only_fields = ['id', 'criado_em', 'atualizado_em']
+
+    def get_template_resolvido(self, categoria):
+        escola_id = self.context.get('escola_id')
+        templates = list(categoria.templates.all())
+
+        if escola_id:
+            personalizado = next(
+                (t for t in templates if str(t.escola_id) == str(escola_id)), None,
+            )
+            if personalizado and personalizado.personalizado.strip():
+                return {'origem': 'personalizado', 'texto': personalizado.personalizado}
+
+        global_tpl = next((t for t in templates if t.escola_id is None and t.instituicao_id is None), None)
+        if global_tpl and global_tpl.prompt_global.strip():
+            return {'origem': 'global', 'texto': global_tpl.prompt_global}
+
+        return {'origem': 'vazio', 'texto': ''}
+
+
+class LoginSerializer(TokenObtainPairSerializer):
+    """
+    Login customizado: além do access/refresh token padrão do SimpleJWT,
+    devolve os dados do usuário logado — o frontend não precisa fazer uma
+    segunda chamada só pra saber nivel/escola/instituicao.
+    """
+
+    @classmethod
+    def get_token(cls, user):
+        token = super().get_token(user)
+        token['nivel'] = user.nivel
+        token['escola_id'] = str(user.escola_id) if user.escola_id else None
+        token['instituicao_id'] = str(user.instituicao_id) if user.instituicao_id else None
+        return token
+
+    def validate(self, attrs):
+        data = super().validate(attrs)
+        data['usuario'] = UsuarioSerializer(self.user).data
         return data

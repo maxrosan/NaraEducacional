@@ -1,1094 +1,447 @@
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Helmet } from 'react-helmet-async';
-import { apiClient } from '@/lib/apiClient';
 import { useToast } from '@/components/ui/use-toast';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Textarea } from '@/components/ui/textarea';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogFooter, DialogClose } from '@/components/ui/dialog';
-import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@/components/ui/accordion';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Badge } from '@/components/ui/badge';
 import {
-  Loader2, PlusCircle, Edit, Trash2, FileUp, FileDown,
-  ChevronsUpDown, ChevronsDownUp, Users, MessageCircle,
-  Shapes, ToyBrick, Palette, ArrowLeft, BookOpen, Check,
-  Settings, AlertTriangle
+  Loader2, PlusCircle, Edit, Power, RotateCcw, FileDown, ArrowLeft, Settings,
+  AlertTriangle, ChevronLeft, ChevronRight,
 } from 'lucide-react';
-import IconPicker, { getIconComponent } from '@/components/ui/icon-picker';
+import IconPicker from '@/components/ui/icon-picker';
+import {
+  listarPerguntasBnccGestao, criarPerguntaBncc, atualizarPerguntaBncc,
+  listarCamposPedagogicos, criarCampoPedagogico, atualizarCampoPedagogico, desativarCampoPedagogico,
+  listarEscolas, listarTurmas,
+} from '@/services/api';
+import { NIVEIS_BASE, iconeDoCampo, montarNiveis, mensagemDeErro } from '@/lib/perguntasUtils';
 
-// Mapa de Campos de Experiência da BNCC
-const campoExperienciaMap = {
-  'O eu, o outro e o nós': { icon: Users, name: 'O eu, o outro e o nós' },
-  'Escuta, fala, pensamento e imaginação': { icon: MessageCircle, name: 'Escuta, fala, pensamento e imaginação' },
-  'Espaços, tempos, quantidades, relações e transformações': { icon: Shapes, name: 'Espaços, tempos, quantidades...' },
-  'Corpo, gestos e movimentos': { icon: ToyBrick, name: 'Corpo, gestos e movimentos' },
-  'Traços, sons, cores e formas': { icon: Palette, name: 'Traços, sons, cores e formas' },
+/*
+ * Gestão das perguntas BNCC (backend: /perguntas/?page=).
+ *
+ * Perguntas OFICIAIS (sem escola) valem para todas as escolas e só o
+ * superadmin cria/edita; o admin vê e usa, e cria as perguntas da(s)
+ * escola(s) dele. A resposta paginada diz se quem está logado pode editar
+ * oficiais (`pode_editar_oficiais`).
+ *
+ * Toda pergunta tem Referência BNCC: o código (ex.: EI03EO01) é localizado no
+ * catálogo pelo backend; código inexistente volta como erro no formulário.
+ *
+ * Não há exclusão:
+ *   - pergunta: os registros de observação apontam para ela, então é
+ *     desativada (aba Inativas) e pode ser reativada;
+ *   - campo de experiência: é desativado no "Gerenciar Campos"; se tiver
+ *     perguntas, elas são remanejadas antes para outro campo.
+ *
+ * `embutida`: renderiza só o conteúdo, como aba do painel do admin
+ * (/admin/bncc). Sem ela, é a página avulsa antiga (/admin/perguntas-bncc).
+ */
+
+const TODOS = 'todos';
+const OFICIAL = 'oficial';
+const POR_PAGINA = 10;
+const BUSCA_DEBOUNCE_MS = 400;
+const LISTA_VAZIA = {
+  results: [], count: 0, total_paginas: 1, totais: { ativas: 0, inativas: 0 }, pode_editar_oficiais: false,
 };
 
-// Níveis/faixas etárias padrão
-const baseLevels = ['Nível 1', 'Nível 2', 'Nível 3', 'Nível 4', 'Nível 5'];
+const campoValidoPara = (campo, escolaId) => !campo.escola || String(campo.escola) === escolaId;
 
-// Helper para obter CSRF token
-const getCsrfToken = () => {
-  const match = document.cookie.match(/csrftoken=([^;]+)/);
-  return match ? match[1] : '';
-};
-
-const ensureCsrfToken = async () => {
-  const existingToken = getCsrfToken();
-  if (existingToken) return existingToken;
-
-  try {
-    await fetch('/api/auth/csrf/', { method: 'GET', credentials: 'include' });
-  } catch (error) {
-    console.warn('Não foi possível obter CSRF token:', error);
-  }
-  return getCsrfToken();
-};
-
-// Componente Creatable Select para Campo de Experiência com seleção de ícone
-const CreatableCampoSelect = ({ value, onChange, existingCampos, customCampos = [], onCampoCreated }) => {
-  const [inputValue, setInputValue] = useState('');
-  const [isOpen, setIsOpen] = useState(false);
-  const [showIconPicker, setShowIconPicker] = useState(false);
-  const [newCampoName, setNewCampoName] = useState('');
-  const [selectedIcon, setSelectedIcon] = useState('BookOpen');
-  const [savingCampo, setSavingCampo] = useState(false);
+const BnccQuestionsPage = ({ embutida = false }) => {
+  const navigate = useNavigate();
   const { toast } = useToast();
+  const avisarErro = useCallback(
+    (titulo, err) => toast({ variant: 'destructive', title: titulo, description: mensagemDeErro(err) }),
+    [toast],
+  );
 
-  // Combinar campos padrão com campos existentes e customizados
-  const allCampos = useMemo(() => {
-    const customNames = (customCampos || []).map(c => c.nome);
-    const usarCamposPadraoFallback = customNames.length === 0;
-    const standardCampos = usarCamposPadraoFallback ? Object.keys(campoExperienciaMap) : [];
-    const combined = new Set([...standardCampos, ...(existingCampos || []), ...customNames]);
-    return Array.from(combined).sort();
-  }, [existingCampos, customCampos]);
+  const [aba, setAba] = useState('true'); // ativa=true|false
+  const [pagina, setPagina] = useState(1);
+  const [filtroOrigem, setFiltroOrigem] = useState(TODOS);
+  const [filtroEscola, setFiltroEscola] = useState(TODOS);
+  const [filtroCampo, setFiltroCampo] = useState(TODOS);
+  const [filtroNivel, setFiltroNivel] = useState(TODOS);
+  const [busca, setBusca] = useState('');
+  const [buscaAplicada, setBuscaAplicada] = useState('');
+  const [lista, setLista] = useState(LISTA_VAZIA);
+  const [loading, setLoading] = useState(true);
+  const [carregouUmaVez, setCarregouUmaVez] = useState(false);
+  const [exportando, setExportando] = useState(false);
 
-  // Mapa de ícones customizados
-  const customIconMap = useMemo(() => {
-    const map = {};
-    (customCampos || []).forEach(c => {
-      map[c.nome] = c.icone || 'BookOpen';
-    });
-    return map;
-  }, [customCampos]);
+  const [escolas, setEscolas] = useState([]);
+  const [campos, setCampos] = useState([]);
+  const [niveis, setNiveis] = useState(NIVEIS_BASE);
 
-  const filteredCampos = useMemo(() => {
-    if (!inputValue) return allCampos;
-    return allCampos.filter(campo =>
-      campo.toLowerCase().includes(inputValue.toLowerCase())
-    );
-  }, [allCampos, inputValue]);
+  const [isFormOpen, setIsFormOpen] = useState(false);
+  const [editando, setEditando] = useState(null);
+  const [desativando, setDesativando] = useState(null);
+  const [isCampoManagerOpen, setIsCampoManagerOpen] = useState(false);
+  const ultimaRequisicao = useRef(0);
 
-  const handleSelect = (campo) => {
-    onChange(campo);
-    setInputValue('');
-    setIsOpen(false);
-  };
+  // Só consulta o backend quando o usuário para de digitar.
+  useEffect(() => {
+    const termo = busca.trim();
+    if (termo === buscaAplicada) return undefined;
+    const id = setTimeout(() => { setBuscaAplicada(termo); setPagina(1); }, BUSCA_DEBOUNCE_MS);
+    return () => clearTimeout(id);
+  }, [busca, buscaAplicada]);
 
-  const handleStartCreateNew = () => {
-    if (inputValue.trim()) {
-      setNewCampoName(inputValue.trim());
-      setSelectedIcon('BookOpen');
-      setShowIconPicker(true);
-      setIsOpen(false);
-    }
-  };
+  const filtrosAtuais = useCallback(() => ({
+    ativa: aba,
+    origem: filtroOrigem === TODOS ? undefined : filtroOrigem,
+    escola: filtroEscola === TODOS ? undefined : filtroEscola,
+    campo: filtroCampo === TODOS ? undefined : filtroCampo,
+    faixa_etaria: filtroNivel === TODOS ? undefined : filtroNivel,
+    busca: buscaAplicada || undefined,
+  }), [aba, filtroOrigem, filtroEscola, filtroCampo, filtroNivel, buscaAplicada]);
 
-  const handleCreateNewCampo = async () => {
-    if (!newCampoName.trim()) return;
-
-    setSavingCampo(true);
+  const carregar = useCallback(async () => {
+    const id = ++ultimaRequisicao.current;
+    setLoading(true);
     try {
-      // Garantir que temos o CSRF token
-      const csrfToken = await ensureCsrfToken();
-
-      // Salvar o campo customizado na API
-      const response = await fetch('/api/campos-experiencia/criar/', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-CSRFToken': csrfToken,
-        },
-        credentials: 'include',
-        body: JSON.stringify({
-          nome: newCampoName.trim(),
-          icone: selectedIcon,
-        }),
-      });
-
-      if (!response.ok) {
-        const error = await response.json();
-        throw new Error(error.error || 'Erro ao criar campo');
-      }
-
-      const novoCampo = await response.json();
-
-      toast({
-        title: 'Campo criado!',
-        description: `"${newCampoName}" foi adicionado com sucesso.`,
-        className: 'bg-green-100'
-      });
-
-      // Notificar componente pai sobre o novo campo
-      if (onCampoCreated) {
-        onCampoCreated(novoCampo);
-      }
-
-      // Selecionar o novo campo
-      onChange(newCampoName.trim());
-      setShowIconPicker(false);
-      setNewCampoName('');
-      setInputValue('');
-    } catch (error) {
-      toast({
-        title: 'Erro ao criar campo',
-        description: error.message,
-        variant: 'destructive'
-      });
+      const dados = await listarPerguntasBnccGestao({ ...filtrosAtuais(), page: pagina, pageSize: POR_PAGINA });
+      if (id !== ultimaRequisicao.current) return; // resposta atrasada
+      setLista(dados);
+      if (dados.pagina && dados.pagina !== pagina) setPagina(dados.pagina);
+    } catch (err) {
+      if (id === ultimaRequisicao.current) avisarErro('Erro ao buscar perguntas', err);
     } finally {
-      setSavingCampo(false);
+      if (id === ultimaRequisicao.current) { setLoading(false); setCarregouUmaVez(true); }
+    }
+  }, [filtrosAtuais, pagina, avisarErro]);
+
+  useEffect(() => { carregar(); }, [carregar]);
+
+  const carregarCampos = useCallback(() => (
+    listarCamposPedagogicos({ comUso: true })
+      .then((c) => setCampos(c || []))
+      .catch((err) => avisarErro('Erro ao carregar campos de experiência', err))
+  ), [avisarErro]);
+
+  // Dados de apoio: uma vez, em paralelo.
+  useEffect(() => {
+    listarEscolas().then(setEscolas).catch((err) => avisarErro('Erro ao carregar escolas', err));
+    carregarCampos();
+    listarTurmas()
+      .then((t) => setNiveis(montarNiveis((t || []).filter((x) => x.ativa !== false))))
+      .catch(() => setNiveis(NIVEIS_BASE));
+  }, [avisarErro, carregarCampos]);
+
+  const podeEditarOficiais = !!lista.pode_editar_oficiais;
+  const variasEscolas = escolas.length > 1;
+  const escolasAtivas = useMemo(() => escolas.filter((e) => e.ativa !== false), [escolas]);
+  const camposAtivos = useMemo(() => campos.filter((c) => c.ativo !== false), [campos]);
+
+  const trocar = (setter) => (valor) => { setter(valor); setPagina(1); };
+
+  const abrirFormulario = (pergunta) => { setEditando(pergunta); setIsFormOpen(true); };
+
+  const handleSalvar = async (dados) => {
+    const editandoAgora = !!editando;
+    try {
+      if (editandoAgora) await atualizarPerguntaBncc(editando.id, dados);
+      else await criarPerguntaBncc(dados);
+    } catch (err) {
+      avisarErro('Erro ao salvar pergunta', err);
+      return;
+    }
+    toast({ title: `Pergunta ${editandoAgora ? 'atualizada' : 'criada'} com sucesso!` });
+    setIsFormOpen(false);
+    setEditando(null);
+    carregarCampos(); // contagem de uso dos campos
+    if (!editandoAgora && (aba !== 'true' || pagina !== 1)) { setAba('true'); setPagina(1); } else carregar();
+  };
+
+  const alterarAtiva = async (pergunta, ativa) => {
+    try {
+      await atualizarPerguntaBncc(pergunta.id, { ativa });
+    } catch (err) {
+      avisarErro(`Erro ao ${ativa ? 'reativar' : 'desativar'} pergunta`, err);
+      return;
+    }
+    toast({ title: `Pergunta ${ativa ? 'reativada' : 'desativada'} com sucesso!` });
+    setDesativando(null);
+    carregar();
+  };
+
+  // Exporta TODAS as perguntas com os filtros atuais (não só a página).
+  const handleExportCSV = async () => {
+    setExportando(true);
+    try {
+      const perguntas = await listarPerguntasBnccGestao(filtrosAtuais());
+      if (!perguntas.length) {
+        toast({ title: 'Nenhuma pergunta para exportar', description: 'Altere os filtros para selecionar perguntas.', variant: 'destructive' });
+        return;
+      }
+      const colunas = [
+        ['faixa_etaria', (p) => p.faixa_etaria],
+        ['campo_experiencia', (p) => p.campo_experiencia_nome],
+        ['area_conhecimento', (p) => p.area_conhecimento],
+        ['pergunta', (p) => p.pergunta],
+        ['pergunta_norma', (p) => p.pergunta_norma],
+        ['habilidade_bncc', (p) => p.habilidade_bncc_codigo],
+        ['origem', (p) => (p.escola ? p.escola_nome : 'Oficial')],
+        ['ativa', (p) => (p.ativa ? 'sim' : 'não')],
+      ];
+      const celula = (v) => `"${String(v ?? '').replace(/"/g, '""')}"`;
+      const csv = [colunas.map(([nome]) => nome).join(','),
+        ...perguntas.map((p) => colunas.map(([, valor]) => celula(valor(p))).join(','))].join('\n');
+      // BOM: o Excel abre o CSV com os acentos certos.
+      const url = URL.createObjectURL(new Blob(['\ufeff' + csv], { type: 'text/csv;charset=utf-8;' }));
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = 'perguntas_bncc.csv';
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+      toast({ title: 'Exportação concluída!', description: `${perguntas.length} perguntas exportadas.` });
+    } catch (err) {
+      avisarErro('Erro ao exportar', err);
+    } finally {
+      setExportando(false);
     }
   };
 
-  const getIconForCampo = (campo) => {
-    if (customIconMap[campo]) {
-      return getIconComponent(customIconMap[campo]);
-    }
-    if (campoExperienciaMap[campo]) {
-      return campoExperienciaMap[campo].icon;
-    }
-    return BookOpen;
-  };
+  const { results: perguntas, count, total_paginas: totalPaginas, totais } = lista;
+  const primeira = count ? (pagina - 1) * POR_PAGINA + 1 : 0;
+  const ultima = Math.min(pagina * POR_PAGINA, count);
+  let mensagemVazia = aba === 'true' ? 'Nenhuma pergunta ativa.' : 'Nenhuma pergunta inativa.';
+  if (buscaAplicada) mensagemVazia = `Nenhuma pergunta encontrada para "${buscaAplicada}".`;
 
-  return (
-    <>
-      <div className="relative">
-        <div
-          className="flex items-center justify-between w-full h-10 px-3 py-2 text-sm bg-white border rounded-md cursor-pointer border-input hover:bg-accent hover:text-accent-foreground"
-          onClick={() => setIsOpen(!isOpen)}
-        >
-          {value ? (
-            <span className="flex items-center gap-2 text-foreground">
-              {React.createElement(getIconForCampo(value), { className: "h-4 w-4 text-purple-600" })}
-              {value}
-            </span>
-          ) : (
-            <span className="text-muted-foreground">
-              Selecione ou digite um Campo de Experiência
-            </span>
+  const acao = (rotulo, onClick, icone) => (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <Button variant="ghost" size="icon" onClick={onClick} aria-label={rotulo}>{icone}</Button>
+      </TooltipTrigger>
+      <TooltipContent><p>{rotulo}</p></TooltipContent>
+    </Tooltip>
+  );
+
+  const acoesCabecalho = (
+    <div className="flex flex-wrap items-center gap-2">
+      <Button variant="outline" onClick={() => setIsCampoManagerOpen(true)}>
+        <Settings className="mr-2 h-4 w-4" /> Gerenciar Campos
+      </Button>
+      <Button variant="outline" onClick={handleExportCSV} disabled={exportando}>
+        {exportando ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <FileDown className="mr-2 h-4 w-4" />}
+        Exportar CSV
+      </Button>
+      <Button onClick={() => abrirFormulario(null)}><PlusCircle className="mr-2 h-4 w-4" /> Nova Pergunta</Button>
+    </div>
+  );
+
+  const cartaoPerguntas = (
+    <Card>
+      <CardHeader>
+        <CardTitle>Perguntas da BNCC</CardTitle>
+        <CardDescription>
+          Perguntas oficiais valem para todas as escolas{podeEditarOficiais ? '' : ' e só podem ser alteradas pelo suporte NARA'}.
+          Cada escola pode ter perguntas próprias.
+        </CardDescription>
+      </CardHeader>
+      <CardContent>
+        <div className="mb-4 flex flex-wrap items-center justify-between gap-4">
+          <Tabs value={aba} onValueChange={trocar(setAba)}>
+            <TabsList>
+              <TabsTrigger value="true">Ativas <Badge variant="secondary" className="ml-2">{totais.ativas}</Badge></TabsTrigger>
+              <TabsTrigger value="false">Inativas <Badge variant="secondary" className="ml-2">{totais.inativas}</Badge></TabsTrigger>
+            </TabsList>
+          </Tabs>
+          <Input
+            className="w-64" placeholder="Buscar por texto ou código BNCC..."
+            aria-label="Buscar pergunta por texto ou código BNCC"
+            value={busca} onChange={(e) => setBusca(e.target.value)}
+          />
+        </div>
+        <div className={`mb-4 grid grid-cols-1 gap-2 ${variasEscolas ? 'md:grid-cols-4' : 'md:grid-cols-3'}`}>
+          <Select value={filtroOrigem} onValueChange={trocar(setFiltroOrigem)}>
+            <SelectTrigger aria-label="Filtrar por origem"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value={TODOS}>Oficiais e das escolas</SelectItem>
+              <SelectItem value="oficial">Só oficiais</SelectItem>
+              <SelectItem value="escola">Só das escolas</SelectItem>
+            </SelectContent>
+          </Select>
+          {variasEscolas && (
+            <Select value={filtroEscola} onValueChange={trocar(setFiltroEscola)}>
+              <SelectTrigger aria-label="Filtrar por escola"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value={TODOS}>Todas as escolas</SelectItem>
+                {escolas.map((e) => <SelectItem key={e.id} value={String(e.id)}>{e.nome}</SelectItem>)}
+              </SelectContent>
+            </Select>
           )}
-          <ChevronsUpDown className="h-4 w-4 opacity-50" />
+          <Select value={filtroCampo} onValueChange={trocar(setFiltroCampo)}>
+            <SelectTrigger aria-label="Filtrar por campo de experiência"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value={TODOS}>Todos os campos</SelectItem>
+              {campos.map((c) => (
+                <SelectItem key={c.id} value={String(c.id)}>{c.nome}{c.ativo === false ? ' (desativado)' : ''}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <Select value={filtroNivel} onValueChange={trocar(setFiltroNivel)}>
+            <SelectTrigger aria-label="Filtrar por nível"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value={TODOS}>Todos os níveis</SelectItem>
+              {niveis.map((n) => <SelectItem key={n} value={n}>{n}</SelectItem>)}
+            </SelectContent>
+          </Select>
         </div>
 
-        {isOpen && (
-          <div className="absolute z-50 w-full mt-1 bg-white border rounded-md shadow-lg max-h-60 overflow-auto">
-            <div className="p-2 border-b">
-              <Input
-                placeholder="Buscar ou criar novo campo..."
-                value={inputValue}
-                onChange={(e) => setInputValue(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter' && inputValue.trim() && !allCampos.includes(inputValue.trim())) {
-                    e.preventDefault();
-                    handleStartCreateNew();
-                  }
-                }}
-                className="h-8"
-                autoFocus
-              />
+        {!carregouUmaVez ? (
+          <div className="flex h-40 items-center justify-center"><Loader2 className="h-8 w-8 animate-spin text-purple-500" /></div>
+        ) : (
+          <TooltipProvider>
+            {/* Mantém a tabela na tela ao trocar de página/aba, só esmaecida. */}
+            <div className={`overflow-x-auto ${loading ? 'pointer-events-none opacity-50 transition-opacity' : 'transition-opacity'}`} aria-busy={loading}>
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Pergunta Facilitadora</TableHead>
+                    <TableHead>Campo de Experiência</TableHead>
+                    <TableHead>Nível</TableHead>
+                    <TableHead>Referência (BNCC)</TableHead>
+                    <TableHead>Origem</TableHead>
+                    <TableHead className="text-right">Ações</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {perguntas.length > 0 ? perguntas.map((p) => {
+                    const Icone = iconeDoCampo(p.campo_experiencia_nome, p.campo_experiencia_icone);
+                    const oficial = !p.escola;
+                    const editavel = !oficial || podeEditarOficiais;
+                    return (
+                      <TableRow key={p.id}>
+                        <TableCell className="max-w-md">
+                          <p className="font-medium">{p.pergunta}</p>
+                          {p.area_conhecimento && <p className="text-xs text-gray-500">{p.area_conhecimento}</p>}
+                        </TableCell>
+                        <TableCell>
+                          {p.campo_experiencia_nome ? (
+                            <span className="flex items-center gap-2">
+                              <Icone className="h-4 w-4 shrink-0 text-purple-600" />{p.campo_experiencia_nome}
+                            </span>
+                          ) : '—'}
+                        </TableCell>
+                        <TableCell className="whitespace-nowrap">{p.faixa_etaria || '—'}</TableCell>
+                        <TableCell>
+                          {p.habilidade_bncc_codigo ? (
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <span className="cursor-help font-mono text-sm underline decoration-dotted">{p.habilidade_bncc_codigo}</span>
+                              </TooltipTrigger>
+                              <TooltipContent className="max-w-sm">
+                                <p>{p.habilidade_bncc_descricao}</p>
+                                {p.pergunta_norma && <p className="mt-2 text-xs opacity-80">{p.pergunta_norma}</p>}
+                              </TooltipContent>
+                            </Tooltip>
+                          ) : <span className="text-amber-600">Sem referência</span>}
+                        </TableCell>
+                        <TableCell>{oficial ? <Badge variant="outline">Oficial</Badge> : p.escola_nome}</TableCell>
+                        <TableCell className="space-x-2 whitespace-nowrap text-right">
+                          {editavel ? (
+                            <>
+                              {acao('Editar pergunta', () => abrirFormulario(p), <Edit className="h-4 w-4" />)}
+                              {p.ativa
+                                ? acao('Desativar pergunta', () => setDesativando(p), <Power className="h-4 w-4 text-red-500" />)
+                                : acao('Reativar pergunta', () => alterarAtiva(p, true), <RotateCcw className="h-4 w-4 text-green-600" />)}
+                            </>
+                          ) : <span className="text-xs text-gray-400">Somente leitura</span>}
+                        </TableCell>
+                      </TableRow>
+                    );
+                  }) : (
+                    <TableRow><TableCell colSpan={6} className="text-center text-gray-500">{mensagemVazia}</TableCell></TableRow>
+                  )}
+                </TableBody>
+              </Table>
             </div>
 
-            <div className="py-1">
-              {filteredCampos.map((campo) => {
-                const Icon = getIconForCampo(campo);
-                return (
-                  <div
-                    key={campo}
-                    className={`flex items-center gap-2 px-3 py-2 text-sm cursor-pointer hover:bg-purple-50 ${value === campo ? 'bg-purple-100 text-purple-800' : ''}`}
-                    onClick={() => handleSelect(campo)}
-                  >
-                    <Icon className="h-4 w-4 text-purple-600" />
-                    <span>{campo}</span>
-                  </div>
-                );
-              })}
-
-              {inputValue && !allCampos.includes(inputValue.trim()) && (
-                <div
-                  className="flex items-center gap-2 px-3 py-2 text-sm cursor-pointer hover:bg-green-50 border-t text-green-700"
-                  onClick={handleStartCreateNew}
-                >
-                  <PlusCircle className="h-4 w-4" />
-                  <span>Criar novo campo: "<strong>{inputValue}</strong>"</span>
+            {totalPaginas > 1 && (
+              <div className="mt-4 flex flex-wrap items-center justify-between gap-2 text-sm text-gray-600">
+                <span>Mostrando {primeira}–{ultima} de {count} perguntas</span>
+                <div className="flex items-center gap-2">
+                  <Button variant="outline" size="sm" disabled={loading || pagina <= 1} onClick={() => setPagina((n) => n - 1)}>
+                    <ChevronLeft className="mr-1 h-4 w-4" /> Anterior
+                  </Button>
+                  <span className="px-2">Página {pagina} de {totalPaginas}</span>
+                  <Button variant="outline" size="sm" disabled={loading || pagina >= totalPaginas} onClick={() => setPagina((n) => n + 1)}>
+                    Próxima <ChevronRight className="ml-1 h-4 w-4" />
+                  </Button>
                 </div>
-              )}
-
-              {filteredCampos.length === 0 && !inputValue && (
-                <div className="px-3 py-2 text-sm text-gray-500">
-                  Nenhum campo encontrado
-                </div>
-              )}
-            </div>
-          </div>
+              </div>
+            )}
+          </TooltipProvider>
         )}
+      </CardContent>
+    </Card>
+  );
 
-        {isOpen && (
-          <div
-            className="fixed inset-0 z-40"
-            onClick={() => {
-              setIsOpen(false);
-              setInputValue('');
-            }}
-          />
-        )}
-      </div>
+  const dialogos = (
+    <>
+      <PerguntaBnccForm
+        isOpen={isFormOpen}
+        setIsOpen={setIsFormOpen}
+        pergunta={editando}
+        escolas={escolasAtivas}
+        campos={camposAtivos}
+        niveis={niveis}
+        podeCriarOficial={podeEditarOficiais}
+        onSubmit={handleSalvar}
+      />
 
-      {/* Modal de seleção de ícone para novo campo */}
-      <Dialog open={showIconPicker} onOpenChange={setShowIconPicker}>
-        <DialogContent className="max-w-md">
+      <Dialog open={!!desativando} onOpenChange={() => setDesativando(null)}>
+        <DialogContent>
           <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              <PlusCircle className="h-5 w-5 text-green-600" />
-              Criar novo Campo de Experiência
-            </DialogTitle>
+            <DialogTitle>Desativar pergunta</DialogTitle>
             <DialogDescription>
-              Defina o nome e escolha um ícone para o novo campo de experiência.
+              A pergunta deixa de aparecer na aba Ativas. As observações já registradas com ela são
+              mantidas, e você pode reativá-la depois pela aba Inativas.
             </DialogDescription>
           </DialogHeader>
-
-          <div className="space-y-4 py-4">
-            <div>
-              <Label className="font-medium">Nome do campo</Label>
-              <Input
-                value={newCampoName}
-                onChange={(e) => setNewCampoName(e.target.value)}
-                className="mt-1"
-                placeholder="Nome do campo de experiência"
-              />
-            </div>
-
-            <div>
-              <Label className="font-medium">Escolha um ícone</Label>
-              <div className="mt-2">
-                <IconPicker
-                  selectedIcon={selectedIcon}
-                  onSelect={setSelectedIcon}
-                />
-              </div>
-            </div>
-
-            <div className="p-3 bg-gray-50 rounded-lg">
-              <p className="text-sm text-gray-600 mb-2">Prévia:</p>
-              <div className="flex items-center gap-2">
-                {React.createElement(getIconComponent(selectedIcon), { className: "h-5 w-5 text-purple-600" })}
-                <span className="font-medium">{newCampoName || 'Nome do campo'}</span>
-              </div>
-            </div>
-          </div>
-
           <DialogFooter>
-            <Button variant="ghost" onClick={() => setShowIconPicker(false)}>
-              Cancelar
-            </Button>
-            <Button onClick={handleCreateNewCampo} disabled={savingCampo || !newCampoName.trim()}>
-              {savingCampo ? (
-                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-              ) : (
-                <Check className="h-4 w-4 mr-2" />
-              )}
-              <span>Criar Campo</span>
-            </Button>
+            <DialogClose asChild><Button variant="outline">Cancelar</Button></DialogClose>
+            <Button variant="destructive" onClick={() => alterarAtiva(desativando, false)}>Desativar</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <GerenciadorCampos
+        isOpen={isCampoManagerOpen}
+        setIsOpen={setIsCampoManagerOpen}
+        campos={campos}
+        escolas={escolasAtivas}
+        podeEditarOficiais={podeEditarOficiais}
+        onAlterado={() => { carregarCampos(); carregar(); }}
+      />
     </>
   );
-};
 
-// Formulário de Nova Pergunta BNCC
-const NovaPerguntaForm = ({ isOpen, onClose, onSave, existingCampos, customCampos, onCampoCreated, educationLevels }) => {
-  const [formData, setFormData] = useState({
-    campo_experiencia: '',
-    faixa_etaria: '',
-    pergunta: '',
-    pergunta_norma: '',
-    habilidade_bncc: '',
-    area_conhecimento: '',
-  });
-  const [saving, setSaving] = useState(false);
-  const { toast } = useToast();
-
-  const handleChange = (field, value) => {
-    setFormData(prev => ({ ...prev, [field]: value }));
-  };
-
-  const handleSubmit = async () => {
-    if (!formData.campo_experiencia || !formData.faixa_etaria || !formData.pergunta) {
-      toast({
-        title: 'Campos obrigatórios',
-        description: 'Campo de Experiência, Nível e Pergunta são necessários.',
-        variant: 'destructive'
-      });
-      return;
-    }
-
-    setSaving(true);
-    try {
-      const { data, error } = await apiClient
-        .from('perguntas_bncc')
-        .insert({
-          campo_experiencia: formData.campo_experiencia,
-          faixa_etaria: formData.faixa_etaria,
-          pergunta: formData.pergunta.trim(),
-          pergunta_norma: formData.pergunta_norma?.trim() || null,
-          habilidade_bncc: formData.habilidade_bncc?.trim() || null,
-          area_conhecimento: formData.area_conhecimento?.trim() || null,
-        })
-        .select()
-        .single();
-
-      if (error) throw error;
-
-      toast({
-        title: 'Pergunta criada com sucesso!',
-        description: `A pergunta foi adicionada ao campo "${formData.campo_experiencia}".`,
-        className: 'bg-green-100'
-      });
-
-      onSave(data);
-      setFormData({
-        campo_experiencia: '',
-        faixa_etaria: '',
-        pergunta: '',
-        pergunta_norma: '',
-        habilidade_bncc: '',
-        area_conhecimento: '',
-      });
-      onClose();
-    } catch (error) {
-      toast({
-        title: 'Erro ao criar pergunta',
-        description: error.message,
-        variant: 'destructive'
-      });
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  return (
-    <Dialog open={isOpen} onOpenChange={onClose}>
-      <DialogContent className="max-w-2xl">
-        <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">
-            <PlusCircle className="h-5 w-5 text-purple-600" />
-            Nova Pergunta BNCC
-          </DialogTitle>
-        </DialogHeader>
-
-        <div className="grid gap-4 py-4">
-          <div className="grid grid-cols-4 items-center gap-4">
-            <Label htmlFor="campo_experiencia" className="text-right font-medium">
-              Campo de Experiência *
-            </Label>
-            <div className="col-span-3">
-              <CreatableCampoSelect
-                value={formData.campo_experiencia}
-                onChange={(value) => handleChange('campo_experiencia', value)}
-                existingCampos={existingCampos}
-                customCampos={customCampos}
-                onCampoCreated={onCampoCreated}
-              />
-              <p className="text-xs text-gray-500 mt-1">
-                Selecione um campo existente ou digite para criar um novo com ícone personalizado.
-              </p>
-            </div>
+  if (embutida) {
+    return (
+      <div className="space-y-4">
+        <div className="flex flex-wrap items-center justify-between gap-4">
+          <div>
+            <h3 className="text-xl font-bold text-gray-800">Gestão de Perguntas BNCC</h3>
+            <p className="text-sm text-gray-500">Administre as perguntas pedagógicas por Campo de Experiência</p>
           </div>
-
-          <div className="grid grid-cols-4 items-center gap-4">
-            <Label htmlFor="faixa_etaria" className="text-right font-medium">
-              Nível/Faixa Etária *
-            </Label>
-            <Select
-              value={formData.faixa_etaria}
-              onValueChange={(value) => handleChange('faixa_etaria', value)}
-            >
-              <SelectTrigger className="col-span-3">
-                <SelectValue placeholder="Selecione o nível" />
-              </SelectTrigger>
-              <SelectContent>
-                {educationLevels.map(level => (
-                  <SelectItem key={level} value={level}>{level}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-
-          <div className="grid grid-cols-4 items-start gap-4">
-            <Label htmlFor="pergunta" className="text-right font-medium pt-2">
-              Pergunta Facilitadora *
-            </Label>
-            <Textarea
-              id="pergunta"
-              value={formData.pergunta}
-              onChange={(e) => handleChange('pergunta', e.target.value)}
-              className="col-span-3"
-              placeholder="Digite a pergunta facilitadora para observação pedagógica"
-              rows={3}
-            />
-          </div>
-
-          <div className="grid grid-cols-4 items-start gap-4">
-            <Label htmlFor="pergunta_norma" className="text-right font-medium pt-2">
-              Referência da Norma BNCC
-            </Label>
-            <Textarea
-              id="pergunta_norma"
-              value={formData.pergunta_norma}
-              onChange={(e) => handleChange('pergunta_norma', e.target.value)}
-              className="col-span-3"
-              placeholder="Texto original da norma BNCC (opcional)"
-              rows={2}
-            />
-          </div>
-
-          <div className="grid grid-cols-4 items-center gap-4">
-            <Label htmlFor="habilidade_bncc" className="text-right font-medium">
-              Código Habilidade
-            </Label>
-            <Input
-              id="habilidade_bncc"
-              value={formData.habilidade_bncc}
-              onChange={(e) => handleChange('habilidade_bncc', e.target.value)}
-              className="col-span-3"
-              placeholder="Ex: EI03EO01"
-            />
-          </div>
-
-          <div className="grid grid-cols-4 items-center gap-4">
-            <Label htmlFor="area_conhecimento" className="text-right font-medium">
-              Área do Conhecimento
-            </Label>
-            <Input
-              id="area_conhecimento"
-              value={formData.area_conhecimento}
-              onChange={(e) => handleChange('area_conhecimento', e.target.value)}
-              className="col-span-3"
-              placeholder="Ex: Linguagens, Matemática..."
-            />
-          </div>
+          {acoesCabecalho}
         </div>
-
-        <DialogFooter>
-          <DialogClose asChild>
-            <Button variant="ghost">Cancelar</Button>
-          </DialogClose>
-          <Button onClick={handleSubmit} disabled={saving}>
-            {saving && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
-            Salvar Pergunta
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
-  );
-};
-
-// Formulário de Edição de Pergunta BNCC
-const EditarPerguntaForm = ({ isOpen, onClose, pergunta, onSave, existingCampos, customCampos, onCampoCreated, educationLevels }) => {
-  const [formData, setFormData] = useState({});
-  const [saving, setSaving] = useState(false);
-  const { toast } = useToast();
-
-  useEffect(() => {
-    if (pergunta) {
-      setFormData({
-        campo_experiencia: pergunta.campo_experiencia || '',
-        faixa_etaria: pergunta.faixa_etaria || '',
-        pergunta: pergunta.pergunta || '',
-        pergunta_norma: pergunta.pergunta_norma || '',
-        habilidade_bncc: pergunta.habilidade_bncc || '',
-        area_conhecimento: pergunta.area_conhecimento || '',
-      });
-    }
-  }, [pergunta]);
-
-  const handleChange = (field, value) => {
-    setFormData(prev => ({ ...prev, [field]: value }));
-  };
-
-  const handleSubmit = async () => {
-    if (!formData.campo_experiencia || !formData.faixa_etaria || !formData.pergunta) {
-      toast({
-        title: 'Campos obrigatórios',
-        description: 'Campo de Experiência, Nível e Pergunta são necessários.',
-        variant: 'destructive'
-      });
-      return;
-    }
-
-    setSaving(true);
-    try {
-      const { data, error } = await apiClient
-        .from('perguntas_bncc')
-        .update({
-          campo_experiencia: formData.campo_experiencia,
-          faixa_etaria: formData.faixa_etaria,
-          pergunta: formData.pergunta.trim(),
-          pergunta_norma: formData.pergunta_norma?.trim() || null,
-          habilidade_bncc: formData.habilidade_bncc?.trim() || null,
-          area_conhecimento: formData.area_conhecimento?.trim() || null,
-        })
-        .eq('id', pergunta.id)
-        .select()
-        .single();
-
-      if (error) throw error;
-
-      toast({
-        title: 'Pergunta atualizada!',
-        className: 'bg-green-100'
-      });
-
-      onSave(data);
-      onClose();
-    } catch (error) {
-      toast({
-        title: 'Erro ao atualizar pergunta',
-        description: error.message,
-        variant: 'destructive'
-      });
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  return (
-    <Dialog open={isOpen} onOpenChange={onClose}>
-      <DialogContent className="max-w-2xl">
-        <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">
-            <Edit className="h-5 w-5 text-purple-600" />
-            Editar Pergunta BNCC
-          </DialogTitle>
-        </DialogHeader>
-
-        <div className="grid gap-4 py-4">
-          <div className="grid grid-cols-4 items-center gap-4">
-            <Label className="text-right font-medium">Campo de Experiência *</Label>
-            <div className="col-span-3">
-              <CreatableCampoSelect
-                value={formData.campo_experiencia}
-                onChange={(value) => handleChange('campo_experiencia', value)}
-                existingCampos={existingCampos}
-                customCampos={customCampos}
-                onCampoCreated={onCampoCreated}
-              />
-            </div>
-          </div>
-
-          <div className="grid grid-cols-4 items-center gap-4">
-            <Label className="text-right font-medium">Nível/Faixa Etária *</Label>
-            <Select
-              value={formData.faixa_etaria}
-              onValueChange={(value) => handleChange('faixa_etaria', value)}
-            >
-              <SelectTrigger className="col-span-3">
-                <SelectValue placeholder="Selecione o nível" />
-              </SelectTrigger>
-              <SelectContent>
-                {educationLevels.map(level => (
-                  <SelectItem key={level} value={level}>{level}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-
-          <div className="grid grid-cols-4 items-start gap-4">
-            <Label className="text-right font-medium pt-2">Pergunta Facilitadora *</Label>
-            <Textarea
-              value={formData.pergunta}
-              onChange={(e) => handleChange('pergunta', e.target.value)}
-              className="col-span-3"
-              rows={3}
-            />
-          </div>
-
-          <div className="grid grid-cols-4 items-start gap-4">
-            <Label className="text-right font-medium pt-2">Referência da Norma</Label>
-            <Textarea
-              value={formData.pergunta_norma}
-              onChange={(e) => handleChange('pergunta_norma', e.target.value)}
-              className="col-span-3"
-              rows={2}
-            />
-          </div>
-
-          <div className="grid grid-cols-4 items-center gap-4">
-            <Label className="text-right font-medium">Código Habilidade</Label>
-            <Input
-              value={formData.habilidade_bncc}
-              onChange={(e) => handleChange('habilidade_bncc', e.target.value)}
-              className="col-span-3"
-            />
-          </div>
-
-          <div className="grid grid-cols-4 items-center gap-4">
-            <Label className="text-right font-medium">Área do Conhecimento</Label>
-            <Input
-              value={formData.area_conhecimento}
-              onChange={(e) => handleChange('area_conhecimento', e.target.value)}
-              className="col-span-3"
-            />
-          </div>
-        </div>
-
-        <DialogFooter>
-          <DialogClose asChild>
-            <Button variant="ghost">Cancelar</Button>
-          </DialogClose>
-          <Button onClick={handleSubmit} disabled={saving}>
-            {saving && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
-            Salvar Alterações
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
-  );
-};
-
-const BnccQuestionsPage = () => {
-  const navigate = useNavigate();
-  const { toast } = useToast();
-
-  const [perguntas, setPerguntas] = useState([]);
-  const [customCampos, setCustomCampos] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [nivelFilter, setNivelFilter] = useState('');
-  const [campoFilter, setCampoFilter] = useState('');
-  const [expanded, setExpanded] = useState([]);
-
-  const [isNewModalOpen, setIsNewModalOpen] = useState(false);
-  const [isEditModalOpen, setIsEditModalOpen] = useState(false);
-  const [editingPergunta, setEditingPergunta] = useState(null);
-  const [deleteConfirmId, setDeleteConfirmId] = useState(null);
-  const [isCampoManagerOpen, setIsCampoManagerOpen] = useState(false);
-  const [isCampoCreateOpen, setIsCampoCreateOpen] = useState(false);
-  const [campoCreateForm, setCampoCreateForm] = useState({ nome: '', icone: 'BookOpen' });
-  const [creatingCampo, setCreatingCampo] = useState(false);
-  const [isCampoEditOpen, setIsCampoEditOpen] = useState(false);
-  const [editingCampo, setEditingCampo] = useState(null);
-  const [campoForm, setCampoForm] = useState({ nome: '', icone: 'BookOpen' });
-  const [savingCampo, setSavingCampo] = useState(false);
-  const [isCampoDeleteOpen, setIsCampoDeleteOpen] = useState(false);
-  const [deletingCampo, setDeletingCampo] = useState(null);
-  const [remapTarget, setRemapTarget] = useState('');
-  const [deletingCampoLoading, setDeletingCampoLoading] = useState(false);
-  const [seriesConfig, setSeriesConfig] = useState([]);
-
-  useEffect(() => {
-    apiClient.from('series_config').select('*').eq('ativa', true).then(({ data, error }) => {
-      if (error) {
-        console.error('Erro ao carregar configurações de séries:', error);
-      } else {
-        setSeriesConfig(data?.length ? data : []);
-      }
-    });
-  }, []);
-
-  // Carregar campos de experiência customizados
-  const fetchCamposCustomizados = useCallback(async () => {
-    try {
-      const response = await fetch('/api/campos-experiencia/?ativo=true', {
-        credentials: 'include',
-      });
-      if (response.ok) {
-        const data = await response.json();
-        setCustomCampos(data);
-      }
-    } catch (error) {
-      console.error('Erro ao carregar campos customizados:', error);
-    }
-  }, []);
-
-  const handleCampoCreated = useCallback((novoCampo) => {
-    setCustomCampos(prev => [...prev, novoCampo]);
-  }, []);
-
-  const fetchPerguntas = useCallback(async () => {
-    setLoading(true);
-    const { data, error } = await apiClient
-      .from('perguntas_bncc')
-      .select('*')
-      .order('campo_experiencia', { ascending: true })
-      .order('faixa_etaria', { ascending: true });
-
-    if (error) {
-      toast({ title: 'Erro ao buscar perguntas', description: error.message, variant: 'destructive' });
-    } else {
-      setPerguntas(data || []);
-      const allCampos = [...new Set((data || []).map(p => p.campo_experiencia))];
-      setExpanded(allCampos);
-    }
-    setLoading(false);
-  }, [toast]);
-
-  useEffect(() => {
-    fetchPerguntas();
-    fetchCamposCustomizados();
-  }, [fetchPerguntas, fetchCamposCustomizados]);
-
-  // Campos de experiência existentes (incluindo novos criados)
-  const existingCampos = useMemo(() => {
-    return [...new Set(perguntas.map(p => p.campo_experiencia).filter(Boolean))];
-  }, [perguntas]);
-
-  // Níveis de educação existentes
-  const educationLevels = useMemo(() => {
-    if (seriesConfig.length > 0) {
-      // Ordena pelo campo `ordem` do backend e extrai os nomes
-      const ordenados = [...seriesConfig].sort((a, b) => (a.ordem ?? 999) - (b.ordem ?? 999));
-      const nomesOrdenados = ordenados.map(s => s.nome);
-      // Adiciona ao final quaisquer faixas usadas em perguntas mas não cadastradas em series_config
-      const nomeSet = new Set(nomesOrdenados);
-      const fromPerguntas = [...new Set(perguntas.map(p => p.faixa_etaria).filter(Boolean))];
-      fromPerguntas.forEach(n => { if (!nomeSet.has(n)) nomesOrdenados.push(n); });
-      return nomesOrdenados;
-    }
-    // Fallback: hardcoded + valores das perguntas, ordenados por número
-    const fromPerguntas = [...new Set(perguntas.map(p => p.faixa_etaria).filter(Boolean))];
-    const combined = new Set([...baseLevels, ...fromPerguntas]);
-    return Array.from(combined).sort((a, b) => {
-      const aNum = parseInt(a.match(/\d+/)?.[0] || '99');
-      const bNum = parseInt(b.match(/\d+/)?.[0] || '99');
-      return aNum - bNum;
-    });
-  }, [perguntas, seriesConfig]);
-
-  const filteredPerguntas = useMemo(() => {
-    return perguntas.filter(p => {
-      const nivelMatch = !nivelFilter || nivelFilter === 'all-levels' || p.faixa_etaria.includes(nivelFilter.replace('Nível ', ''));
-      const campoMatch = !campoFilter || campoFilter === 'all-fields' || p.campo_experiencia === campoFilter;
-      return nivelMatch && campoMatch;
-    });
-  }, [perguntas, nivelFilter, campoFilter]);
-
-  const groupedPerguntas = useMemo(() => {
-    return filteredPerguntas.reduce((acc, p) => {
-      const campo = p.campo_experiencia;
-      if (!acc[campo]) acc[campo] = [];
-      acc[campo].push(p);
-      return acc;
-    }, {});
-  }, [filteredPerguntas]);
-
-  const customCamposWithUsage = useMemo(() => {
-    const usageMap = perguntas.reduce((acc, p) => {
-      const campo = p.campo_experiencia;
-      if (!campo) return acc;
-      acc[campo] = (acc[campo] || 0) + 1;
-      return acc;
-    }, {});
-
-    return (customCampos || [])
-      .map(campo => ({
-        ...campo,
-        total_perguntas: usageMap[campo.nome] || 0,
-      }))
-      .sort((a, b) => a.nome.localeCompare(b.nome, 'pt-BR', { sensitivity: 'base' }));
-  }, [customCampos, perguntas]);
-
-  const customIconMap = useMemo(() => {
-    const map = {};
-    (customCampos || []).forEach(campo => {
-      if (!campo?.nome) return;
-      map[campo.nome] = campo.icone || 'BookOpen';
-    });
-    return map;
-  }, [customCampos]);
-
-  const remapCampoOptions = useMemo(() => {
-    const customNomes = (customCampos || []).map(campo => campo.nome);
-    const usarCamposPadraoFallback = customNomes.length === 0;
-    const nomes = new Set([
-      ...existingCampos,
-      ...customNomes,
-      ...(usarCamposPadraoFallback ? Object.keys(campoExperienciaMap) : []),
-    ]);
-    if (deletingCampo?.nome) {
-      nomes.delete(deletingCampo.nome);
-    }
-    return Array.from(nomes).sort((a, b) => a.localeCompare(b, 'pt-BR', { sensitivity: 'base' }));
-  }, [existingCampos, customCampos, deletingCampo]);
-
-  const resolveCampoIcon = (campoNome, iconePersonalizado) => {
-    if (iconePersonalizado) {
-      return getIconComponent(iconePersonalizado);
-    }
-    if (campoExperienciaMap[campoNome]) {
-      return campoExperienciaMap[campoNome].icon;
-    }
-    return BookOpen;
-  };
-
-  const handleExpandAll = () => {
-    setExpanded(Object.keys(groupedPerguntas));
-  };
-
-  const handleCollapseAll = () => {
-    setExpanded([]);
-  };
-
-  const resetCampoCreate = () => {
-    setCampoCreateForm({ nome: '', icone: 'BookOpen' });
-    setIsCampoCreateOpen(false);
-    setCreatingCampo(false);
-  };
-
-  const handleCreateCampo = async () => {
-    const nome = campoCreateForm.nome?.trim();
-    if (!nome) {
-      toast({
-        title: 'Nome obrigatório',
-        description: 'Informe o nome do campo de experiência.',
-        variant: 'destructive',
-      });
-      return;
-    }
-
-    setCreatingCampo(true);
-    try {
-      const csrfToken = await ensureCsrfToken();
-      const response = await fetch('/api/campos-experiencia/criar/', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-CSRFToken': csrfToken,
-        },
-        credentials: 'include',
-        body: JSON.stringify({
-          nome,
-          icone: campoCreateForm.icone || 'BookOpen',
-        }),
-      });
-
-      const payload = await response.json();
-      if (!response.ok) {
-        throw new Error(payload?.error || 'Erro ao criar campo');
-      }
-
-      toast({
-        title: 'Campo criado!',
-        description: `"${nome}" foi adicionado com sucesso.`,
-        className: 'bg-green-100',
-      });
-
-      resetCampoCreate();
-      fetchCamposCustomizados();
-      fetchPerguntas();
-    } catch (error) {
-      toast({
-        title: 'Erro ao criar campo',
-        description: error.message,
-        variant: 'destructive',
-      });
-    } finally {
-      setCreatingCampo(false);
-    }
-  };
-
-  const openCampoEdit = (campo) => {
-    if (!campo) return;
-    setEditingCampo(campo);
-    setCampoForm({
-      nome: campo.nome || '',
-      icone: campo.icone || 'BookOpen',
-    });
-    setIsCampoEditOpen(true);
-  };
-
-  const handleSaveCampo = async () => {
-    if (!editingCampo) return;
-    const nome = campoForm.nome?.trim();
-    if (!nome) {
-      toast({
-        title: 'Nome obrigatório',
-        description: 'Informe o nome do campo de experiência.',
-        variant: 'destructive'
-      });
-      return;
-    }
-
-    setSavingCampo(true);
-    try {
-      const csrfToken = await ensureCsrfToken();
-      const response = await fetch(`/api/campos-experiencia/${editingCampo.id}/atualizar/`, {
-        method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-CSRFToken': csrfToken,
-        },
-        credentials: 'include',
-        body: JSON.stringify({
-          nome,
-          icone: campoForm.icone || 'BookOpen',
-        }),
-      });
-
-      const payload = await response.json();
-      if (!response.ok) {
-        throw new Error(payload?.error || 'Erro ao atualizar campo');
-      }
-
-      const totalAtualizadas = payload?.perguntas_atualizadas || 0;
-      toast({
-        title: 'Campo atualizado!',
-        description: totalAtualizadas > 0
-          ? `${totalAtualizadas} pergunta(s) atualizada(s).`
-          : 'Alterações salvas com sucesso.',
-        className: 'bg-green-100',
-      });
-
-      setIsCampoEditOpen(false);
-      setEditingCampo(null);
-      fetchCamposCustomizados();
-      fetchPerguntas();
-    } catch (error) {
-      toast({
-        title: 'Erro ao atualizar campo',
-        description: error.message,
-        variant: 'destructive',
-      });
-    } finally {
-      setSavingCampo(false);
-    }
-  };
-
-  const openCampoDelete = (campo) => {
-    if (!campo) return;
-    setDeletingCampo(campo);
-    setRemapTarget('');
-    setIsCampoDeleteOpen(true);
-  };
-
-  const handleDeleteCampo = async () => {
-    if (!deletingCampo) return;
-    const precisaRemapeamento = (deletingCampo.total_perguntas || 0) > 0;
-    if (precisaRemapeamento && !remapTarget) {
-      toast({
-        title: 'Remanejamento necessário',
-        description: 'Selecione o campo de destino para remanejar as perguntas vinculadas.',
-        variant: 'destructive',
-      });
-      return;
-    }
-
-    setDeletingCampoLoading(true);
-    try {
-      const csrfToken = await ensureCsrfToken();
-      const response = await fetch(`/api/campos-experiencia/${deletingCampo.id}/deletar/`, {
-        method: 'DELETE',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-CSRFToken': csrfToken,
-        },
-        credentials: 'include',
-        body: JSON.stringify({
-          remanejar_para: remapTarget || null,
-        }),
-      });
-
-      const payload = await response.json();
-      if (!response.ok) {
-        if (response.status === 409 && payload?.total_vinculos) {
-          toast({
-            title: 'Campo com perguntas vinculadas',
-            description: `Existem ${payload.total_vinculos} pergunta(s) vinculada(s). Selecione um campo de destino para remanejar.`,
-            variant: 'destructive',
-          });
-          return;
-        }
-        throw new Error(payload?.error || 'Erro ao excluir campo');
-      }
-
-      const totalRemanejadas = payload?.perguntas_remanejadas || 0;
-      toast({
-        title: 'Campo desativado',
-        description: totalRemanejadas > 0
-          ? `${totalRemanejadas} pergunta(s) remanejada(s).`
-          : 'Campo removido com sucesso.',
-      });
-
-      setIsCampoDeleteOpen(false);
-      setDeletingCampo(null);
-      setRemapTarget('');
-      fetchCamposCustomizados();
-      fetchPerguntas();
-    } catch (error) {
-      toast({
-        title: 'Erro ao excluir campo',
-        description: error.message,
-        variant: 'destructive',
-      });
-    } finally {
-      setDeletingCampoLoading(false);
-    }
-  };
-
-  const handleExportCSV = () => {
-    if (filteredPerguntas.length === 0) {
-      toast({ title: 'Nenhuma pergunta para exportar', description: 'Altere os filtros para selecionar perguntas.', variant: 'destructive' });
-      return;
-    }
-    const headers = ['faixa_etaria', 'campo_experiencia', 'area_conhecimento', 'pergunta', 'pergunta_norma', 'habilidade_bncc'];
-    const csvContent = [
-      headers.join(','),
-      ...filteredPerguntas.map(p => headers.map(header => `"${(p[header] || '').replace(/"/g, '""')}"`).join(','))
-    ].join('\n');
-
-    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-    const link = document.createElement('a');
-    const url = URL.createObjectURL(blob);
-    link.setAttribute('href', url);
-    link.setAttribute('download', 'perguntas_bncc.csv');
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    toast({ title: 'Exportação concluída!', description: `${filteredPerguntas.length} perguntas exportadas.` });
-  };
-
-  const handleDeletePergunta = async (id) => {
-    const { error } = await apiClient
-      .from('perguntas_bncc')
-      .delete()
-      .eq('id', id);
-
-    if (error) {
-      toast({ title: 'Erro ao excluir', description: error.message, variant: 'destructive' });
-    } else {
-      toast({ title: 'Pergunta excluída com sucesso!' });
-      fetchPerguntas();
-    }
-    setDeleteConfirmId(null);
-  };
-
-  const handleEditClick = (pergunta) => {
-    setEditingPergunta(pergunta);
-    setIsEditModalOpen(true);
-  };
-
-  const handleSaveNew = () => {
-    fetchPerguntas();
-  };
-
-  const handleSaveEdit = () => {
-    fetchPerguntas();
-    setEditingPergunta(null);
-  };
+        {cartaoPerguntas}
+        {dialogos}
+      </div>
+    );
+  }
 
   return (
     <>
@@ -1096,12 +449,11 @@ const BnccQuestionsPage = () => {
         <title>NARA - Gestão de Perguntas BNCC</title>
         <meta name="description" content="Gerencie as perguntas pedagógicas baseadas na BNCC." />
       </Helmet>
-
-      <div className="bg-[#F5F3FA] min-h-screen">
-        <header className="bg-white/80 backdrop-blur-sm shadow-sm sticky top-0 z-10">
-          <div className="container mx-auto px-4 sm:px-6 lg:px-8 py-4 flex items-center justify-between">
+      <div className="min-h-screen bg-[#F5F3FA]">
+        <header className="sticky top-0 z-10 bg-white/80 shadow-sm backdrop-blur-sm">
+          <div className="container mx-auto flex flex-wrap items-center justify-between gap-4 px-4 py-4 sm:px-6 lg:px-8">
             <div className="flex items-center gap-4">
-              <Button variant="ghost" size="icon" onClick={() => navigate('/admin/perguntas')}>
+              <Button variant="ghost" size="icon" onClick={() => navigate('/admin/dashboard')} aria-label="Voltar ao painel">
                 <ArrowLeft className="h-6 w-6" />
               </Button>
               <div>
@@ -1109,468 +461,416 @@ const BnccQuestionsPage = () => {
                 <p className="text-sm text-gray-500">Administre as perguntas pedagógicas por Campo de Experiência</p>
               </div>
             </div>
-            <div className="flex items-center gap-2">
-              <Button variant="outline" onClick={() => setIsCampoManagerOpen(true)}>
-                <Settings className="h-4 w-4 mr-2" />
-                Gerenciar Campos
-              </Button>
-              <Button onClick={() => setIsNewModalOpen(true)}>
-                <PlusCircle className="h-4 w-4 mr-2" />
-                Nova Pergunta
-              </Button>
-            </div>
+            {acoesCabecalho}
           </div>
         </header>
+        <main className="container mx-auto px-4 py-8 sm:px-6 lg:px-8">{cartaoPerguntas}</main>
+      </div>
+      {dialogos}
+    </>
+  );
+};
 
-        <main className="container mx-auto px-4 sm:px-6 lg:px-8 py-8">
-          <Card className="shadow-lg">
-            <CardHeader>
-              <CardTitle>Perguntas da BNCC</CardTitle>
-              <CardDescription>
-                <span>{filteredPerguntas.length} pergunta(s) encontrada(s)</span>
-                {(nivelFilter || campoFilter) && <span> com os filtros aplicados</span>}
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              {/* Filtros e Ações */}
-              <div className="space-y-4 mb-6">
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <Select value={nivelFilter} onValueChange={(value) => setNivelFilter(value === 'all-levels' ? '' : value)}>
-                    <SelectTrigger>
-                      <SelectValue placeholder="Filtrar por Nível/Faixa Etária" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="all-levels">Todos os Níveis</SelectItem>
-                      {educationLevels.map(n => <SelectItem key={n} value={n}>{n}</SelectItem>)}
-                    </SelectContent>
-                  </Select>
+// ─── Formulário de pergunta ───────────────────────────────────────────────────
 
-                  <Select value={campoFilter} onValueChange={(value) => setCampoFilter(value === 'all-fields' ? '' : value)}>
-                    <SelectTrigger>
-                      <SelectValue placeholder="Filtrar por Campo de Experiência" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="all-fields">Todos os Campos</SelectItem>
-                      {existingCampos.map(campo => (
-                        <SelectItem key={campo} value={campo}>
-                          {campoExperienciaMap[campo]?.name || campo}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
+const FORM_VAZIO = {
+  escola: '', campo_experiencia: '', faixa_etaria: '', pergunta: '',
+  referencia_bncc: '', pergunta_norma: '', area_conhecimento: '',
+};
 
-                <div className="flex flex-wrap items-center gap-2">
-                  <Button variant="outline" size="sm" onClick={handleExpandAll}>
-                    <ChevronsUpDown className="h-4 w-4 mr-2" />Expandir Tudo
-                  </Button>
-                  <Button variant="outline" size="sm" onClick={handleCollapseAll}>
-                    <ChevronsDownUp className="h-4 w-4 mr-2" />Recolher Tudo
-                  </Button>
-                  <Button variant="outline" size="sm" onClick={() => toast({ title: 'Funcionalidade em breve!' })}>
-                    <FileUp className="h-4 w-4 mr-2" />Importar CSV
-                  </Button>
-                  <Button variant="outline" size="sm" onClick={handleExportCSV}>
-                    <FileDown className="h-4 w-4 mr-2" />Exportar CSV
-                  </Button>
-                </div>
-              </div>
+const textareaClasses = 'flex w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2';
 
-              {/* Lista de Perguntas */}
-              {loading ? (
-                <div className="flex justify-center items-center h-64">
-                  <Loader2 className="h-8 w-8 animate-spin text-purple-500" />
-                </div>
-              ) : Object.keys(groupedPerguntas).length === 0 ? (
-                <div className="text-center py-12 text-gray-500">
-                  <BookOpen className="h-12 w-12 mx-auto mb-4 text-gray-300" />
-                  <p>Nenhuma pergunta encontrada.</p>
-                  <Button className="mt-4" onClick={() => setIsNewModalOpen(true)}>
-                    <PlusCircle className="h-4 w-4 mr-2" />
-                    Criar primeira pergunta
-                  </Button>
-                </div>
-              ) : (
-                <Accordion type="multiple" value={expanded} onValueChange={setExpanded}>
-                  {Object.entries(groupedPerguntas).map(([campo, perguntasDoCampo]) => {
-                    const Icon = resolveCampoIcon(campo, customIconMap[campo]);
+const PerguntaBnccForm = ({ isOpen, setIsOpen, pergunta, escolas, campos, niveis, podeCriarOficial, onSubmit }) => {
+  const { toast } = useToast();
+  const [formData, setFormData] = useState(FORM_VAZIO);
+  const [salvando, setSalvando] = useState(false);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    setFormData(pergunta ? {
+      escola: pergunta.escola ? String(pergunta.escola) : OFICIAL,
+      campo_experiencia: pergunta.campo_experiencia ? String(pergunta.campo_experiencia) : '',
+      faixa_etaria: pergunta.faixa_etaria || '',
+      pergunta: pergunta.pergunta || '',
+      referencia_bncc: pergunta.habilidade_bncc_codigo || '',
+      pergunta_norma: pergunta.pergunta_norma || '',
+      area_conhecimento: pergunta.area_conhecimento || '',
+    } : { ...FORM_VAZIO, escola: !podeCriarOficial && escolas.length === 1 ? String(escolas[0].id) : '' });
+  // escolas pode chegar depois; só reinicia ao abrir ou trocar a pergunta.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pergunta, isOpen]);
+
+  const set = (campo, valor) => setFormData((prev) => ({ ...prev, [campo]: valor }));
+  const escolaDaPergunta = formData.escola === OFICIAL ? null : formData.escola;
+
+  // Oficial → só campos oficiais; da escola → oficiais + os da escola.
+  // O campo atual sempre aparece (mesmo se desativado depois).
+  const opcoesCampo = useMemo(() => {
+    const lista = campos.filter((c) => (escolaDaPergunta ? campoValidoPara(c, escolaDaPergunta) : !c.escola));
+    if (pergunta?.campo_experiencia && !lista.some((c) => String(c.id) === String(pergunta.campo_experiencia))) {
+      lista.push({ id: pergunta.campo_experiencia, nome: `${pergunta.campo_experiencia_nome} (desativado)`, icone: pergunta.campo_experiencia_icone });
+    }
+    return lista.sort((a, b) => a.nome.localeCompare(b.nome, 'pt-BR'));
+  }, [campos, escolaDaPergunta, pergunta]);
+
+  const trocarEscola = (escola) => setFormData((prev) => {
+    const campo = campos.find((c) => String(c.id) === prev.campo_experiencia);
+    const novaEscola = escola === OFICIAL ? null : escola;
+    const aindaVale = !campo || (novaEscola ? campoValidoPara(campo, novaEscola) : !campo.escola);
+    return { ...prev, escola, campo_experiencia: aindaVale ? prev.campo_experiencia : '' };
+  });
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    // Os Selects do Radix não participam da validação nativa do form.
+    const faltando = [
+      !pergunta && !formData.escola && 'escola',
+      !formData.campo_experiencia && 'campo de experiência',
+      !formData.faixa_etaria && 'nível',
+    ].filter(Boolean);
+    if (faltando.length) {
+      toast({ variant: 'destructive', title: 'Campos obrigatórios', description: `Selecione: ${faltando.join(', ')}.` });
+      return;
+    }
+    const dados = {
+      campo_experiencia: formData.campo_experiencia,
+      faixa_etaria: formData.faixa_etaria,
+      pergunta: formData.pergunta.trim(),
+      referencia_bncc: formData.referencia_bncc.trim().toUpperCase(),
+      pergunta_norma: formData.pergunta_norma.trim(),
+      area_conhecimento: formData.area_conhecimento.trim(),
+    };
+    // Na edição a escola não muda. Oficial = sem escola (só superadmin).
+    if (!pergunta && formData.escola !== OFICIAL) dados.escola = formData.escola;
+
+    setSalvando(true);
+    try {
+      await onSubmit(dados);
+    } finally {
+      setSalvando(false);
+    }
+  };
+
+  const mostrarEscola = !pergunta && (podeCriarOficial || escolas.length > 1);
+  const rotuloOrigem = pergunta ? (pergunta.escola ? pergunta.escola_nome : 'Oficial (todas as escolas)') : null;
+
+  return (
+    // Não fecha no meio do salvamento (Esc/clique fora).
+    <Dialog open={isOpen} onOpenChange={(aberto) => { if (!salvando) setIsOpen(aberto); }}>
+      <DialogContent className="max-h-[90vh] max-w-2xl overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            {pergunta ? <Edit className="h-5 w-5 text-purple-600" /> : <PlusCircle className="h-5 w-5 text-purple-600" />}
+            {pergunta ? 'Editar' : 'Nova'} Pergunta BNCC
+          </DialogTitle>
+          {rotuloOrigem && <DialogDescription>Origem: {rotuloOrigem}</DialogDescription>}
+        </DialogHeader>
+        <form onSubmit={handleSubmit} className="space-y-4 pt-2">
+          {mostrarEscola && (
+            <div>
+              <Label htmlFor="bncc-escola">Escola</Label>
+              <Select value={formData.escola} onValueChange={trocarEscola}>
+                <SelectTrigger id="bncc-escola"><SelectValue placeholder="Selecione a escola" /></SelectTrigger>
+                <SelectContent>
+                  {podeCriarOficial && <SelectItem value={OFICIAL}>Oficial (todas as escolas)</SelectItem>}
+                  {escolas.map((e) => <SelectItem key={e.id} value={String(e.id)}>{e.nome}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </div>
+          )}
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <div>
+              <Label htmlFor="bncc-campo">Campo de Experiência</Label>
+              <Select value={formData.campo_experiencia} onValueChange={(v) => set('campo_experiencia', v)}>
+                <SelectTrigger id="bncc-campo"><SelectValue placeholder="Selecione o campo" /></SelectTrigger>
+                <SelectContent>
+                  {opcoesCampo.map((c) => {
+                    const Icone = iconeDoCampo(c.nome, c.icone);
                     return (
-                      <AccordionItem key={campo} value={campo}>
-                        <AccordionTrigger className="text-lg font-bold text-purple-700 hover:no-underline">
-                          <div className="flex items-center gap-3">
-                            <Icon className="h-6 w-6" />
-                            <span>{campoExperienciaMap[campo]?.name || campo}</span>
-                            <span className="text-sm font-normal text-gray-500">
-                              ({perguntasDoCampo.length} pergunta{perguntasDoCampo.length !== 1 ? 's' : ''})
-                            </span>
-                          </div>
-                        </AccordionTrigger>
-                        <AccordionContent>
-                          <div className="space-y-3 pl-9">
-                            {perguntasDoCampo.map(p => (
-                              <div key={p.id} className="p-4 bg-gray-50 rounded-lg border hover:border-purple-200 transition-colors">
-                                <div className="flex items-start justify-between gap-4">
-                                  <div className="flex-1">
-                                    <p className="font-semibold text-gray-800">{p.pergunta}</p>
-                                    {p.pergunta_norma && (
-                                      <div className="mt-2 p-2 bg-blue-50 border-l-2 border-blue-400 rounded">
-                                        <p className="text-xs text-blue-600 font-medium">Referência na Norma BNCC:</p>
-                                        <p className="text-sm text-blue-800">{p.pergunta_norma}</p>
-                                      </div>
-                                    )}
-                                    <div className="flex flex-wrap items-center gap-2 text-xs text-gray-500 mt-2">
-                                      <span className="font-medium bg-purple-100 text-purple-800 px-2 py-0.5 rounded">
-                                        {p.faixa_etaria}
-                                      </span>
-                                      {p.habilidade_bncc && (
-                                        <span className="font-mono bg-green-100 text-green-800 px-2 py-0.5 rounded">
-                                          {p.habilidade_bncc}
-                                        </span>
-                                      )}
-                                      {p.area_conhecimento && (
-                                        <span className="bg-gray-100 text-gray-700 px-2 py-0.5 rounded">
-                                          {p.area_conhecimento}
-                                        </span>
-                                      )}
-                                    </div>
-                                  </div>
-                                  <div className="flex items-center gap-1">
-                                    <Button
-                                      variant="ghost"
-                                      size="icon"
-                                      onClick={() => handleEditClick(p)}
-                                      title="Editar"
-                                    >
-                                      <Edit className="h-4 w-4 text-gray-500 hover:text-purple-600" />
-                                    </Button>
-                                    <Button
-                                      variant="ghost"
-                                      size="icon"
-                                      onClick={() => setDeleteConfirmId(p.id)}
-                                      title="Excluir"
-                                    >
-                                      <Trash2 className="h-4 w-4 text-gray-500 hover:text-red-600" />
-                                    </Button>
-                                  </div>
-                                </div>
-                              </div>
-                            ))}
-                          </div>
-                        </AccordionContent>
-                      </AccordionItem>
+                      <SelectItem key={c.id} value={String(c.id)}>
+                        <span className="flex items-center gap-2"><Icone className="h-4 w-4 text-purple-600" />{c.nome}</span>
+                      </SelectItem>
                     );
                   })}
-                </Accordion>
-              )}
-            </CardContent>
-          </Card>
-        </main>
-      </div>
-
-      {/* Modal de Gerenciamento de Campos */}
-      <Dialog
-        open={isCampoManagerOpen}
-        onOpenChange={(open) => {
-          setIsCampoManagerOpen(open);
-          if (!open) {
-            resetCampoCreate();
-          }
-        }}
-      >
-        <DialogContent className="max-w-3xl">
-          <DialogHeader>
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <DialogTitle className="flex items-center gap-2">
-                <Settings className="h-5 w-5 text-purple-600" />
-                Gerenciar Campos de Experiência
-              </DialogTitle>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => setIsCampoCreateOpen(prev => !prev)}
-              >
-                <PlusCircle className="h-4 w-4 mr-2" />
-                {isCampoCreateOpen ? 'Ocultar' : 'Novo Campo'}
-              </Button>
+                </SelectContent>
+              </Select>
             </div>
-            <DialogDescription>
-              Crie, edite ou desative campos de experiência disponíveis para as perguntas.
-            </DialogDescription>
-          </DialogHeader>
-          {isCampoCreateOpen && (
-            <div className="p-4 border rounded-lg bg-white">
-              <div className="grid gap-4">
-                <div>
-                  <Label className="font-medium">Nome do campo</Label>
-                  <Input
-                    value={campoCreateForm.nome}
-                    onChange={(e) => setCampoCreateForm(prev => ({ ...prev, nome: e.target.value }))}
-                    className="mt-1"
-                    placeholder="Nome do campo de experiência"
-                  />
-                </div>
-
-                <div>
-                  <Label className="font-medium">Escolha um ícone</Label>
-                  <div className="mt-2">
-                    <IconPicker
-                      selectedIcon={campoCreateForm.icone}
-                      onSelect={(value) => setCampoCreateForm(prev => ({ ...prev, icone: value }))}
-                    />
-                  </div>
-                </div>
-
-                <div className="p-3 bg-gray-50 rounded-lg">
-                  <p className="text-sm text-gray-600 mb-2">Prévia:</p>
-                  <div className="flex items-center gap-2">
-                    {React.createElement(getIconComponent(campoCreateForm.icone), { className: "h-5 w-5 text-purple-600" })}
-                    <span className="font-medium">{campoCreateForm.nome || 'Nome do campo'}</span>
-                  </div>
-                </div>
-
-                <div className="flex items-center justify-end gap-2">
-                  <Button variant="ghost" onClick={resetCampoCreate}>
-                    Cancelar
-                  </Button>
-                  <Button onClick={handleCreateCampo} disabled={creatingCampo || !campoCreateForm.nome.trim()}>
-                    {creatingCampo ? (
-                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                    ) : (
-                      <Check className="h-4 w-4 mr-2" />
-                    )}
-                    Criar Campo
-                  </Button>
-                </div>
-              </div>
-            </div>
-          )}
-          {customCamposWithUsage.length === 0 ? (
-            <div className="text-sm text-gray-600 py-6 text-center">
-              Nenhum campo ativo encontrado. Crie um novo campo para disponibilizar nas perguntas.
-            </div>
-          ) : (
-            <div className="space-y-3 max-h-[60vh] overflow-auto pr-1">
-              {customCamposWithUsage.map((campo) => {
-                const Icon = resolveCampoIcon(campo.nome, campo.icone);
-                return (
-                  <div key={campo.id} className="flex items-center justify-between gap-4 p-3 border rounded-lg bg-gray-50">
-                    <div className="flex items-center gap-3">
-                      {React.createElement(Icon, { className: "h-5 w-5 text-purple-600" })}
-                      <div>
-                        <p className="font-medium text-gray-800">{campo.nome}</p>
-                        <p className="text-xs text-gray-500">
-                          {campo.total_perguntas} pergunta(s) vinculada(s)
-                        </p>
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-1">
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        onClick={() => openCampoEdit(campo)}
-                        title="Editar campo"
-                      >
-                        <Edit className="h-4 w-4 text-gray-600" />
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        onClick={() => openCampoDelete(campo)}
-                        title="Excluir campo"
-                      >
-                        <Trash2 className="h-4 w-4 text-gray-600 hover:text-red-600" />
-                      </Button>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          )}
-          <DialogFooter>
-            <DialogClose asChild>
-              <Button variant="outline">Fechar</Button>
-            </DialogClose>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      {/* Modal de Edição de Campo */}
-      <Dialog
-        open={isCampoEditOpen}
-        onOpenChange={(open) => {
-          setIsCampoEditOpen(open);
-          if (!open) {
-            setEditingCampo(null);
-            setCampoForm({ nome: '', icone: 'BookOpen' });
-          }
-        }}
-      >
-        <DialogContent className="max-w-md">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              <Edit className="h-5 w-5 text-purple-600" />
-              Editar Campo de Experiência
-            </DialogTitle>
-            <DialogDescription>
-              Atualize o nome e o ícone do campo. As perguntas vinculadas serão ajustadas automaticamente.
-            </DialogDescription>
-          </DialogHeader>
-
-          <div className="space-y-4 py-4">
             <div>
-              <Label className="font-medium">Nome do campo</Label>
+              <Label htmlFor="bncc-nivel">Nível/Faixa Etária</Label>
+              <Select value={formData.faixa_etaria} onValueChange={(v) => set('faixa_etaria', v)}>
+                <SelectTrigger id="bncc-nivel"><SelectValue placeholder="Selecione o nível" /></SelectTrigger>
+                <SelectContent>
+                  {[...new Set([...niveis, formData.faixa_etaria].filter(Boolean))].map((n) => (
+                    <SelectItem key={n} value={n}>{n}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+          <div>
+            <Label htmlFor="bncc-pergunta">Pergunta Facilitadora</Label>
+            <textarea
+              id="bncc-pergunta" rows={3} required className={textareaClasses}
+              value={formData.pergunta} onChange={(e) => set('pergunta', e.target.value)}
+              placeholder="Digite a pergunta facilitadora para observação pedagógica"
+            />
+          </div>
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <div>
+              <Label htmlFor="bncc-referencia">Referência (BNCC)</Label>
               <Input
-                value={campoForm.nome}
-                onChange={(e) => setCampoForm(prev => ({ ...prev, nome: e.target.value }))}
-                className="mt-1"
-                placeholder="Nome do campo de experiência"
+                id="bncc-referencia" required maxLength={20} className="font-mono uppercase"
+                value={formData.referencia_bncc} onChange={(e) => set('referencia_bncc', e.target.value)}
+                placeholder="Ex: EI03EO01"
+              />
+              {pergunta?.habilidade_bncc_descricao && formData.referencia_bncc.trim().toUpperCase() === pergunta.habilidade_bncc_codigo && (
+                <p className="mt-1 text-xs text-gray-500">{pergunta.habilidade_bncc_descricao}</p>
+              )}
+            </div>
+            <div>
+              <Label htmlFor="bncc-area">Área do Conhecimento <span className="text-xs text-gray-400">(opcional)</span></Label>
+              <Input
+                id="bncc-area" maxLength={200}
+                value={formData.area_conhecimento} onChange={(e) => set('area_conhecimento', e.target.value)}
+                placeholder="Ex: Linguagens, Matemática..."
               />
             </div>
-
-            <div>
-              <Label className="font-medium">Escolha um ícone</Label>
-              <div className="mt-2">
-                <IconPicker
-                  selectedIcon={campoForm.icone}
-                  onSelect={(value) => setCampoForm(prev => ({ ...prev, icone: value }))}
-                />
-              </div>
-            </div>
-
-            <div className="p-3 bg-gray-50 rounded-lg">
-              <p className="text-sm text-gray-600 mb-2">Prévia:</p>
-              <div className="flex items-center gap-2">
-                {React.createElement(getIconComponent(campoForm.icone), { className: "h-5 w-5 text-purple-600" })}
-                <span className="font-medium">{campoForm.nome || 'Nome do campo'}</span>
-              </div>
-            </div>
-
-            {editingCampo?.total_perguntas > 0 && (
-              <div className="text-xs text-gray-500">
-                Esta alteração atualizará {editingCampo.total_perguntas} pergunta(s) vinculada(s).
-              </div>
-            )}
           </div>
-
+          <div>
+            <Label htmlFor="bncc-norma">Texto da Norma BNCC <span className="text-xs text-gray-400">(opcional)</span></Label>
+            <textarea
+              id="bncc-norma" rows={2} className={textareaClasses}
+              value={formData.pergunta_norma} onChange={(e) => set('pergunta_norma', e.target.value)}
+              placeholder="Texto original da norma BNCC"
+            />
+          </div>
           <DialogFooter>
-            <Button variant="ghost" onClick={() => setIsCampoEditOpen(false)}>
-              Cancelar
-            </Button>
-            <Button onClick={handleSaveCampo} disabled={savingCampo}>
-              {savingCampo ? (
-                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-              ) : (
-                <Check className="h-4 w-4 mr-2" />
-              )}
-              <span>Salvar Alterações</span>
+            <DialogClose asChild><Button type="button" variant="ghost" disabled={salvando}>Cancelar</Button></DialogClose>
+            <Button type="submit" disabled={salvando}>
+              {salvando && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+              Salvar Pergunta
             </Button>
           </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
+  );
+};
+
+// ─── Gerenciador de campos de experiência ─────────────────────────────────────
+
+const CAMPO_VAZIO = { nome: '', icone: 'BookOpen', escola: '' };
+
+const GerenciadorCampos = ({ isOpen, setIsOpen, campos, escolas, podeEditarOficiais, onAlterado }) => {
+  const { toast } = useToast();
+  const avisarErro = (titulo, err) => toast({ variant: 'destructive', title: titulo, description: mensagemDeErro(err) });
+
+  const [formCampo, setFormCampo] = useState(null);      // { ...CAMPO_VAZIO, id? } aberto para criar/editar
+  const [salvandoCampo, setSalvandoCampo] = useState(false);
+  const [desativando, setDesativando] = useState(null);  // campo sendo desativado
+  const [destino, setDestino] = useState('');
+  const [processando, setProcessando] = useState(false);
+
+  const editavel = (c) => !!c.escola || podeEditarOficiais;
+  const ordenados = useMemo(
+    () => [...campos].sort((a, b) => (a.ativo === b.ativo ? a.nome.localeCompare(b.nome, 'pt-BR') : a.ativo ? -1 : 1)),
+    [campos],
+  );
+
+  // Destinos válidos: ativos, diferentes do campo; origem oficial → só oficiais
+  // (as perguntas são de várias escolas); origem da escola → oficiais + da mesma escola.
+  const destinos = useMemo(() => {
+    if (!desativando) return [];
+    return campos.filter((c) => c.ativo !== false && c.id !== desativando.id
+      && (desativando.escola ? campoValidoPara(c, String(desativando.escola)) : !c.escola));
+  }, [campos, desativando]);
+
+  const abrirNovo = () => setFormCampo({
+    ...CAMPO_VAZIO, escola: escolas.length === 1 && !podeEditarOficiais ? String(escolas[0].id) : '',
+  });
+
+  const salvarCampo = async () => {
+    const nome = formCampo.nome.trim();
+    if (!nome) return;
+    if (!formCampo.id && !formCampo.escola) {
+      toast({ variant: 'destructive', title: 'Selecione a escola do campo.' });
+      return;
+    }
+    setSalvandoCampo(true);
+    try {
+      if (formCampo.id) {
+        await atualizarCampoPedagogico(formCampo.id, { nome, icone: formCampo.icone });
+      } else {
+        const dados = { nome, icone: formCampo.icone };
+        if (formCampo.escola !== OFICIAL) dados.escola = formCampo.escola;
+        await criarCampoPedagogico(dados);
+      }
+      toast({ title: `Campo ${formCampo.id ? 'atualizado' : 'criado'} com sucesso!` });
+      setFormCampo(null);
+      onAlterado();
+    } catch (err) {
+      avisarErro('Erro ao salvar campo', err);
+    } finally {
+      setSalvandoCampo(false);
+    }
+  };
+
+  const confirmarDesativacao = async () => {
+    const total = desativando.total_perguntas || 0;
+    if (total > 0 && !destino) {
+      toast({ variant: 'destructive', title: 'Remanejamento necessário', description: 'Escolha o campo que vai receber as perguntas.' });
+      return;
+    }
+    setProcessando(true);
+    try {
+      const r = await desativarCampoPedagogico(desativando.id, destino || null);
+      toast({
+        title: 'Campo desativado',
+        description: r.perguntas_remanejadas ? `${r.perguntas_remanejadas} pergunta(s) remanejada(s).` : undefined,
+      });
+      setDesativando(null);
+      setDestino('');
+      onAlterado();
+    } catch (err) {
+      avisarErro('Erro ao desativar campo', err);
+    } finally {
+      setProcessando(false);
+    }
+  };
+
+  const reativar = async (campo) => {
+    try {
+      await atualizarCampoPedagogico(campo.id, { ativo: true });
+      toast({ title: 'Campo reativado!' });
+      onAlterado();
+    } catch (err) {
+      avisarErro('Erro ao reativar campo', err);
+    }
+  };
+
+  return (
+    <>
+      <Dialog open={isOpen} onOpenChange={setIsOpen}>
+        <DialogContent className="max-h-[90vh] max-w-2xl overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Campos de Experiência</DialogTitle>
+            <DialogDescription>
+              Campos oficiais valem para todas as escolas. Desativar um campo com perguntas exige escolher
+              para qual campo elas vão.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="flex justify-end">
+            <Button size="sm" onClick={abrirNovo}><PlusCircle className="mr-2 h-4 w-4" /> Novo Campo</Button>
+          </div>
+          <div className="divide-y rounded-md border">
+            {ordenados.length === 0 && <p className="p-4 text-center text-sm text-gray-500">Nenhum campo cadastrado.</p>}
+            {ordenados.map((c) => {
+              const Icone = iconeDoCampo(c.nome, c.icone);
+              return (
+                <div key={c.id} className={`flex items-center justify-between gap-3 px-4 py-3 ${c.ativo === false ? 'opacity-60' : ''}`}>
+                  <div className="flex min-w-0 items-center gap-3">
+                    <Icone className="h-5 w-5 shrink-0 text-purple-600" />
+                    <div className="min-w-0">
+                      <p className="truncate font-medium">{c.nome}</p>
+                      <p className="text-xs text-gray-500">
+                        {c.escola ? c.escola_nome : 'Oficial'} · {c.total_perguntas ?? 0} pergunta(s)
+                        {c.ativo === false && ' · desativado'}
+                      </p>
+                    </div>
+                  </div>
+                  {editavel(c) ? (
+                    <div className="flex shrink-0 items-center gap-1">
+                      <Button variant="ghost" size="icon" aria-label="Editar campo"
+                        onClick={() => setFormCampo({ id: c.id, nome: c.nome, icone: c.icone || 'BookOpen', escola: c.escola ? String(c.escola) : OFICIAL })}>
+                        <Edit className="h-4 w-4" />
+                      </Button>
+                      {c.ativo === false ? (
+                        <Button variant="ghost" size="icon" aria-label="Reativar campo" onClick={() => reativar(c)}>
+                          <RotateCcw className="h-4 w-4 text-green-600" />
+                        </Button>
+                      ) : (
+                        <Button variant="ghost" size="icon" aria-label="Desativar campo" onClick={() => { setDestino(''); setDesativando(c); }}>
+                          <Power className="h-4 w-4 text-red-500" />
+                        </Button>
+                      )}
+                    </div>
+                  ) : <span className="shrink-0 text-xs text-gray-400">Somente leitura</span>}
+                </div>
+              );
+            })}
+          </div>
         </DialogContent>
       </Dialog>
 
-      {/* Dialog de Exclusão de Campo */}
-      <Dialog
-        open={isCampoDeleteOpen}
-        onOpenChange={(open) => {
-          setIsCampoDeleteOpen(open);
-          if (!open) {
-            setDeletingCampo(null);
-            setRemapTarget('');
-          }
-        }}
-      >
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              <Trash2 className="h-5 w-5 text-red-600" />
-              Excluir Campo de Experiência
-            </DialogTitle>
-          </DialogHeader>
-          <div className="space-y-4">
-            <p className="text-gray-600">
-              Tem certeza que deseja desativar o campo <strong>{deletingCampo?.nome}</strong>?
-            </p>
-            {deletingCampo?.total_perguntas > 0 && (
-              <div className="p-3 bg-amber-50 border border-amber-200 rounded-lg text-sm text-amber-800 flex items-start gap-2">
-                <AlertTriangle className="h-4 w-4 mt-0.5" />
-                <span>
-                  Existem {deletingCampo.total_perguntas} pergunta(s) vinculada(s). Selecione um campo de destino para remanejamento.
-                </span>
-              </div>
-            )}
-            {deletingCampo?.total_perguntas > 0 && (
-              <div className="space-y-2">
-                <Label className="font-medium">Remanejar perguntas para</Label>
-                <Select value={remapTarget} onValueChange={setRemapTarget}>
-                  <SelectTrigger>
-                    <SelectValue placeholder="Selecione o campo de destino" />
-                  </SelectTrigger>
+      {/* Criar/editar campo */}
+      <Dialog open={!!formCampo} onOpenChange={(aberto) => { if (!aberto && !salvandoCampo) setFormCampo(null); }}>
+        <DialogContent className="max-w-md">
+          <DialogHeader><DialogTitle>{formCampo?.id ? 'Editar' : 'Novo'} Campo de Experiência</DialogTitle></DialogHeader>
+          <div className="space-y-4 py-2">
+            {!formCampo?.id && (podeEditarOficiais || escolas.length > 1) && (
+              <div>
+                <Label htmlFor="campo-escola">Escola</Label>
+                <Select value={formCampo?.escola || ''} onValueChange={(v) => setFormCampo((f) => ({ ...f, escola: v }))}>
+                  <SelectTrigger id="campo-escola"><SelectValue placeholder="Selecione a escola" /></SelectTrigger>
                   <SelectContent>
-                    {remapCampoOptions.map((nome) => (
-                      <SelectItem key={nome} value={nome}>{nome}</SelectItem>
-                    ))}
+                    {podeEditarOficiais && <SelectItem value={OFICIAL}>Oficial (todas as escolas)</SelectItem>}
+                    {escolas.map((e) => <SelectItem key={e.id} value={String(e.id)}>{e.nome}</SelectItem>)}
                   </SelectContent>
                 </Select>
               </div>
             )}
+            <div>
+              <Label htmlFor="campo-nome">Nome do campo</Label>
+              <Input id="campo-nome" maxLength={200} value={formCampo?.nome || ''}
+                onChange={(e) => setFormCampo((f) => ({ ...f, nome: e.target.value }))} />
+            </div>
+            <div>
+              <Label>Ícone</Label>
+              <div className="mt-2">
+                <IconPicker selectedIcon={formCampo?.icone || 'BookOpen'} onSelect={(icone) => setFormCampo((f) => ({ ...f, icone }))} />
+              </div>
+            </div>
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setIsCampoDeleteOpen(false)}>
-              Cancelar
-            </Button>
-            <Button
-              variant="destructive"
-              onClick={handleDeleteCampo}
-              disabled={deletingCampoLoading || (deletingCampo?.total_perguntas > 0 && !remapTarget)}
-            >
-              {deletingCampoLoading && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
-              Excluir
+            <DialogClose asChild><Button variant="ghost" disabled={salvandoCampo}>Cancelar</Button></DialogClose>
+            <Button onClick={salvarCampo} disabled={salvandoCampo || !formCampo?.nome.trim()}>
+              {salvandoCampo && <Loader2 className="mr-2 h-4 w-4 animate-spin" />} Salvar
             </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
 
-      {/* Modal de Nova Pergunta */}
-      <NovaPerguntaForm
-        isOpen={isNewModalOpen}
-        onClose={() => setIsNewModalOpen(false)}
-        onSave={handleSaveNew}
-        existingCampos={existingCampos}
-        customCampos={customCampos}
-        onCampoCreated={handleCampoCreated}
-        educationLevels={educationLevels}
-      />
-
-      {/* Modal de Edição */}
-      <EditarPerguntaForm
-        isOpen={isEditModalOpen}
-        onClose={() => {
-          setIsEditModalOpen(false);
-          setEditingPergunta(null);
-        }}
-        pergunta={editingPergunta}
-        onSave={handleSaveEdit}
-        existingCampos={existingCampos}
-        customCampos={customCampos}
-        onCampoCreated={handleCampoCreated}
-        educationLevels={educationLevels}
-      />
-
-      {/* Dialog de Confirmação de Exclusão */}
-      <Dialog open={!!deleteConfirmId} onOpenChange={() => setDeleteConfirmId(null)}>
-        <DialogContent>
+      {/* Desativar campo (com remanejamento) */}
+      <Dialog open={!!desativando} onOpenChange={(aberto) => { if (!aberto && !processando) setDesativando(null); }}>
+        <DialogContent className="max-w-md">
           <DialogHeader>
-            <DialogTitle>Confirmar Exclusão</DialogTitle>
+            <DialogTitle>Desativar campo</DialogTitle>
+            <DialogDescription>
+              O campo "{desativando?.nome}" deixa de ser oferecido nos cadastros. Você pode reativá-lo depois.
+            </DialogDescription>
           </DialogHeader>
-          <p className="text-gray-600">
-            Tem certeza que deseja excluir esta pergunta? Esta ação não pode ser desfeita.
-          </p>
+          {(desativando?.total_perguntas || 0) > 0 && (
+            <div className="space-y-2">
+              <div className="flex items-start gap-2 rounded-md bg-amber-50 p-3 text-sm text-amber-800">
+                <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+                <span>{desativando.total_perguntas} pergunta(s) usam este campo e serão remanejadas.</span>
+              </div>
+              <Label className="font-medium">Remanejar perguntas para</Label>
+              <Select value={destino} onValueChange={setDestino}>
+                <SelectTrigger><SelectValue placeholder="Selecione o campo de destino" /></SelectTrigger>
+                <SelectContent>
+                  {destinos.map((c) => <SelectItem key={c.id} value={String(c.id)}>{c.nome}{c.escola ? '' : ' (oficial)'}</SelectItem>)}
+                </SelectContent>
+              </Select>
+              {destinos.length === 0 && (
+                <p className="text-xs text-gray-500">Não há outro campo ativo que possa receber estas perguntas. Crie um antes.</p>
+              )}
+            </div>
+          )}
           <DialogFooter>
-            <DialogClose asChild>
-              <Button variant="outline">Cancelar</Button>
-            </DialogClose>
-            <Button variant="destructive" onClick={() => handleDeletePergunta(deleteConfirmId)}>
-              Excluir
+            <DialogClose asChild><Button variant="ghost" disabled={processando}>Cancelar</Button></DialogClose>
+            <Button variant="destructive" onClick={confirmarDesativacao} disabled={processando}>
+              {processando && <Loader2 className="mr-2 h-4 w-4 animate-spin" />} Desativar
             </Button>
           </DialogFooter>
         </DialogContent>

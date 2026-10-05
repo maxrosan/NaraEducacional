@@ -1,39 +1,30 @@
 """
-Drill-down "crianças por classe de alfabetização" (tela de coordenação).
+Drill-down "alunos por classe de alfabetização" (tela de coordenação).
 
-Ao clicar numa classe no card "Pulso da alfabetização", abre-se a lista de todas
-as crianças naquela fase (escrita ou leitura) no período avaliativo vigente, com
-filtro por turma e paginação server-side.
+Ao clicar numa classe no card "Pulso da alfabetização", abre-se a lista de
+todos os alunos naquela fase (escrita ou leitura) no recorte selecionado,
+com filtro por turma e paginação server-side.
 
-A regra de "última classificação por criança no período" é a MESMA do card — mora
-em `services/coordenacao_cache.criancas_por_classe_alfabetizacao` — então os números
-da lista e da distribuição nunca divergem. A lista é computada ao vivo (não vem do
-cache, que guarda só os totais), garantindo frescor.
+A regra de "última classificação por aluno no período" é a MESMA do card —
+mora em `services/coordenacao_cache.alunos_por_classe_alfabetizacao` — então
+os números da lista e da distribuição nunca divergem. A lista é computada ao
+vivo (não vem de cache), garantindo frescor.
+
+Escola e recorte seguem o contrato comum das telas da coordenação:
+`escopo.resolver_escola_painel` e `views.coordenacao_cache.recorte_da_requisicao`.
 """
 
 from __future__ import annotations
 
-from datetime import date
-
-from django.core.exceptions import ValidationError
+from rest_framework import status
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
-from rest_framework import status
 
-from api.models import PeriodoAvaliativo, Turma
-from api.services.coordenacao_cache import (
-    RecorteInvalido,
-    criancas_por_classe_alfabetizacao,
-    resolver_recorte,
-)
-
-
-def _parse_data(valor: str | None) -> date | None:
-    """`YYYY-MM-DD` → date. Levanta ValueError em formato inválido."""
-    if not valor:
-        return None
-    return date.fromisoformat(valor)
+from api.models import Turma
+from api.services.coordenacao_cache import alunos_por_classe_alfabetizacao
+from api.escopo import resolver_escola_painel
+from api.views.coordenacao_cache import recorte_da_requisicao
 
 MODALIDADES = ('escrita', 'leitura')
 
@@ -41,7 +32,11 @@ MODALIDADES = ('escrita', 'leitura')
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
 def alfabetizacao_criancas(request):
-    """Lista paginada de crianças numa classe de alfabetização (escrita|leitura)."""
+    """Lista paginada de alunos numa classe de alfabetização (escrita|leitura)."""
+    escola_id, erro = resolver_escola_painel(request)
+    if erro:
+        return erro
+
     modalidade = (request.GET.get('modalidade') or '').strip().lower()
     classe = (request.GET.get('classe') or '').strip()
     turma_id = request.GET.get('turma_id') or None
@@ -63,27 +58,14 @@ def alfabetizacao_criancas(request):
     except (TypeError, ValueError):
         offset = 0
 
-    # Mesmo recorte do painel: sem parâmetro cai no período vigente, e o
-    # drill-down continua batendo com o card que o usuário clicou.
-    try:
-        recorte = resolver_recorte(
-            periodo_id=request.GET.get('periodo_id') or None,
-            data_inicio=_parse_data(request.GET.get('data_inicio')),
-            data_fim=_parse_data(request.GET.get('data_fim')),
-        )
-    except (RecorteInvalido, ValueError) as exc:
-        return Response({'error': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
-    except (PeriodoAvaliativo.DoesNotExist, ValidationError):
-        return Response(
-            {'error': 'Período avaliativo não encontrado.'},
-            status=status.HTTP_404_NOT_FOUND,
-        )
+    recorte, erro = recorte_da_requisicao(request, escola_id)
+    if erro:
+        return erro
 
-    todas = criancas_por_classe_alfabetizacao(recorte, modalidade, classe, turma_id)
-    count = len(todas)
-    page = todas[offset:offset + limit]
+    todos = alunos_por_classe_alfabetizacao(escola_id, recorte, modalidade, classe, turma_id)
+    count = len(todos)
+    page = todos[offset:offset + limit]
 
-    # Resolve nome da turma só para a página atual.
     turma_ids = {r['turma_id'] for r in page if r['turma_id']}
     nomes = {}
     if turma_ids:

@@ -1,0 +1,94 @@
+Creating test database for alias 'default'...
+................[2026-10-02 18:23:12,007] INFO botocore.credentials | Found credentials in environment variables.
+..........................................................................................[2026-10-02 18:23:20,608] INFO api.views.auth | Logout: refresh token invalidado (user_id=41458c58-616c-4798-8420-2eb672f5dcca).
+.[2026-10-02 18:23:20,621] INFO api.views.auth | Logout: refresh token invalidado (user_id=41458c58-616c-4798-8420-2eb672f5dcca).
+.[2026-10-02 18:23:20,630] INFO api.views.auth | Logout: refresh token invalidado (user_id=41458c58-616c-4798-8420-2eb672f5dcca).
+.[2026-10-02 18:23:20,645] INFO api.views.auth | Logout: refresh token invalidado (user_id=41458c58-616c-4798-8420-2eb672f5dcca).
+..........[2026-10-02 18:23:24,219] DEBUG api.services.openai_usage | [openai_usage] Registrado: model=gpt-4o-mini in=10 out=5 custo=$0.00000450
+.[2026-10-02 18:23:24,227] DEBUG api.services.openai_usage | [openai_usage] Registrado: model=gpt-4o-mini in=10 out=5 custo=$0.00000450
+.[2026-10-02 18:23:24,233] DEBUG api.services.openai_usage | [openai_usage] Registrado: model=gpt-4o-mini in=10 out=5 custo=$0.00000450
+.[2026-10-02 18:23:24,236] WARNING api.services.openai_usage | [openai_usage] Falha ao registrar uso (não crítico): ['“nao-e-uuid” is not a valid UUID.']
+[2026-10-02 18:23:24,236] WARNING api.services.openai_usage | [openai_usage] Chamado sem tokens suficientes para registrar. Passe `response` ou `input_tokens` + `output_tokens` explicitamente.
+.[2026-10-02 18:23:24,240] DEBUG api.services.openai_usage | [openai_usage] Registrado: model=gpt-4o-mini in=10 out=5 custo=$0.00000450
+.[2026-10-02 18:23:24,244] DEBUG api.services.openai_usage | [openai_usage] Registrado: model=whisper-1 in=91 out=0 custo=$0.0091
+........................................................................................................................[2026-10-02 18:23:44,296] DEBUG api.services.prompt_resolver | [prompt_resolver] Usando global do banco categoria=Planejamento (id=240e5aa8-c883-4494-9b7d-c8759a41a321)
+.[2026-10-02 18:23:44,303] DEBUG api.services.prompt_resolver | [prompt_resolver] Usando global do banco categoria=Planejamento (id=240e5aa8-c883-4494-9b7d-c8759a41a321)
+.[2026-10-02 18:23:45,894] DEBUG api.services.prompt_resolver | [prompt_resolver] Usando global do banco categoria=Planejamento - Habilidades BNCC (id=76cc26c9-6320-46d9-94e0-5e29e4c76f9d)
+[2026-10-02 18:23:45,894] WARNING api.services.planejamento_ia | IA não retornou habilidades válidas; usando fallback.
+.[2026-10-02 18:23:45,903] DEBUG api.services.prompt_resolver | [prompt_resolver] Usando global do banco categoria=Planejamento - Habilidades BNCC (id=76cc26c9-6320-46d9-94e0-5e29e4c76f9d)
+.[2026-10-02 18:23:45,914] DEBUG api.services.prompt_resolver | [prompt_resolver] Usando personalizado escola=c0529100-e3df-4c2e-b46d-a4f4efeff5cb categoria=Planejamento - Habilidades BNCC (id=5ffd6d4d-f656-40d8-b193-3390a34f1432)
+.[2026-10-02 18:23:45,923] DEBUG api.services.prompt_resolver | [prompt_resolver] Usando global do banco categoria=Planejamento - Habilidades BNCC (id=76cc26c9-6320-46d9-94e0-5e29e4c76f9d)
+........[2026-10-02 18:23:49,374] DEBUG api.services.prompt_resolver | [prompt_resolver] Usando personalizado escola=96e13d60-a35d-4adf-bc83-2f6012ce8772 categoria=Escrita (id=47db205d-3a6f-4ae5-b581-13e50f330f60)
+[2026-10-02 18:23:49,377] DEBUG api.services.prompt_resolver | [prompt_resolver] Usando global do banco categoria=Escrita (id=342039c1-8086-4729-8843-97746eab8b35)
+[2026-10-02 18:23:49,379] DEBUG api.services.prompt_resolver | [prompt_resolver] Usando global do banco categoria=Escrita (id=342039c1-8086-4729-8843-97746eab8b35)
+..[2026-10-02 18:23:49,397] DEBUG api.services.prompt_resolver | [prompt_resolver] Usando global do banco categoria=Voz (id=1e1e72ad-ba2e-4713-adf6-f1579f089a5a)
+[2026-10-02 18:23:49,399] DEBUG api.services.prompt_resolver | [prompt_resolver] Usando global do banco categoria=Voz (id=1e1e72ad-ba2e-4713-adf6-f1579f089a5a)
+.......[2026-10-02 18:23:49,513] DEBUG api.services.prompt_resolver | [prompt_resolver] Usando global do banco categoria=Escrita (id=342039c1-8086-4729-8843-97746eab8b35)
+....[2026-10-02 18:23:49,544] DEBUG api.services.prompt_resolver | [prompt_resolver] Usando global do banco categoria=Escrita (id=342039c1-8086-4729-8843-97746eab8b35)
+.[2026-10-02 18:23:49,547] WARNING api.services.prompt_resolver | [prompt_resolver] Categoria 'Escrita' não existe ou está inativa no banco; usando fallback.
+[2026-10-02 18:23:49,547] WARNING api.services.prompt_resolver | [prompt_resolver] Nenhum prompt encontrado para categoria=Escrita
+.[2026-10-02 18:23:49,552] DEBUG api.services.prompt_resolver | [prompt_resolver] Usando global do banco categoria=Escrita (id=342039c1-8086-4729-8843-97746eab8b35)
+.......[2026-10-02 18:23:53,224] INFO api.services.analise_producao | [REVISAO] escrita hash-prof2: None -> 'Pré-silábica' (revisado_por=prof2.a1@x.com)
+.............................................[2026-10-02 18:24:08,304] INFO api.signals | PDF removido junto com o relatório.
+...[2026-10-02 18:24:08,327] INFO api.views.relatorio | baixar_pdf_relatorio solicitado: relatorio=4b5b18dc-6950-4faa-b864-0b81273745b1 user=67b23707-4e0d-4a2e-b408-2dd35c326935
+[2026-10-02 18:24:08,329] INFO api.views.relatorio | baixar_pdf_relatorio concluído: relatorio=4b5b18dc-6950-4faa-b864-0b81273745b1 cached=True filename=relatorio.pdf bytes=8 total=1 ms
+...................................................................................................................[2026-10-02 18:24:27,890] DEBUG api.services.relatorio | [PLANEJAMENTOS] turma_id=turma-1
+[2026-10-02 18:24:27,890] DEBUG api.services.relatorio | [PLANEJAMENTOS] período de busca: 2026-08-01 a 2026-09-30
+[2026-10-02 18:24:27,890] DEBUG api.services.relatorio | [PLANEJAMENTOS] encontrados 1 planejamentos
+[2026-10-02 18:24:27,891] DEBUG api.services.relatorio | [RELATÓRIO] 1 planejamentos semanais adicionados
+[2026-10-02 18:24:27,891] DEBUG api.services.relatorio | [OPENAI] enviando prompt da seção de atividades
+[2026-10-02 18:24:27,891] DEBUG api.services.relatorio | [OPENAI] narrativa validada (16 caracteres)
+.[2026-10-02 18:24:27,893] DEBUG api.services.relatorio | [PLANEJAMENTOS] turma_id=turma-1
+[2026-10-02 18:24:27,893] DEBUG api.services.relatorio | [PLANEJAMENTOS] período de busca: 2026-08-01 a 2026-09-30
+[2026-10-02 18:24:27,893] DEBUG api.services.relatorio | [PLANEJAMENTOS] encontrados 1 planejamentos
+[2026-10-02 18:24:27,893] DEBUG api.services.relatorio | [RELATÓRIO] 1 planejamentos semanais adicionados
+[2026-10-02 18:24:27,893] DEBUG api.services.relatorio | [OPENAI] enviando prompt da seção de atividades
+[2026-10-02 18:24:27,893] ERROR api.services.relatorio | [OPENAI] falha ao gerar a seção de atividades.
+Traceback (most recent call last):
+  File "/app/api/services/relatorio.py", line 630, in _gerar_secao_atividades
+    parsed = json.loads(_strip_code_fences(raw_content))
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/json/__init__.py", line 346, in loads
+    return _default_decoder.decode(s)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/json/decoder.py", line 337, in decode
+    obj, end = self.raw_decode(s, idx=_w(s, 0).end())
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/json/decoder.py", line 355, in raw_decode
+    raise JSONDecodeError("Expecting value", s, err.value) from None
+json.decoder.JSONDecodeError: Expecting value: line 1 column 1 (char 0)
+.[2026-10-02 18:24:27,896] DEBUG api.services.relatorio | [PLANEJAMENTOS] turma_id=turma-1
+[2026-10-02 18:24:27,896] DEBUG api.services.relatorio | [PLANEJAMENTOS] período de busca: 2026-08-01 a 2026-09-30
+[2026-10-02 18:24:27,896] DEBUG api.services.relatorio | [PLANEJAMENTOS] encontrados 1 planejamentos
+[2026-10-02 18:24:27,896] DEBUG api.services.relatorio | [RELATÓRIO] 1 planejamentos semanais adicionados
+[2026-10-02 18:24:27,897] DEBUG api.services.relatorio | [OPENAI] enviando prompt da seção de atividades
+[2026-10-02 18:24:27,897] DEBUG api.services.relatorio | [OPENAI] narrativa validada (9 caracteres)
+.[2026-10-02 18:24:27,897] DEBUG api.services.relatorio | [PLANEJAMENTOS] turma_id=None
+[2026-10-02 18:24:27,897] DEBUG api.services.relatorio | [PLANEJAMENTOS] aluno sem turma; usando texto padrão
+.[2026-10-02 18:24:27,898] DEBUG api.services.relatorio | [OPENAI-CONCLUSAO] análise recebida (9 caracteres)
+.[2026-10-02 18:24:27,899] ERROR api.services.relatorio | [OPENAI] falha ao gerar a conclusão.
+Traceback (most recent call last):
+  File "/app/api/services/relatorio.py", line 1099, in _gerar_secao_conclusao
+    raw_content = _gerar_com_guarda_idioma(
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/unittest/mock.py", line 1124, in __call__
+    return self._mock_call(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/unittest/mock.py", line 1128, in _mock_call
+    return self._execute_mock_call(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/unittest/mock.py", line 1183, in _execute_mock_call
+    raise effect
+Exception: timeout
+.[2026-10-02 18:24:27,900] DEBUG api.services.relatorio | [OPENAI-CONCLUSAO] análise recebida (9 caracteres)
+.[2026-10-02 18:24:27,901] DEBUG api.services.relatorio | [OPENAI-CONCLUSAO] análise recebida (42 caracteres)
+.[2026-10-02 18:24:27,901] DEBUG api.services.relatorio | [OPENAI-CONCLUSAO] análise recebida (0 caracteres)
+[2026-10-02 18:24:27,901] WARNING api.services.relatorio | [OPENAI-CONCLUSAO] resposta vazia da IA.
+......
+----------------------------------------------------------------------
+Ran 456 tests in 77.860s
+
+OK
+Destroying test database for alias 'default'...
+Found 456 test(s).
+System check identified no issues (0 silenced).

@@ -166,6 +166,8 @@ def registrar_uso_openai(
     total_cost:    Decimal | None = None,
     # --- Contexto ---
     usuario=None,
+    escola_id=None,
+    instituicao_id=None,
 ) -> None:
     """
     Registra o uso da API OpenAI na tabela `openai_usage`.
@@ -181,6 +183,10 @@ def registrar_uso_openai(
         output_cost — custo de saída em USD; se None, calculado pela tabela interna.
         total_cost  — custo total em USD; se None, soma de input + output.
         usuario     — instância de Usuario (pode ser None para chamadas de sistema).
+        escola_id / instituicao_id — tenant do consumo. Quem chama e sabe a
+                      escola do contexto (a do aluno, a do áudio) deve passar:
+                      é mais preciso que a do usuário (admin não tem escola).
+                      Sem eles, vêm do usuário; a instituição, da escola.
     """
     try:
         # ── Extrai dados da resposta OpenAI (modo 1) ────────────────────────
@@ -221,8 +227,23 @@ def registrar_uso_openai(
             output_cost = output_cost if output_cost is not None else oc
             total_cost  = total_cost  if total_cost  is not None else tc
 
+        # ── Tenant do consumo ────────────────────────────────────────────────
+        # Antes as colunas escola/instituicao ficavam sempre NULL: o custo não
+        # podia ser separado por escola nem por rede.
+        from api.models import Escola, OpenAIUsage  # import tardio para evitar circular imports
+
+        if escola_id is None and usuario is not None:
+            escola_id = getattr(usuario, "escola_id", None)
+        if instituicao_id is None:
+            if escola_id is not None:
+                instituicao_id = (
+                    Escola._base_manager.filter(pk=escola_id)
+                    .values_list("instituicao_id", flat=True).first()
+                )
+            elif usuario is not None:
+                instituicao_id = getattr(usuario, "instituicao_id", None)
+
         # ── Persiste ─────────────────────────────────────────────────────────
-        from api.models import OpenAIUsage  # import tardio para evitar circular imports
 
         OpenAIUsage.objects.create(
             input_tokens=int(input_tokens),
@@ -233,6 +254,8 @@ def registrar_uso_openai(
             total_cost=total_cost,
             model=model,
             usuario=usuario,
+            escola_id=escola_id,
+            instituicao_id=instituicao_id,
         )
 
         logger.debug(
@@ -265,6 +288,8 @@ def registrar_uso_whisper(
     duracao_segundos: float,
     usuario=None,
     modelo: str = "whisper-1",
+    escola_id=None,
+    instituicao_id=None,
 ) -> None:
     """
     Registra uso da transcrição com base na duração do áudio.
@@ -288,4 +313,6 @@ def registrar_uso_whisper(
         output_cost=Decimal("0"),
         total_cost=custo,
         usuario=usuario,
+        escola_id=escola_id,
+        instituicao_id=instituicao_id,
     )

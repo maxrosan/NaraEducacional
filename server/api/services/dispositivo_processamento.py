@@ -36,7 +36,7 @@ import tempfile
 from django.db import transaction
 from django.utils import timezone
 
-from api.models import AudioDispositivo, Crianca, ObservacaoTranscricao, Turma
+from api.models import AudioDispositivo, Aluno, ObservacaoTranscricao, Turma
 from api.services.audio import (
     InvalidAudioError,
     converter_para_wav,
@@ -62,7 +62,7 @@ def _alunos_da_turma(turma_id) -> list[dict]:
     """Crianças ativas da turma no formato que `parear_alunos_com_turma` espera."""
     return [
         {'id': str(c.id), 'nome_completo': c.nome_completo}
-        for c in Crianca.objects.filter(
+        for c in Aluno.objects.filter(
             turma_id=turma_id, status_vinculo='ativo',
         ).only('id', 'nome_completo')
     ]
@@ -140,19 +140,19 @@ def _resolver_turma(audio: AudioDispositivo, transcricao: str):
 
 def _gravar_observacoes(audio: AudioDispositivo, turma, transcricao: str, pareados: list):
     """Cria uma ObservacaoTranscricao por criança pareada."""
-    professora = audio.professora
+    professor = audio.professor
     criadas = []
     for item in pareados:
         criadas.append(ObservacaoTranscricao.objects.create(
             aluno_nome=item['aluno_nome'],
-            crianca_id=item.get('crianca_id') or None,
+            aluno_id=item.get('crianca_id') or None,
             observacao_texto=item['observacao'],
             tipo_observacao='TRANSCRICAO_IA',
             data_observacao=timezone.localdate(),
-            turma_id=str(turma.id),
-            turma_nome=turma.nome,
-            professora_id=str(audio.professora_id or ''),
-            professora_nome=getattr(professora, 'nome', ''),
+            turma=turma,
+            professor=professor,
+            escola=audio.escola,
+            instituicao=audio.instituicao,
             transcricao_completa=transcricao,
             metadados_ia={
                 'origem': 'gravador',
@@ -201,9 +201,9 @@ def processar_audio(audio: AudioDispositivo) -> AudioDispositivo:
 
         turma = _resolver_turma(audio, transcricao)
 
-        cliente_id = str(audio.instituicao_id) if audio.instituicao_id else None
+        escola_id = str(audio.escola_id) if audio.escola_id else None
         try:
-            extraido = extrair_observacoes(transcricao, cliente_id=cliente_id)
+            extraido = extrair_observacoes(transcricao, escola_id=escola_id)
         except ValueError as exc:
             # Nenhum nome citado. Se ela ANUNCIOU a turma, isso não é erro: é uma
             # gravação só para trocar de sala ("estou na turma Nível 3A"), que é
@@ -285,7 +285,7 @@ def processar_pendentes(limite: int = 20) -> dict:
     pendentes = list(
         AudioDispositivo.objects
         .filter(status='recebido')
-        .select_related('dispositivo', 'professora', 'turma')
+        .select_related('dispositivo', 'professor', 'turma')
         .order_by('data_recebimento')[:limite]
     )
 

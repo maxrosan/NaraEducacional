@@ -5,7 +5,7 @@
  * Tema claro — segue o mesmo padrão visual da AdminPage (SeriesTab, etc.)
  */
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import {
   LineChart, Line, BarChart, Bar,
   XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell,
@@ -13,8 +13,9 @@ import {
 import {
   DollarSign, Zap, TrendingUp, Clock, Database,
   RefreshCw, Filter, X, ChevronLeft, ChevronRight,
-  Users, BarChart2, AlertCircle,
+  Users, BarChart2, AlertCircle, School,
 } from "lucide-react";
+import { buscarResumoUsoOpenAI, listarUsoOpenAI, listarEscolas } from "@/services/api";
 
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -27,10 +28,6 @@ import { Label } from "@/components/ui/label";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
-
-// ─── Endpoints ───────────────────────────────────────────────────────────────
-const URL_SUMMARY = "/api/admin/openai-usage/summary/";
-const URL_REGISTROS = "/api/admin/openai-usage/";
 
 // ─── Paleta dos gráficos ─────────────────────────────────────────────────────
 const PALETA = [
@@ -113,6 +110,11 @@ function ChartTooltip({ active, payload, label }) {
   );
 }
 
+const FILTROS_VAZIOS = { model: "", data_inicio: "", data_fim: "", instituicao: "", escola: "" };
+
+/** Só os filtros preenchidos (o backend ignora os vazios de qualquer jeito). */
+const paramsDe = f => Object.fromEntries(Object.entries(f).filter(([, v]) => v));
+
 // ─── Componente principal ─────────────────────────────────────────────────────
 
 export default function OpenAIUsagePage() {
@@ -126,28 +128,37 @@ export default function OpenAIUsagePage() {
   const [erroReg, setErroReg] = useState(null);
 
   const [pagina, setPagina] = useState(1);
-  const [filtros, setFiltros] = useState({ model: "", data_inicio: "", data_fim: "" });
+  const [filtros, setFiltros] = useState(FILTROS_VAZIOS);
+  const [escolas, setEscolas] = useState([]);
   const [filtrosAbertos, setFiltrosAbertos] = useState(false);
   const [ultimaAtu, setUltimaAtu] = useState(null);
 
   const temFiltros = Object.values(filtros).some(Boolean);
+
+  // Redes e escolas para os filtros (o superadmin enxerga todas).
+  useEffect(() => {
+    listarEscolas().then(d => setEscolas(d || [])).catch(() => setEscolas([]));
+  }, []);
+  const instituicoes = useMemo(() => {
+    const mapa = new Map();
+    escolas.forEach(e => { if (e.instituicao) mapa.set(String(e.instituicao), e.instituicao_nome || "—"); });
+    return [...mapa.entries()].map(([id, nome]) => ({ id, nome })).sort((a, b) => a.nome.localeCompare(b.nome));
+  }, [escolas]);
+  const escolasDoFiltro = useMemo(
+    () => (filtros.instituicao ? escolas.filter(e => String(e.instituicao) === filtros.instituicao) : escolas)
+      .slice().sort((a, b) => (a.nome || "").localeCompare(b.nome || "")),
+    [escolas, filtros.instituicao],
+  );
 
   // ── Fetches ───────────────────────────────────────────────────────────────
   const buscarSummary = useCallback(async (f = filtros) => {
     setLoadingSummary(true);
     setErroSummary(null);
     try {
-      const p = new URLSearchParams();
-      if (f.model) p.set("model", f.model);
-      if (f.data_inicio) p.set("data_inicio", f.data_inicio);
-      if (f.data_fim) p.set("data_fim", f.data_fim);
-      const res = await fetch(`${URL_SUMMARY}?${p}`, { credentials: "include" });
-      if (res.status === 403) { setErroSummary("403"); return; }
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      setSummary(await res.json());
+      setSummary(await buscarResumoUsoOpenAI(paramsDe(f)));
       setUltimaAtu(new Date());
     } catch (e) {
-      setErroSummary(e.message);
+      setErroSummary(e.status === 403 ? "403" : e.message);
     } finally {
       setLoadingSummary(false);
     }
@@ -157,13 +168,7 @@ export default function OpenAIUsagePage() {
     setLoadingReg(true);
     setErroReg(null);
     try {
-      const p = new URLSearchParams({ page: pg, page_size: 10 });
-      if (f.model) p.set("model", f.model);
-      if (f.data_inicio) p.set("data_inicio", f.data_inicio);
-      if (f.data_fim) p.set("data_fim", f.data_fim);
-      const res = await fetch(`${URL_REGISTROS}?${p}`, { credentials: "include" });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const json = await res.json();
+      const json = await listarUsoOpenAI({ page: pg, pageSize: 10, ...paramsDe(f) });
       setRegistros(json.registros || []);
       setPaginacao(json.paginacao || {});
     } catch (e) {
@@ -191,7 +196,7 @@ export default function OpenAIUsagePage() {
   }
 
   function limpar() {
-    const z = { model: "", data_inicio: "", data_fim: "" };
+    const z = FILTROS_VAZIOS;
     setFiltros(z);
     setPagina(1);
     buscarSummary(z);
@@ -204,7 +209,7 @@ export default function OpenAIUsagePage() {
       <Card>
         <CardContent className="flex flex-col items-center gap-3 py-16 text-center">
           <AlertCircle size={32} className="text-red-400" />
-          <p className="font-semibold text-gray-700">Acesso restrito a administradores.</p>
+          <p className="font-semibold text-gray-700">Acesso restrito ao superadmin.</p>
         </CardContent>
       </Card>
     );
@@ -215,6 +220,7 @@ export default function OpenAIUsagePage() {
   const porMod = summary?.por_modelo || [];
   const topU = summary?.top_usuarios || [];
   const modelos = summary?.modelos_disponiveis || [];
+  const topE = summary?.top_escolas || [];
 
   // ── Render ────────────────────────────────────────────────────────────────
   return (
@@ -288,7 +294,33 @@ export default function OpenAIUsagePage() {
             </div>
           </CardHeader>
           <CardContent>
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+              <div className="space-y-1.5">
+                <Label className="text-xs">Rede</Label>
+                <Select
+                  value={filtros.instituicao || "_all"}
+                  onValueChange={v => setFiltros(f => ({ ...f, instituicao: v === "_all" ? "" : v, escola: "" }))}
+                >
+                  <SelectTrigger className="h-8 text-xs"><SelectValue placeholder="Todas as redes" /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="_all">Todas</SelectItem>
+                    {instituicoes.map(i => <SelectItem key={i.id} value={i.id}>{i.nome}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-xs">Escola</Label>
+                <Select
+                  value={filtros.escola || "_all"}
+                  onValueChange={v => setFiltros(f => ({ ...f, escola: v === "_all" ? "" : v }))}
+                >
+                  <SelectTrigger className="h-8 text-xs"><SelectValue placeholder="Todas as escolas" /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="_all">Todas</SelectItem>
+                    {escolasDoFiltro.map(e => <SelectItem key={e.id} value={String(e.id)}>{e.nome}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+              </div>
               <div className="space-y-1.5">
                 <Label className="text-xs">Modelo</Label>
                 <Select
@@ -470,6 +502,42 @@ export default function OpenAIUsagePage() {
         </Card>
       )}
 
+      {/* ── Top escolas ────────────────────────────────────────────────── */}
+      {(loadingSummary || topE.length > 0) && (
+        <Card>
+          <CardHeader className="pb-3">
+            <CardTitle className="flex items-center gap-2 text-sm font-semibold text-gray-700">
+              <School size={14} className="text-purple-500" />
+              Top escolas por custo
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">
+              {loadingSummary
+                ? Array.from({ length: 3 }).map((_, i) => <Sk key={i} className="h-14" />)
+                : topE.map((e, i) => (
+                  <div key={e.escola_id} className="flex items-center justify-between rounded-lg border border-gray-100 bg-gray-50 px-4 py-3">
+                    <div className="flex items-center gap-2.5 min-w-0">
+                      <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-purple-100 text-xs font-bold text-purple-600">
+                        {i + 1}
+                      </span>
+                      <div className="min-w-0">
+                        <p className="truncate text-sm text-gray-700">{e.nome}</p>
+                        <p className="truncate text-[10px] text-gray-400">{e.instituicao_nome}</p>
+                      </div>
+                    </div>
+                    <div className="shrink-0 text-right ml-2">
+                      <p className="text-sm font-bold text-gray-800">{fmt$(e.custo)}</p>
+                      <p className="text-[10px] text-gray-400">{e.registros} chamadas</p>
+                    </div>
+                  </div>
+                ))
+              }
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
       {/* ── Tabela de registros ────────────────────────────────────────── */}
       <Card>
         <CardHeader className="flex-row items-center justify-between pb-3">
@@ -496,6 +564,7 @@ export default function OpenAIUsagePage() {
                 <TableRow>
                   <TableHead>Data</TableHead>
                   <TableHead>Usuário</TableHead>
+                  <TableHead>Escola</TableHead>
                   <TableHead>Modelo</TableHead>
                   <TableHead className="text-right">Tokens entrada</TableHead>
                   <TableHead className="text-right">Tokens saída</TableHead>
@@ -506,24 +575,27 @@ export default function OpenAIUsagePage() {
                 {loadingReg ? (
                   Array.from({ length: 5 }).map((_, i) => (
                     <TableRow key={i}>
-                      {Array.from({ length: 6 }).map((_, j) => (
+                      {Array.from({ length: 7 }).map((_, j) => (
                         <TableCell key={j}><Sk className="h-4 w-full" /></TableCell>
                       ))}
                     </TableRow>
                   ))
                 ) : erroReg ? (
                   <TableRow>
-                    <TableCell colSpan={6}><Vazio msg={`Erro: ${erroReg}`} /></TableCell>
+                    <TableCell colSpan={7}><Vazio msg={`Erro: ${erroReg}`} /></TableCell>
                   </TableRow>
                 ) : registros.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={6}><Vazio msg="Nenhum registro encontrado." /></TableCell>
+                    <TableCell colSpan={7}><Vazio msg="Nenhum registro encontrado." /></TableCell>
                   </TableRow>
                 ) : (
                   registros.map(r => (
                     <TableRow key={r.id}>
                       <TableCell className="text-xs text-gray-500">{fmtDate(r.created_at)}</TableCell>
                       <TableCell className="text-sm text-gray-700">{r.usuario?.nome || "Sistema"}</TableCell>
+                      <TableCell className="text-sm text-gray-600">
+                        {r.escola?.nome || r.instituicao?.nome || "—"}
+                      </TableCell>
                       <TableCell>
                         <Badge variant="secondary" className="font-mono text-xs">
                           {r.model || "—"}
@@ -554,6 +626,7 @@ export default function OpenAIUsagePage() {
                   <div className="min-w-0 space-y-1">
                     <Badge variant="secondary" className="font-mono text-[10px]">{r.model || "—"}</Badge>
                     <p className="text-xs text-gray-600">{r.usuario?.nome || "Sistema"}</p>
+                    <p className="text-[10px] text-gray-500">{r.escola?.nome || r.instituicao?.nome || "—"}</p>
                     <p className="text-[10px] text-gray-400">{fmtDate(r.created_at)}</p>
                   </div>
                   <div className="shrink-0 text-right ml-2">

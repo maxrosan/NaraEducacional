@@ -1,439 +1,534 @@
-/**
- * PromptsTab.jsx
- * Componente de configuração de prompts — para uso dentro do AdminPage.
- * Sem navbar/layout de página, só o conteúdo.
- */
-
-import { useState, useEffect } from "react";
-import { FileText, Mic, Pencil, CalendarDays, Copy, Check, Loader2, Plus } from "lucide-react";
-
-// ─── Ícones por título de categoria ──────────────────────────────────────────
+import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
+import {
+    FileText, Mic, Pencil, CalendarDays, Copy, Check, Loader2,
+    ChevronLeft, ChevronRight, ChevronDown, ChevronUp, RotateCcw,
+} from 'lucide-react';
+import { Button } from '@/components/ui/button';
+import { toast } from '@/components/ui/use-toast';
+import { Card, CardHeader, CardTitle, CardContent, CardDescription } from '@/components/ui/card';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from '@/components/ui/dialog';
+import { Badge } from '@/components/ui/badge';
+import {
+    listarPromptsRede, listarPromptsDaEscola,
+    salvarPromptPersonalizado, salvarPromptGlobal,
+} from '@/services/api';
 
 const ICONE_CATEGORIA = {
-  "Relatórios":   FileText,
-  "Voz":          Mic,
-  "Desenho":      Pencil,
-  "Planejamento": CalendarDays,
+    'Relatórios': FileText,
+    'Voz': Mic,
+    'Desenho': Pencil,
+    'Planejamento': CalendarDays,
 };
 
-// ─── Helper CSRF ──────────────────────────────────────────────────────────────
+const ESCOLAS_POR_PAGINA = 10;
+const FILTROS = [
+    { valor: 'todas', rotulo: 'Todas' },
+    { valor: 'personalizadas', rotulo: 'Personalizadas' },
+    { valor: 'global', rotulo: 'Usando o global' },
+];
 
-function csrfToken() {
-  return (
-    document.cookie
-      .split("; ")
-      .find((r) => r.startsWith("csrftoken="))
-      ?.split("=")[1] ?? ""
-  );
+function formatarData(iso) {
+    if (!iso) return '—';
+    return new Date(iso).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric' });
 }
 
-// ─── Modal de criação de categoria ───────────────────────────────────────────
+function avisarErro(titulo, erro) {
+    toast({ variant: 'destructive', title: titulo, description: erro?.message || 'Tente novamente.' });
+}
 
-function ModalCriarCategoria({ onClose, onSalvo }) {
-  const [titulo,       setTitulo]       = useState("");
-  const [promptGlobal, setPromptGlobal] = useState("");
-  const [ativo,        setAtivo]        = useState(true);
-  const [erro,         setErro]         = useState(null);
-  const [salvando,     setSalvando]     = useState(false);
+function BotaoCopiar({ texto, rotulo = 'Copiar' }) {
+    const [copiado, setCopiado] = useState(false);
+    const copiar = async () => {
+        try {
+            await navigator.clipboard.writeText(texto || '');
+            setCopiado(true);
+            setTimeout(() => setCopiado(false), 2000);
+        } catch {
+            avisarErro('Não foi possível copiar', null);
+        }
+    };
+    return (
+        <Button type="button" size="sm" variant="outline" onClick={copiar} disabled={!texto}>
+            {copiado ? <Check className="mr-2 h-4 w-4" /> : <Copy className="mr-2 h-4 w-4" />}
+            {copiado ? 'Copiado' : rotulo}
+        </Button>
+    );
+}
 
-  async function handleSubmit(e) {
-    e.preventDefault();
-    if (!titulo.trim()) { setErro("O título é obrigatório."); return; }
-
-    setSalvando(true);
-    setErro(null);
-    try {
-      // 1. Cria a categoria
-      const rCat = await fetch("/api/prompts/categorias/criar/", {
-        method:      "POST",
-        credentials: "include",
-        headers: { "Content-Type": "application/json", "X-CSRFToken": csrfToken() },
-        body: JSON.stringify({ titulo: titulo.trim(), ativo }),
-      });
-      const categoria = await rCat.json();
-      if (!rCat.ok) { setErro(categoria.error || "Erro ao criar categoria."); return; }
-
-      // 2. Cria o template global vinculado à categoria
-      const rTpl = await fetch("/api/prompts/salvar/", {
-        method:      "POST",
-        credentials: "include",
-        headers: { "Content-Type": "application/json", "X-CSRFToken": csrfToken() },
-        body: JSON.stringify({
-          categoria_id:  categoria.id,
-          prompt_global: promptGlobal.trim(),
-          personalizado: "",
-        }),
-      });
-      if (!rTpl.ok) { setErro("Categoria criada, mas erro ao salvar o prompt."); return; }
-      const template = await rTpl.json();
-
-      onSalvo({ ...categoria, template });
-    } catch {
-      setErro("Erro de conexão.");
-    } finally {
-      setSalvando(false);
+function TextoPrompt({ texto, vazio }) {
+    const [expandido, setExpandido] = useState(false);
+    if (!texto) {
+        return <p className="rounded-md border border-dashed p-4 text-sm text-muted-foreground">{vazio}</p>;
     }
-  }
-
-  return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm"
-      onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
-    >
-      <div className="w-full max-w-lg rounded-2xl bg-white p-8 shadow-2xl">
-        <h2 className="mb-6 text-lg font-semibold text-gray-800">Nova categoria de prompt</h2>
-
-        <form onSubmit={handleSubmit} className="space-y-5">
-
-          {/* Título */}
-          <div>
-            <label className="mb-1.5 block text-sm font-medium text-gray-700">
-              Título <span className="text-red-400">*</span>
-            </label>
-            <input
-              type="text"
-              value={titulo}
-              onChange={(e) => setTitulo(e.target.value)}
-              placeholder="Ex: Escrita, Matemática…"
-              className="w-full rounded-xl border border-gray-200 px-4 py-2.5 text-sm text-gray-700 outline-none transition focus:border-purple-400 focus:ring-2 focus:ring-purple-100"
-              autoFocus
-            />
-          </div>
-
-          {/* Prompt global */}
-          <div>
-            <label className="mb-1.5 block text-sm font-medium text-gray-700">
-              Prompt global
-              <span className="ml-2 rounded-full bg-gray-100 px-2 py-0.5 text-xs font-semibold uppercase tracking-wide text-gray-400">
-                default
-              </span>
-            </label>
-            <div
-              className="flex flex-col rounded-xl border border-gray-200 ring-0 transition focus-within:border-purple-400 focus-within:ring-2 focus-within:ring-purple-100"
-              style={{ height: "180px" }}
-            >
-              <textarea
-                value={promptGlobal}
-                onChange={(e) => setPromptGlobal(e.target.value)}
-                placeholder="Descreva o comportamento esperado da IA para esta categoria…"
-                className="min-h-0 w-full flex-1 resize-none rounded-xl bg-transparent px-4 py-3 text-sm leading-relaxed text-gray-700 outline-none placeholder:text-gray-300"
-              />
-            </div>
-          </div>
-
-          {/* Toggle ativo */}
-          <div className="flex items-center justify-between rounded-xl border border-gray-200 px-4 py-3">
-            <span className="text-sm font-medium text-gray-700">Ativar imediatamente</span>
-            <button
-              type="button"
-              onClick={() => setAtivo((v) => !v)}
-              className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors ${
-                ativo ? "bg-purple-600" : "bg-gray-200"
-              }`}
-            >
-              <span
-                className={`inline-block h-5 w-5 rounded-full bg-white shadow transition-transform ${
-                  ativo ? "translate-x-5" : "translate-x-0.5"
+    const longo = texto.length > 600 || texto.split('\n').length > 8;
+    return (
+        <div className="space-y-2">
+            <pre
+                className={`whitespace-pre-wrap break-words rounded-md border bg-muted/40 p-4 font-sans text-sm leading-relaxed ${
+                    longo && !expandido ? 'max-h-48 overflow-hidden' : ''
                 }`}
-              />
-            </button>
-          </div>
-
-          {erro && (
-            <p className="rounded-lg bg-red-50 px-4 py-2.5 text-sm text-red-500">{erro}</p>
-          )}
-
-          <div className="flex justify-end gap-3 pt-2">
-            <button
-              type="button"
-              onClick={onClose}
-              className="rounded-lg border border-gray-200 px-5 py-2.5 text-sm font-medium text-gray-500 hover:bg-gray-50"
             >
-              Cancelar
-            </button>
-            <button
-              type="submit"
-              disabled={salvando}
-              className="flex items-center gap-2 rounded-lg bg-purple-600 px-5 py-2.5 text-sm font-medium text-white hover:bg-purple-700 disabled:opacity-60"
-            >
-              {salvando && <Loader2 size={14} className="animate-spin" />}
-              {salvando ? "Salvando…" : "Criar categoria"}
-            </button>
-          </div>
-        </form>
-      </div>
-    </div>
-  );
+                {texto}
+            </pre>
+            {longo && (
+                <Button type="button" size="sm" variant="ghost" onClick={() => setExpandido((v) => !v)}>
+                    {expandido ? <ChevronUp className="mr-2 h-4 w-4" /> : <ChevronDown className="mr-2 h-4 w-4" />}
+                    {expandido ? 'Recolher' : 'Ver completo'}
+                </Button>
+            )}
+        </div>
+    );
 }
 
-// ─── Componente principal ─────────────────────────────────────────────────────
+function EditorPrompt({ alvo, textoGlobal, carregando, textoInicial, onCancelar, onSalvar, salvando }) {
+    const [texto, setTexto] = useState(textoInicial);
+    const [confirmarGlobal, setConfirmarGlobal] = useState(false);
+
+    useEffect(() => {
+        setTexto(textoInicial);
+        setConfirmarGlobal(false);
+    }, [textoInicial, alvo]);
+
+    const ehGlobal = alvo?.tipo === 'global';
+    const alterado = texto !== textoInicial;
+    const personalizadoAtual = !ehGlobal && textoInicial.trim() !== '';
+
+    const fechar = () => {
+        if (alterado && !salvando && !window.confirm('Descartar as alterações deste prompt?')) return;
+        onCancelar();
+    };
+
+    return (
+        <Dialog open={!!alvo} onOpenChange={(aberto) => !aberto && fechar()}>
+            <DialogContent className="max-w-5xl">
+                <DialogHeader>
+                    <DialogTitle>
+                        {ehGlobal ? `Prompt global de ${alvo?.categoria.titulo}` : `${alvo?.categoria.titulo} · ${alvo?.escola.nome}`}
+                    </DialogTitle>
+                    <DialogDescription>
+                        {ehGlobal
+                            ? 'Vale para todas as escolas que não personalizaram esta categoria.'
+                            : 'Com o personalizado preenchido, esta escola deixa de usar o prompt global nesta categoria. Em branco, volta a usar o global.'}
+                    </DialogDescription>
+                </DialogHeader>
+
+                {carregando ? (
+                    <div className="flex items-center justify-center py-16">
+                        <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+                    </div>
+                ) : (
+                    <div className={`grid gap-4 ${ehGlobal ? '' : 'md:grid-cols-2'}`}>
+                        {!ehGlobal && (
+                            <div className="flex min-w-0 flex-col gap-2">
+                                <div className="flex items-center justify-between gap-2">
+                                    <span className="text-sm font-medium">Global</span>
+                                    <Button
+                                        type="button" size="sm" variant="outline"
+                                        onClick={() => setTexto(textoGlobal)}
+                                        disabled={!textoGlobal || salvando}
+                                    >
+                                        <Copy className="mr-2 h-4 w-4" />
+                                        Usar como base
+                                    </Button>
+                                </div>
+                                <pre className="h-80 overflow-auto whitespace-pre-wrap break-words rounded-md border bg-muted/40 p-3 font-sans text-sm leading-relaxed text-muted-foreground">
+                                    {textoGlobal || 'Esta categoria ainda não tem prompt global.'}
+                                </pre>
+                            </div>
+                        )}
+                        <div className="flex min-w-0 flex-col gap-2">
+                            <div className="flex h-9 items-center justify-between gap-2">
+                                <label htmlFor="texto-prompt" className="text-sm font-medium">
+                                    {ehGlobal ? 'Texto do prompt global' : 'Personalizado da escola'}
+                                </label>
+                                <span className="text-xs text-muted-foreground">{texto.length} caracteres</span>
+                            </div>
+                            <textarea
+                                id="texto-prompt"
+                                value={texto}
+                                onChange={(e) => setTexto(e.target.value)}
+                                disabled={salvando}
+                                placeholder={ehGlobal ? 'Descreva o comportamento esperado da IA…' : 'Em branco: a escola usa o prompt global.'}
+                                className="h-80 w-full resize-none rounded-md border bg-background p-3 text-sm leading-relaxed outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                            />
+                        </div>
+                    </div>
+                )}
+
+                <DialogFooter className="flex-col-reverse gap-2 sm:flex-row sm:justify-between">
+                    <div>
+                        {personalizadoAtual && (
+                            confirmarGlobal ? (
+                                <div className="flex flex-wrap items-center gap-2 text-sm">
+                                    <span>Apagar o personalizado e voltar ao global?</span>
+                                    <Button type="button" size="sm" variant="destructive" onClick={() => onSalvar('')} disabled={salvando}>
+                                        Confirmar
+                                    </Button>
+                                    <Button type="button" size="sm" variant="ghost" onClick={() => setConfirmarGlobal(false)} disabled={salvando}>
+                                        Não
+                                    </Button>
+                                </div>
+                            ) : (
+                                <Button type="button" variant="ghost" onClick={() => setConfirmarGlobal(true)} disabled={salvando || carregando}>
+                                    <RotateCcw className="mr-2 h-4 w-4" />
+                                    Voltar a usar o global
+                                </Button>
+                            )
+                        )}
+                    </div>
+                    <div className="flex gap-2">
+                        <Button type="button" variant="outline" onClick={fechar} disabled={salvando}>Cancelar</Button>
+                        <Button type="button" onClick={() => onSalvar(texto)} disabled={salvando || carregando || !alterado}>
+                            {salvando && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                            Salvar
+                        </Button>
+                    </div>
+                </DialogFooter>
+            </DialogContent>
+        </Dialog>
+    );
+}
 
 export default function PromptsTab() {
-  const [categorias,    setCategorias]    = useState([]);
-  const [tabAtiva,      setTabAtiva]      = useState(null);
-  const [globalPrompts, setGlobalPrompts] = useState({});
-  const [customPrompts, setCustomPrompts] = useState({});
-  const [loading,       setLoading]       = useState(true);
-  const [erro,          setErro]          = useState(null);
-  const [saved,         setSaved]         = useState(false);
-  const [saving,        setSaving]        = useState(false);
-  const [copied,        setCopied]        = useState(false);
-  const [modalAberto,   setModalAberto]   = useState(false);
+    const [rede, setRede] = useState(null);
+    const [carregando, setCarregando] = useState(true);
+    const [erro, setErro] = useState(null);
 
-  // ── Carrega categorias + templates ─────────────────────────────────────────
-  useEffect(() => {
-    fetch("/api/prompts/categorias/", { credentials: "include" })
-      .then((r) => {
-        if (!r.ok) throw new Error(`Erro ${r.status}`);
-        return r.json();
-      })
-      .then((data) => {
-        setCategorias(data);
-        if (data.length > 0) setTabAtiva(data[0].id);
+    const [categoriaId, setCategoriaId] = useState(null);
+    const [filtro, setFiltro] = useState('todas');
+    const [pagina, setPagina] = useState(1);
 
-        const globals = {};
-        const customs = {};
-        data.forEach((cat) => {
-          globals[cat.id] = cat.template?.prompt_global ?? "";
-          customs[cat.id] = cat.template?.personalizado  ?? "";
-        });
-        setGlobalPrompts(globals);
-        setCustomPrompts(customs);
-      })
-      .catch((e) => setErro(e.message))
-      .finally(() => setLoading(false));
-  }, []);
+    const [alvo, setAlvo] = useState(null);
+    const [textoInicial, setTextoInicial] = useState('');
+    const [carregandoTexto, setCarregandoTexto] = useState(false);
+    const [salvando, setSalvando] = useState(false);
 
-  // ── Callback após criação de categoria ─────────────────────────────────────
-  function handleCategoriaCriada(nova) {
-    setCategorias((prev) => [...prev, nova]);
-    setGlobalPrompts((prev) => ({ ...prev, [nova.id]: nova.template?.prompt_global ?? "" }));
-    setCustomPrompts((prev) => ({ ...prev, [nova.id]: nova.template?.personalizado  ?? "" }));
-    setTabAtiva(nova.id);
-    setModalAberto(false);
-  }
+    const textosPorEscola = useRef(new Map());
+    const aberturaAtual = useRef(0);
 
-  // ── Salvar ─────────────────────────────────────────────────────────────────
-  async function handleSalvar() {
-    if (tabAtiva === null || saving) return;
-    setSaving(true);
-    try {
-      const r = await fetch("/api/prompts/salvar/", {
-        method:      "POST",
-        credentials: "include",
-        headers: {
-          "Content-Type": "application/json",
-          "X-CSRFToken":  csrfToken(),
-        },
-        body: JSON.stringify({
-          categoria_id:  tabAtiva,
-          prompt_global: globalPrompts[tabAtiva] ?? "",
-          personalizado: customPrompts[tabAtiva] ?? "",
-        }),
-      });
-      if (!r.ok) throw new Error(`Erro ${r.status}`);
-      setSaved(true);
-      setTimeout(() => setSaved(false), 2000);
-    } catch (e) {
-      alert(`Não foi possível salvar: ${e.message}`);
-    } finally {
-      setSaving(false);
+    const carregar = useCallback(async () => {
+        setCarregando(true);
+        setErro(null);
+        try {
+            const dados = await listarPromptsRede();
+            setRede(dados);
+            setCategoriaId((atual) => (
+                dados.categorias.some((c) => c.id === atual) ? atual : dados.categorias[0]?.id ?? null
+            ));
+        } catch (e) {
+            setErro(e);
+        } finally {
+            setCarregando(false);
+        }
+    }, []);
+
+    useEffect(() => { carregar(); }, [carregar]);
+
+    useEffect(() => { setPagina(1); }, [categoriaId, filtro]);
+
+    const categoria = rede?.categorias.find((c) => c.id === categoriaId) ?? null;
+    const multiRede = useMemo(
+        () => new Set((rede?.escolas ?? []).map((e) => e.instituicao_nome)).size > 1,
+        [rede],
+    );
+
+    const linhas = useMemo(() => {
+        if (!rede || !categoria) return [];
+        const personalizadas = new Map(categoria.personalizadas.map((p) => [p.escola, p.atualizado_em]));
+        return rede.escolas
+            .map((escola) => ({
+                escola,
+                personalizada: personalizadas.has(escola.id),
+                atualizadoEm: personalizadas.get(escola.id) ?? null,
+            }))
+            .filter((l) => (
+                filtro === 'todas' || (filtro === 'personalizadas' ? l.personalizada : !l.personalizada)
+            ));
+    }, [rede, categoria, filtro]);
+
+    const totalPaginas = Math.max(1, Math.ceil(linhas.length / ESCOLAS_POR_PAGINA));
+    const paginaAtual = Math.min(pagina, totalPaginas);
+    const linhasDaPagina = linhas.slice((paginaAtual - 1) * ESCOLAS_POR_PAGINA, paginaAtual * ESCOLAS_POR_PAGINA);
+
+    const abrirEscola = async (escola) => {
+        const id = ++aberturaAtual.current;
+        setAlvo({ tipo: 'escola', categoria, escola });
+        const emCache = textosPorEscola.current.get(escola.id);
+        if (emCache) {
+            setTextoInicial(emCache.get(categoria.id) ?? '');
+            return;
+        }
+        setTextoInicial('');
+        setCarregandoTexto(true);
+        try {
+            const categorias = await listarPromptsDaEscola(escola.id);
+            const textos = new Map(categorias.map((c) => [
+                c.id, c.template_resolvido?.origem === 'personalizado' ? c.template_resolvido.texto : '',
+            ]));
+            textosPorEscola.current.set(escola.id, textos);
+            if (id === aberturaAtual.current) setTextoInicial(textos.get(categoria.id) ?? '');
+        } catch (e) {
+            if (id === aberturaAtual.current) {
+                avisarErro('Não foi possível abrir o prompt da escola', e);
+                setAlvo(null);
+            }
+        } finally {
+            if (id === aberturaAtual.current) setCarregandoTexto(false);
+        }
+    };
+
+    const abrirGlobal = () => {
+        aberturaAtual.current += 1;
+        setCarregandoTexto(false);
+        setAlvo({ tipo: 'global', categoria });
+        setTextoInicial(categoria.global.texto || '');
+    };
+
+    const fecharEditor = () => {
+        aberturaAtual.current += 1;
+        setAlvo(null);
+        setCarregandoTexto(false);
+    };
+
+    const atualizarCategoria = (id, alterar) => setRede((r) => ({
+        ...r,
+        categorias: r.categorias.map((c) => (c.id === id ? alterar(c) : c)),
+    }));
+
+    const salvar = async (texto) => {
+        if (!alvo) return;
+        setSalvando(true);
+        try {
+            if (alvo.tipo === 'global') {
+                const resp = await salvarPromptGlobal(alvo.categoria.id, texto);
+                atualizarCategoria(alvo.categoria.id, (c) => ({
+                    ...c, global: { texto: resp.prompt_global ?? texto, atualizado_em: resp.atualizado_em },
+                }));
+                toast({ title: 'Prompt global salvo', description: `${alvo.categoria.titulo}: vale para todas as escolas sem personalização.` });
+            } else {
+                const resp = await salvarPromptPersonalizado(alvo.categoria.id, alvo.escola.id, texto);
+                const personalizado = texto.trim() !== '';
+                textosPorEscola.current.get(alvo.escola.id)?.set(alvo.categoria.id, texto);
+                atualizarCategoria(alvo.categoria.id, (c) => {
+                    const outras = c.personalizadas.filter((p) => p.escola !== alvo.escola.id);
+                    return {
+                        ...c,
+                        personalizadas: personalizado
+                            ? [...outras, { escola: alvo.escola.id, atualizado_em: resp.atualizado_em }]
+                            : outras,
+                    };
+                });
+                toast({
+                    title: personalizado ? 'Prompt personalizado salvo' : 'Escola voltou ao prompt global',
+                    description: `${alvo.categoria.titulo} · ${alvo.escola.nome}`,
+                });
+            }
+            fecharEditor();
+        } catch (e) {
+            avisarErro('Não foi possível salvar o prompt', e);
+        } finally {
+            setSalvando(false);
+        }
+    };
+
+    if (carregando) {
+        return (
+            <div className="flex items-center justify-center py-16">
+                <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+            </div>
+        );
     }
-  }
 
-  // ── Copiar ─────────────────────────────────────────────────────────────────
-  function handleCopiar() {
-    navigator.clipboard.writeText(globalPrompts[tabAtiva] ?? "");
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
-  }
+    if (erro) {
+        return (
+            <Card>
+                <CardContent className="flex flex-col items-center gap-3 py-12 text-center">
+                    <p className="font-medium text-destructive">Erro ao carregar os prompts</p>
+                    <p className="text-sm text-muted-foreground">{erro.message}</p>
+                    <Button onClick={carregar}>Tentar novamente</Button>
+                </CardContent>
+            </Card>
+        );
+    }
 
-  // ── Loading ────────────────────────────────────────────────────────────────
-  if (loading) {
+    const totalEscolas = rede.escolas.length;
+
     return (
-      <div className="flex items-center justify-center py-16">
-        <Loader2 size={24} className="animate-spin text-purple-400" />
-      </div>
+        <Card>
+            <CardHeader>
+                <CardTitle>Prompts</CardTitle>
+                <CardDescription>
+                    Todas as escolas usam o prompt global de cada módulo. Uma escola com prompt
+                    personalizado passa a usar o dela naquele módulo; as alterações valem nas próximas
+                    chamadas da IA.
+                </CardDescription>
+            </CardHeader>
+
+            <CardContent className="space-y-6">
+                {rede.categorias.length === 0 ? (
+                    <p className="py-8 text-center text-sm text-muted-foreground">
+                        Nenhuma categoria de prompt ativa.
+                    </p>
+                ) : (
+                    <>
+                        <div className="flex flex-wrap gap-2" role="tablist" aria-label="Categorias de prompt">
+                            {rede.categorias.map((c) => {
+                                const Icone = ICONE_CATEGORIA[c.titulo] ?? FileText;
+                                const ativa = c.id === categoriaId;
+                                return (
+                                    <Button
+                                        key={c.id}
+                                        role="tab"
+                                        aria-selected={ativa}
+                                        variant={ativa ? 'default' : 'outline'}
+                                        onClick={() => setCategoriaId(c.id)}
+                                    >
+                                        <Icone className="mr-2 h-4 w-4" />
+                                        {c.titulo}
+                                        {c.personalizadas.length > 0 && (
+                                            <Badge variant="secondary" className="ml-2" title="Escolas com prompt personalizado">
+                                                {c.personalizadas.length}/{totalEscolas}
+                                            </Badge>
+                                        )}
+                                    </Button>
+                                );
+                            })}
+                        </div>
+
+                        {categoria && (
+                            <>
+                                <section className="space-y-3" aria-labelledby="titulo-global">
+                                    <div className="flex flex-wrap items-center justify-between gap-2">
+                                        <div>
+                                            <h3 id="titulo-global" className="font-medium">Prompt global</h3>
+                                            <p className="text-xs text-muted-foreground">
+                                                {rede.pode_editar_global
+                                                    ? `Atualizado em ${formatarData(categoria.global.atualizado_em)}`
+                                                    : 'Definido pela plataforma. Para mudar o texto de uma escola, personalize abaixo.'}
+                                            </p>
+                                        </div>
+                                        <div className="flex gap-2">
+                                            <BotaoCopiar texto={categoria.global.texto} />
+                                            {rede.pode_editar_global && (
+                                                <Button size="sm" onClick={abrirGlobal}>
+                                                    <Pencil className="mr-2 h-4 w-4" />
+                                                    Editar global
+                                                </Button>
+                                            )}
+                                        </div>
+                                    </div>
+                                    <TextoPrompt
+                                        key={categoria.id}
+                                        texto={categoria.global.texto}
+                                        vazio="Esta categoria ainda não tem prompt global."
+                                    />
+                                </section>
+
+                                <section className="space-y-3" aria-labelledby="titulo-escolas">
+                                    <div className="flex flex-wrap items-center justify-between gap-2">
+                                        <h3 id="titulo-escolas" className="font-medium">Escolas</h3>
+                                        <div className="flex flex-wrap gap-2" role="group" aria-label="Filtrar escolas">
+                                            {FILTROS.map((f) => (
+                                                <Button
+                                                    key={f.valor}
+                                                    size="sm"
+                                                    variant={filtro === f.valor ? 'default' : 'outline'}
+                                                    onClick={() => setFiltro(f.valor)}
+                                                >
+                                                    {f.rotulo}
+                                                </Button>
+                                            ))}
+                                        </div>
+                                    </div>
+
+                                    <div className="overflow-x-auto">
+                                        <Table>
+                                            <TableHeader>
+                                                <TableRow>
+                                                    <TableHead>Escola</TableHead>
+                                                    {multiRede && <TableHead>Rede</TableHead>}
+                                                    <TableHead>Prompt em uso</TableHead>
+                                                    <TableHead>Personalizado em</TableHead>
+                                                    <TableHead className="w-36 text-right">Ação</TableHead>
+                                                </TableRow>
+                                            </TableHeader>
+                                            <TableBody>
+                                                {linhasDaPagina.length === 0 ? (
+                                                    <TableRow>
+                                                        <TableCell colSpan={multiRede ? 5 : 4} className="py-8 text-center text-muted-foreground">
+                                                            {totalEscolas === 0 ? 'Nenhuma escola ativa.' : 'Nenhuma escola neste filtro.'}
+                                                        </TableCell>
+                                                    </TableRow>
+                                                ) : (
+                                                    linhasDaPagina.map(({ escola, personalizada, atualizadoEm }) => (
+                                                        <TableRow key={escola.id}>
+                                                            <TableCell className="font-medium">{escola.nome}</TableCell>
+                                                            {multiRede && <TableCell>{escola.instituicao_nome}</TableCell>}
+                                                            <TableCell>
+                                                                {personalizada
+                                                                    ? <Badge>Personalizado</Badge>
+                                                                    : <Badge variant="outline">Global</Badge>}
+                                                            </TableCell>
+                                                            <TableCell className="text-muted-foreground">
+                                                                {personalizada ? formatarData(atualizadoEm) : '—'}
+                                                            </TableCell>
+                                                            <TableCell className="text-right">
+                                                                <Button
+                                                                    size="sm"
+                                                                    variant={personalizada ? 'outline' : 'secondary'}
+                                                                    onClick={() => abrirEscola(escola)}
+                                                                >
+                                                                    {personalizada ? 'Editar' : 'Personalizar'}
+                                                                </Button>
+                                                            </TableCell>
+                                                        </TableRow>
+                                                    ))
+                                                )}
+                                            </TableBody>
+                                        </Table>
+                                    </div>
+
+                                    {totalPaginas > 1 && (
+                                        <div className="flex items-center justify-between text-sm text-muted-foreground">
+                                            <span>{linhas.length} escola(s)</span>
+                                            <div className="flex items-center gap-2">
+                                                <Button
+                                                    size="icon" variant="outline"
+                                                    onClick={() => setPagina(paginaAtual - 1)}
+                                                    disabled={paginaAtual <= 1}
+                                                    aria-label="Página anterior"
+                                                >
+                                                    <ChevronLeft className="h-4 w-4" />
+                                                </Button>
+                                                <span>Página {paginaAtual} de {totalPaginas}</span>
+                                                <Button
+                                                    size="icon" variant="outline"
+                                                    onClick={() => setPagina(paginaAtual + 1)}
+                                                    disabled={paginaAtual >= totalPaginas}
+                                                    aria-label="Próxima página"
+                                                >
+                                                    <ChevronRight className="h-4 w-4" />
+                                                </Button>
+                                            </div>
+                                        </div>
+                                    )}
+                                </section>
+                            </>
+                        )}
+                    </>
+                )}
+            </CardContent>
+
+            <EditorPrompt
+                alvo={alvo}
+                textoGlobal={alvo?.categoria.global.texto ?? ''}
+                carregando={carregandoTexto}
+                textoInicial={textoInicial}
+                salvando={salvando}
+                onCancelar={fecharEditor}
+                onSalvar={salvar}
+            />
+        </Card>
     );
-  }
-
-  // ── Erro ───────────────────────────────────────────────────────────────────
-  if (erro) {
-    return (
-      <div className="flex flex-col items-center justify-center gap-3 py-16">
-        <p className="font-medium text-red-400">Erro ao carregar prompts</p>
-        <p className="text-sm text-gray-400">{erro}</p>
-        <button
-          onClick={() => window.location.reload()}
-          className="mt-2 rounded-lg bg-purple-600 px-5 py-2 text-sm font-medium text-white hover:bg-purple-700"
-        >
-          Tentar novamente
-        </button>
-      </div>
-    );
-  }
-
-  const tabInfo = categorias.find((c) => c.id === tabAtiva);
-
-  return (
-    <div className="space-y-6">
-
-      {/* Cabeçalho — título + botão na mesma row */}
-      <div className="flex items-start justify-between gap-4">
-        <div>
-          <h2 className="text-xl font-semibold text-gray-800">Prompts</h2>
-          <p className="mt-1 text-sm text-gray-400">
-            Personalize os prompts usados pela IA em cada módulo da plataforma.
-          </p>
-        </div>
-        <button
-          onClick={() => setModalAberto(true)}
-          className="shrink-0 flex items-center gap-2 rounded-xl bg-purple-600 px-4 py-2 text-sm font-medium text-white transition-all hover:bg-purple-700 active:scale-95"
-        >
-          <Plus size={15} />
-          <span className="hidden xs:inline">Nova categoria</span>
-          <span className="xs:hidden">Nova categoria</span>
-        </button>
-      </div>
-
-      {/* Card */}
-      <div className="rounded-2xl border border-gray-200 bg-white shadow-sm">
-
-        {/* Tabs de categoria */}
-        <div className="border-b border-gray-100 px-4 sm:px-8 pt-6">
-          <div className="flex flex-wrap items-center gap-2">
-            {categorias.map((cat) => {
-              const ativo   = tabAtiva === cat.id;
-              const TabIcon = ICONE_CATEGORIA[cat.titulo] ?? FileText;
-              return (
-                <button
-                  key={cat.id}
-                  onClick={() => setTabAtiva(cat.id)}
-                  className={`flex items-center gap-2 rounded-lg px-5 py-2.5 text-base font-medium transition-all ${
-                    ativo
-                      ? "bg-purple-600 text-white shadow-sm"
-                      : "text-gray-500 hover:bg-gray-50 hover:text-gray-700"
-                  }`}
-                >
-                  <TabIcon size={15} />
-                  {cat.titulo}
-                </button>
-              );
-            })}
-          </div>
-        </div>
-
-        {/* Corpo */}
-        <div className="p-4 sm:p-8">
-
-          {/* Labels das colunas */}
-          <div className="mb-4 grid grid-cols-1 sm:grid-cols-2 gap-6">
-            <div className="flex items-center gap-2">
-              <span className="text-base font-medium text-gray-500">Global</span>
-              <span className="rounded-full bg-gray-100 px-2.5 py-0.5 text-xs font-semibold uppercase tracking-wide text-gray-400">
-                default
-              </span>
-            </div>
-            <div className="flex items-center gap-2">
-              <span className="text-base font-medium text-gray-500">Personalizado</span>
-              <span className="rounded-full bg-purple-50 px-2.5 py-0.5 text-xs font-semibold uppercase tracking-wide text-purple-400">
-                Editável
-              </span>
-            </div>
-          </div>
-
-          {/* Textareas */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
-
-            {/* Global */}
-            <div
-              className="flex flex-col rounded-xl border border-gray-200 bg-white ring-0 transition-shadow focus-within:border-purple-300 focus-within:ring-2 focus-within:ring-purple-100"
-              style={{ height: "320px" }}
-            >
-              <textarea
-                value={globalPrompts[tabAtiva] ?? ""}
-                onChange={(e) =>
-                  setGlobalPrompts((p) => ({ ...p, [tabAtiva]: e.target.value }))
-                }
-                className="min-h-0 w-full flex-1 resize-none rounded-t-xl bg-transparent p-5 text-base leading-relaxed text-gray-600 outline-none"
-              />
-              <div className="flex shrink-0 justify-end border-t border-gray-200 px-4 py-3">
-                <button
-                  onClick={handleCopiar}
-                  className={`flex items-center gap-2 rounded-lg border px-4 py-2 text-sm font-medium transition-all ${
-                    copied
-                      ? "border-emerald-200 bg-emerald-50 text-emerald-600"
-                      : "border-gray-200 bg-white text-gray-400 hover:border-gray-300 hover:text-gray-600"
-                  }`}
-                >
-                  {copied ? <><Check size={14} /> Copiado!</> : <><Copy size={14} /> Copiar prompt</>}
-                </button>
-              </div>
-            </div>
-
-            {/* Personalizado */}
-            <div
-              className="flex flex-col rounded-xl border border-gray-200 bg-white ring-0 transition-shadow focus-within:border-purple-300 focus-within:ring-2 focus-within:ring-purple-100"
-              style={{ height: "320px" }}
-            >
-              <textarea
-                value={customPrompts[tabAtiva] ?? ""}
-                onChange={(e) =>
-                  setCustomPrompts((p) => ({ ...p, [tabAtiva]: e.target.value }))
-                }
-                placeholder={`Substitua o prompt global de ${tabInfo?.titulo?.toLowerCase() ?? ""} aqui…`}
-                className="min-h-0 w-full flex-1 resize-none rounded-t-xl bg-transparent p-5 text-base leading-relaxed text-gray-700 outline-none placeholder:text-gray-300"
-              />
-              <div className="shrink-0 border-t border-gray-100 px-4 py-3">
-                <p className="text-sm text-gray-300">Digite para substituir o prompt global…</p>
-              </div>
-            </div>
-          </div>
-
-          {/* Rodapé */}
-          <div className="mt-5 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-            <p className="text-sm text-gray-400">
-              {customPrompts[tabAtiva]
-                ? "O prompt personalizado substitui o global neste módulo."
-                : "Nenhum prompt personalizado — usando o global."}
-            </p>
-            <button
-              onClick={handleSalvar}
-              disabled={saving}
-              className={`flex items-center justify-center gap-2 rounded-lg px-6 py-2.5 text-base font-medium transition-all disabled:opacity-60 ${
-                saved
-                  ? "bg-emerald-500 text-white"
-                  : "bg-purple-600 text-white hover:bg-purple-700 active:scale-95"
-              }`}
-            >
-              {saved ? (
-                <>
-                  <svg viewBox="0 0 16 16" fill="none" className="h-4 w-4" stroke="currentColor" strokeWidth="2">
-                    <path d="M3 8l4 4 6-6" strokeLinecap="round" strokeLinejoin="round" />
-                  </svg>
-                  Salvo!
-                </>
-              ) : saving ? (
-                <><Loader2 size={14} className="animate-spin" /> Salvando…</>
-              ) : (
-                "Salvar"
-              )}
-            </button>
-          </div>
-        </div>
-      </div>
-
-      <p className="text-center text-sm text-gray-300">
-        Alterações salvas aplicam-se imediatamente às próximas chamadas da IA neste módulo.
-      </p>
-
-      {/* Modal */}
-      {modalAberto && (
-        <ModalCriarCategoria
-          onClose={() => setModalAberto(false)}
-          onSalvo={handleCategoriaCriada}
-        />
-      )}
-    </div>
-  );
 }
